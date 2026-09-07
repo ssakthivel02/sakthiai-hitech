@@ -1,0 +1,68 @@
+services:
+  - type: web
+    name: sakthiai-hitech-preview
+    runtime: node
+    plan: free
+    autoDeploy: false
+    buildCommand: corepack enable && corepack prepare pnpm@10.4.1 --activate && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start
+    healthCheckPath: /readyz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: VITE_APP_ID
+        value: sakthiai
+      - key: JWT_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: OWNER_OPEN_ID
+        sync: false
+      - key: VITE_OIDC_AUTHORIZATION_URL
+        sync: false
+      - key: VITE_OIDC_CLIENT_ID
+        sync: false
+      - key: VITE_OIDC_SCOPES
+        value: openid profile email
+      - key: OIDC_AUTHORIZATION_URL
+        sync: false
+      - key: OIDC_TOKEN_URL
+        sync: false
+      - key: OIDC_USERINFO_URL
+        sync: false
+      - key: OIDC_CLIENT_ID
+        sync: false
+      - key: OIDC_CLIENT_SECRET
+        sync: false
+      - key: OIDC_SCOPES
+        value: openid profile email
+      - key: OIDC_PROVIDER_NAME
+        value: google
+      - key: LLM_API_URL
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: EMBEDDING_API_URL
+        sync: false
+      - key: EMBEDDING_API_KEY
+        sync: false
+      - key: EMBEDDING_PROVIDER
+        sync: false
+      - key: EMBEDDING_MODEL
+        sync: false
+      - key: STORAGE_ENDPOINT
+        sync: false
+      - key: STORAGE_REGION
+        value: auto
+      - key: STORAGE_BUCKET
+        value: sakthiai-preview
+      - key: STORAGE_ACCESS_KEY_ID
+        sync: false
+      - key: STORAGE_SECRET_ACCESS_KEY
+        sync: false
+      - key: STORAGE_FORCE_PATH_STYLE
+        value: "false"
+      - key: ALLOW_LEGACY_FORGE_RUNTIME
+        value: "false"
