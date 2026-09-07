@@ -39,10 +39,13 @@ jobs:
             server/_core/llm.ts
             server/storage.ts
             server/_core/storageProxy.ts
+            server/_core/sdk.ts
+            server/_core/oauth.ts
+            client/src/const.ts
             client/src/_core/hooks/useAuth.ts
           )
-          if grep -En "forge\.manus\.im|vite-plugin-manus-runtime|/__manus__/|manus-storage" "${files[@]}"; then
-            echo "Forbidden Manus/Forge runtime coupling detected in production-critical core files."
+          if grep -En "forge\.manus\.im|vite-plugin-manus-runtime|/__manus__/|manus-storage|WebDevAuthPublicService|/app-auth|OAUTH_SERVER_URL|types/manusTypes" "${files[@]}"; then
+            echo "Forbidden Manus/Forge/WebDev runtime coupling detected in production-critical core files."
             exit 1
           fi
 
