@@ -30,22 +30,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Core runtime neutrality guard
+      - name: Repository-wide runtime neutrality guard
         shell: bash
         run: |
           set -euo pipefail
-          files=(
-            vite.config.ts
-            server/_core/llm.ts
-            server/storage.ts
-            server/_core/storageProxy.ts
-            server/_core/sdk.ts
-            server/_core/oauth.ts
-            client/src/const.ts
-            client/src/_core/hooks/useAuth.ts
-          )
-          if grep -En "forge\.manus\.im|vite-plugin-manus-runtime|/__manus__/|manus-storage|WebDevAuthPublicService|/app-auth|OAUTH_SERVER_URL|types/manusTypes" "${files[@]}"; then
-            echo "Forbidden Manus/Forge/WebDev runtime coupling detected in production-critical core files."
+          if git grep -En -i "forge\.manus\.im|vite-plugin-manus-runtime|/__manus__/|manus-storage|manuspre\.computer|manus\.computer|manus-asia\.computer|manuscomputer\.ai|manusvm\.computer|BUILT_IN_FORGE|WebDevAuthPublicService|/app-auth|OAUTH_SERVER_URL|types/manusTypes" -- \
+            ':!*.md' ':!*.json' ':!pnpm-lock.yaml' ':!*.example' ':!.github/workflows/quality-gate.yml'; then
+            echo "Forbidden Manus/Forge/WebDev runtime coupling detected in SakthiAI executable/config source."
             exit 1
           fi
 
