@@ -1,0 +1,9 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    { "idx": 0, "version": "5", "when": 1788644679731, "tag": "0000_marvelous_dreaming_celestial", "breakpoints": true },
+    { "idx": 1, "version": "5", "when": 1788684431322, "tag": "0001_wonderful_nemesis", "breakpoints": true },
+    { "idx": 2, "version": "5", "when": 1788733700000, "tag": "0002_semantic_rag_provenance", "breakpoints": true }
+  ]
+}

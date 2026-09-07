@@ -1,0 +1,27 @@
+{
+  "task_id": "SAI-WEB-FUNCTIONAL-004A",
+  "baseline": "SAI-WEB-RECOVERY-001",
+  "authoritative_source": "/home/ubuntu/sakthi-ai-nexus-w25-recovery",
+  "protected_original_source": "Unavailable unrecoverable WebDev project; not reopened",
+  "canary_source": "/home/ubuntu/sakthi-ai-nexus-w25-recovery",
+  "release_checkpoint": "functional-004A-local-verified",
+  "capability_registry": "SAI-01 existing project registries; not duplicated",
+  "provider_registry": "Provider-neutral optional OpenAI-compatible embedding adapter; no speculative provider integration",
+  "knowledge_registry": "SAI-02 existing project registry; not duplicated",
+  "SAI_01_continuation": "No new capability collection in this implementation task",
+  "SAI_02_continuation": "No new knowledge family in this implementation task",
+  "SAI_GM_01_continuation": "No generative-media work",
+  "accepted_family_ids": ["FAM-AIO-001"],
+  "implemented_vs_research_state": {
+    "implemented": ["WEB_CHAT", "TAMIL_CHAT", "PROJECTS", "FILE_UPLOAD", "DOCUMENT_EXTRACTION", "LEXICAL_RAG", "OPTIONAL_SEMANTIC_RAG", "HYBRID_RAG", "PDF_PROVENANCE", "DOCX_SECTION_PARAGRAPH_PROVENANCE", "CITATIONS", "GROUNDED_ANSWERS", "INSUFFICIENT_EVIDENCE", "AUTH", "TENANT_ISOLATION", "CROSS_USER_DENIAL", "INGESTION_LIMITS", "DUPLICATE_DOCUMENT_DETECTION", "HEALTH_READINESS", "REQUEST_CORRELATION", "ANDROID_API_CONTRACT"],
+    "research_only": [],
+    "semantic_runtime": "optional; unavailable unless EMBEDDING_API_URL is configured and usable",
+    "scanner_runtime": "SCANNER_NOT_CONFIGURED"
+  },
+  "known_blockers": ["Managed database migration not executed locally because DATABASE_URL is not configured", "Managed preview/runtime URL not available in this sandbox"],
+  "task_output_map": { "source": ".", "schema": "drizzle/schema.ts", "migration": "drizzle/0002_semantic_rag_provenance.sql", "tests": ["server/recovery.security.test.ts", "server/functional.core.test.ts"], "api_contract": "API_CONTRACT.md", "config": "config/backend-config.example.md" },
+  "validation": { "typecheck": "PASS", "tests": "PASS: 10 tests", "production_build": "PASS", "database_migration": "NOT_RUN: DATABASE_URL unavailable", "semantic_rag": "NOT_RUN: embedding runtime unavailable", "health_readiness": "implemented; live runtime check not run" },
+  "latest_source_freeze": "SAI-WEB-FUNCTIONAL-004A portable source export",
+  "SHA256": "see SHA256SUMS.txt and the adjacent .tar.gz.sha256 archive checksum",
+  "exact_next_point": "Provide managed DATABASE_URL/runtime for migration and live web validation before classifying as fully ready"
+}
