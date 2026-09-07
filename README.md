@@ -1,45 +1,47 @@
-# Sakthi AI Nexus — W25 Recovery Runtime
+# SakthiAI Hi-Tech
 
-This workspace is a controlled rebuild of the previously proven W25 functional slice. It deliberately excludes the broader website and Android work.
+This repository is the canonical source for the new SakthiAI Hi-Tech website/runtime. It is a full-stack application: React/Vite frontend plus an Express/tRPC backend.
 
-## Included vertical slice
+## Current functional boundary
 
-- Authenticated Manus OAuth workspace
-- Per-user workspace ownership and tenant-scoped authorization
-- English Web Chat and Tamil Chat
-- Projects
-- Private file upload via Manus storage
-- PDF, DOCX, and text extraction
-- Keyword-first retrieval augmented generation (RAG)
-- Durable conversations and messages
-- Citation metadata: filename, documentId, page when available, and excerpt
-- Cross-user denial at every workspace-scoped procedure
+The backend owns authenticated workspaces, projects, private document upload, PDF/DOCX/text extraction, retrieval, embeddings, grounded chat, citations, durable conversations, and database access. These capabilities are not suitable for static-only hosting.
 
-## Source structure
+## Provider-neutral production work completed
 
-`client/` contains the focused UI. `server/routers.ts` is the tRPC contract. `server/db.ts` contains all tenant-aware data helpers. `drizzle/schema.ts` and `drizzle/0001_w25_recovery.sql` define the durable data model. `server/recovery.security.test.ts` covers the access-control invariants.
+- Manus Vite runtime/debug instrumentation removed from production-critical frontend configuration.
+- Browser Manus debug collector removed.
+- Core LLM client now targets an explicit OpenAI-compatible `LLM_API_URL`; there is no hardcoded Manus/Forge fallback.
+- Core object storage now uses generic S3-compatible configuration rather than Forge presign APIs.
+- Storage download proxy is `/api/storage/*`.
+- Core frontend auth hook no longer writes Manus preview/session artifacts.
+- CI contains a runtime-neutrality guard plus TypeScript, tests, and production build validation.
 
-## Local setup
+## Transitional legacy boundary
 
-```bash
-cp .env.example .env
-pnpm install
-pnpm db:push
-pnpm dev
-```
+The imported source still contains helper modules for image generation, maps, notifications, voice/data APIs, and a WebDev OAuth SDK that originated from the Manus/Forge scaffold. Legacy Forge configuration is gated off by default and is available only when `ALLOW_LEGACY_FORGE_RUNTIME=true` is explicitly set. Production must not enable this flag.
 
-The platform injects the real values for `DATABASE_URL`, Manus OAuth, storage, and LLM access. Never commit `.env` or secrets.
+Authentication remains the principal provider-specific blocker: the current login/callback SDK still uses the imported WebDev OAuth contract. It must be replaced by a standard provider-neutral OIDC/auth adapter before public production launch.
+
+## Runtime configuration
+
+Copy `.env.example` and supply only the services deliberately selected for deployment. Never commit secrets.
+
+Core production variables include:
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `LLM_API_URL`, optional `LLM_API_KEY`, optional `LLM_MODEL`
+- embedding configuration when embeddings are enabled
+- S3-compatible `STORAGE_*` settings
+- authentication settings after the OIDC/auth migration is completed
 
 ## Validation
 
 ```bash
+pnpm install --frozen-lockfile
 pnpm check
 pnpm test
 pnpm build
 ```
 
-The build creates `dist/public` and a bundled backend. The managed WebDev runtime serves the preview and backend API from the same project deployment.
-
-## Canonical-base note
-
-This recovery workspace is based on the W25 evidence available in the Sakthi AI Nexus project context and the standard full-stack scaffold. The prior unrecoverable WebDev project and Release 001 static archive were not reopened or treated as authority.
+GitHub Actions repeats these checks on `main` and pull requests. A green build does not by itself mean production-ready: auth replacement, runtime provisioning, deployment, HTTPS, route/API smoke tests, security review, and production QA are still required.
