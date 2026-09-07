@@ -1,0 +1,46 @@
+name: Cleanup Manus Dependency
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Remove unused Manus runtime dependency
+        run: pnpm remove -D vite-plugin-manus-runtime --lockfile-only
+
+      - name: Commit synchronized manifest and lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- package.json pnpm-lock.yaml; then
+            echo "No dependency cleanup required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json pnpm-lock.yaml
+          git commit -m "chore: remove unused Manus runtime dependency"
+          git push origin HEAD:main
