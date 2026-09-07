@@ -4,9 +4,17 @@ export const ENV = {
   appId: process.env.VITE_APP_ID ?? "sakthiai",
   cookieSecret: process.env.JWT_SECRET ?? "",
   databaseUrl: process.env.DATABASE_URL ?? "",
-  oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
   isProduction: process.env.NODE_ENV === "production",
+
+  // Provider-neutral OpenID Connect / OAuth 2.0 authentication.
+  oidcAuthorizationUrl: process.env.OIDC_AUTHORIZATION_URL ?? "",
+  oidcTokenUrl: process.env.OIDC_TOKEN_URL ?? "",
+  oidcUserInfoUrl: process.env.OIDC_USERINFO_URL ?? "",
+  oidcClientId: process.env.OIDC_CLIENT_ID ?? process.env.VITE_APP_ID ?? "sakthiai",
+  oidcClientSecret: process.env.OIDC_CLIENT_SECRET ?? "",
+  oidcScopes: process.env.OIDC_SCOPES ?? "openid profile email",
+  oidcProviderName: process.env.OIDC_PROVIDER_NAME ?? "oidc",
 
   // Provider-neutral OpenAI-compatible LLM endpoint.
   llmApiUrl: process.env.LLM_API_URL ?? process.env.OPENAI_BASE_URL ?? "",
