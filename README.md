@@ -4,36 +4,40 @@ This repository is the canonical source for the new SakthiAI Hi-Tech website/run
 
 ## Current functional boundary
 
-The backend owns authenticated workspaces, projects, private document upload, PDF/DOCX/text extraction, retrieval, embeddings, grounded chat, citations, durable conversations, and database access. These capabilities are not suitable for static-only hosting.
+The backend owns authenticated workspaces, projects, private document upload, PDF/DOCX/text extraction, retrieval, embeddings, grounded chat, citations, durable conversations, database access, and object-storage mediation. These capabilities require a backend runtime and are not suitable for static-only hosting.
 
-## Provider-neutral production work completed
+## Provider-neutral runtime completed
 
-- Manus Vite runtime/debug instrumentation removed from production-critical frontend configuration.
+- Manus Vite runtime/debug instrumentation removed.
 - Browser Manus debug collector removed.
-- Core LLM client now targets an explicit OpenAI-compatible `LLM_API_URL`; there is no hardcoded Manus/Forge fallback.
-- Core object storage now uses generic S3-compatible configuration rather than Forge presign APIs.
+- `vite-plugin-manus-runtime` removed from both the manifest and lockfile.
+- Package identity normalized to `sakthiai-hitech`.
+- Core LLM client targets an explicit OpenAI-compatible `LLM_API_URL`; no hardcoded Manus/Forge fallback exists in the production-critical path.
+- Core object storage uses generic S3-compatible configuration rather than Forge presign APIs.
 - Storage download proxy is `/api/storage/*`.
-- Core frontend auth hook no longer writes Manus preview/session artifacts.
-- CI contains a runtime-neutrality guard plus TypeScript, tests, and production build validation.
+- Authentication uses a provider-neutral OAuth 2.0 / OIDC authorization-code adapter and SakthiAI-owned application sessions.
+- Core frontend auth no longer writes Manus preview/session artifacts.
+- Legacy Forge runtime remains gated off by default and must not be enabled in production.
+- CI contains runtime-neutrality guards plus TypeScript, tests, and production build validation.
 
-## Transitional legacy boundary
+## Preview architecture
 
-The imported source still contains helper modules for image generation, maps, notifications, voice/data APIs, and a WebDev OAuth SDK that originated from the Manus/Forge scaffold. Legacy Forge configuration is gated off by default and is available only when `ALLOW_LEGACY_FORGE_RUNTIME=true` is explicitly set. Production must not enable this flag.
-
-Authentication remains the principal provider-specific blocker: the current login/callback SDK still uses the imported WebDev OAuth contract. It must be replaced by a standard provider-neutral OIDC/auth adapter before public production launch.
+See `PREVIEW_DEPLOYMENT_PLAN.md`. The first controlled preview is intentionally separated from production DNS and production data. GitHub remains the canonical source.
 
 ## Runtime configuration
 
-Copy `.env.example` and supply only the services deliberately selected for deployment. Never commit secrets.
+Copy `.env.example` and supply only deliberately selected deployment services. Never commit secrets.
 
-Core production variables include:
+Core variables include:
 
 - `DATABASE_URL`
 - `JWT_SECRET`
-- `LLM_API_URL`, optional `LLM_API_KEY`, optional `LLM_MODEL`
-- embedding configuration when embeddings are enabled
+- `OIDC_AUTHORIZATION_URL`, `OIDC_TOKEN_URL`, `OIDC_USERINFO_URL`, `OIDC_CLIENT_ID`, and provider-specific secret when required
+- `LLM_API_URL`, optional `LLM_API_KEY`, and `LLM_MODEL`
+- embedding configuration when enabled
 - S3-compatible `STORAGE_*` settings
-- authentication settings after the OIDC/auth migration is completed
+
+`ALLOW_LEGACY_FORGE_RUNTIME` must remain unset or false.
 
 ## Validation
 
@@ -44,4 +48,4 @@ pnpm test
 pnpm build
 ```
 
-GitHub Actions repeats these checks on `main` and pull requests. A green build does not by itself mean production-ready: auth replacement, runtime provisioning, deployment, HTTPS, route/API smoke tests, security review, and production QA are still required.
+GitHub Actions repeats these checks on `main` and pull requests. A green build does not by itself mean production-ready: preview runtime provisioning, integration tests, login/API/storage smoke tests, responsive/accessibility/security QA, and exact-deployed-commit validation are still required before custom-domain promotion.
