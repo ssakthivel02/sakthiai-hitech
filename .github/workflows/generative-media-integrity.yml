@@ -1,0 +1,45 @@
+name: Generative Media Integrity
+
+on:
+  push:
+    paths:
+      - 'research/generative-media/**'
+      - 'scripts/validate-generative-media.mjs'
+      - '.github/workflows/generative-media-integrity.yml'
+  pull_request:
+    paths:
+      - 'research/generative-media/**'
+      - 'scripts/validate-generative-media.mjs'
+      - '.github/workflows/generative-media-integrity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate generative media research contracts
+        run: node scripts/validate-generative-media.mjs
+
+      - name: Guard against runtime/provider activation in research data
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RniE '"productionApproval"[[:space:]]*:[[:space:]]*true|"paidProviderActivation"[[:space:]]*:[[:space:]]*true|"paidProviderApproved"[[:space:]]*:[[:space:]]*true|"productionApproved"[[:space:]]*:[[:space:]]*true' research/generative-media; then
+            echo 'Research data must not activate production or paid providers.' >&2
+            exit 1
+          fi
+
+      - name: Summary
+        run: echo 'Generative media integrity gate passed.'
