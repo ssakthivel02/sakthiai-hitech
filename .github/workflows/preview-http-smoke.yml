@@ -1,0 +1,58 @@
+name: SakthiAI Preview HTTP Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      preview_url:
+        description: "HTTPS base URL of the deployed SakthiAI preview"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate preview URL
+        shell: bash
+        env:
+          PREVIEW_URL: ${{ inputs.preview_url }}
+        run: |
+          set -euo pipefail
+          case "$PREVIEW_URL" in
+            https://*) ;;
+            *) echo "preview_url must use HTTPS"; exit 1 ;;
+          esac
+
+      - name: Verify live, ready and root surfaces
+        shell: bash
+        env:
+          PREVIEW_URL: ${{ inputs.preview_url }}
+        run: |
+          set -euo pipefail
+          base="${PREVIEW_URL%/}"
+          curl --fail --silent --show-error --max-time 20 "$base/healthz" | tee /tmp/health.json
+          curl --fail --silent --show-error --max-time 20 "$base/readyz" | tee /tmp/ready.json
+          curl --fail --silent --show-error --max-time 20 "$base/" -o /tmp/root.html
+          test -s /tmp/root.html
+
+          if grep -Eqi "forge\.manus\.im|vite-plugin-manus-runtime|manuspre\.computer|manus\.computer|WebDevAuthPublicService|/app-auth|/__manus__/" /tmp/root.html; then
+            echo "Legacy runtime marker found in deployed root HTML"
+            exit 1
+          fi
+
+      - name: Verify baseline response headers
+        shell: bash
+        env:
+          PREVIEW_URL: ${{ inputs.preview_url }}
+        run: |
+          set -euo pipefail
+          base="${PREVIEW_URL%/}"
+          curl --fail --silent --show-error --head --max-time 20 "$base/" -o /tmp/headers.txt
+          cat /tmp/headers.txt
+          grep -Eqi '^x-content-type-options:[[:space:]]*nosniff' /tmp/headers.txt
+          grep -Eqi '^x-frame-options:[[:space:]]*SAMEORIGIN' /tmp/headers.txt
+          grep -Eqi '^referrer-policy:[[:space:]]*strict-origin-when-cross-origin' /tmp/headers.txt
