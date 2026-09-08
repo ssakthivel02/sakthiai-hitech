@@ -43,6 +43,10 @@ function releaseIdentity() {
   };
 }
 
+function isOperationalPath(path: string) {
+  return path === "/healthz" || path === "/readyz" || path === "/releasez";
+}
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
@@ -58,8 +62,12 @@ async function startServer() {
       "Content-Security-Policy-Report-Only",
       "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https:; frame-ancestors 'self'",
     );
-    if (req.path.startsWith("/api/") || req.path === "/readyz" || req.path === "/healthz" || req.path === "/releasez") {
+    if (req.path.startsWith("/api/") || isOperationalPath(req.path)) {
       res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+    }
+    if (isOperationalPath(req.path)) {
+      res.setHeader("Cache-Control", "no-store, max-age=0");
+      res.setHeader("Pragma", "no-cache");
     }
 
     const started = Date.now();
