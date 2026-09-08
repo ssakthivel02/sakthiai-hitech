@@ -1,0 +1,41 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://sakthiai.local/schemas/generative-media-evidence.schema.json",
+  "title":"SakthiAI Generative Media Evidence Record",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["recordId","capabilityIds","subject","evidenceState","sourceClass","productAvailability","apiAvailability"],
+  "properties":{
+    "recordId":{"type":"string","pattern":"^GM-EV-[A-Z0-9-]+$"},
+    "capabilityIds":{"type":"array","minItems":1,"uniqueItems":true,"items":{"type":"string","pattern":"^GM-[A-Z0-9-]+$"}},
+    "subject":{"type":"string","minLength":1},
+    "provider":{"type":["string","null"]},
+    "productName":{"type":["string","null"]},
+    "apiModelId":{"type":["string","null"]},
+    "evidenceState":{"enum":["VERIFIED_CURRENT","HISTORICAL","UNKNOWN","REQUIRES_PROVIDER_VALIDATION","REQUIRES_SAKTHIAI_EVALUATION"]},
+    "sourceClass":{"enum":["PRIMARY_OFFICIAL","OWNER_SUPPLIED_RESEARCH","SAKTHIAI_TEST_EVIDENCE"]},
+    "sourceUrl":{"type":["string","null"],"format":"uri"},
+    "lastVerifiedDate":{"type":["string","null"],"format":"date"},
+    "productAvailability":{"enum":["AVAILABLE","UNAVAILABLE","UNKNOWN","NOT_APPLICABLE"]},
+    "apiAvailability":{"enum":["AVAILABLE","UNAVAILABLE","UNKNOWN","NOT_APPLICABLE"]},
+    "pricingState":{"enum":["VERIFIED_CURRENT","HISTORICAL","UNKNOWN","NOT_APPLICABLE"]},
+    "licensingState":{"enum":["VERIFIED_CURRENT","HISTORICAL","UNKNOWN","REQUIRES_LEGAL_REVIEW","NOT_APPLICABLE"]},
+    "privacyRetentionState":{"enum":["VERIFIED_CURRENT","UNKNOWN","REQUIRES_PROVIDER_VALIDATION","NOT_APPLICABLE"]},
+    "regionState":{"enum":["VERIFIED_CURRENT","UNKNOWN","NOT_APPLICABLE"]},
+    "tamilDocumentationState":{"enum":["DOCUMENTED","NOT_DOCUMENTED","UNKNOWN","NOT_APPLICABLE"]},
+    "tamilQualityState":{"enum":["SAKTHIAI_VALIDATED","UNVALIDATED","NOT_APPLICABLE"]},
+    "consentRequired":{"type":"boolean"},
+    "productionApproved":{"const":false},
+    "notes":{"type":"string"}
+  },
+  "allOf":[
+    {
+      "if":{"properties":{"evidenceState":{"const":"VERIFIED_CURRENT"}}},
+      "then":{"required":["sourceUrl","lastVerifiedDate"]}
+    },
+    {
+      "if":{"properties":{"sourceClass":{"const":"OWNER_SUPPLIED_RESEARCH"}}},
+      "then":{"properties":{"productionApproved":{"const":false}}}
+    }
+  ]
+}
