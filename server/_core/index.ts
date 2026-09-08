@@ -32,6 +32,17 @@ function configured(...values: Array<string | undefined>) {
   return values.every(value => typeof value === "string" && value.trim().length > 0);
 }
 
+function releaseIdentity() {
+  const commit = process.env.RENDER_GIT_COMMIT?.trim() || process.env.GIT_COMMIT?.trim() || "unknown";
+  return {
+    service: "sakthiai",
+    environment: process.env.NODE_ENV || "unknown",
+    repository: process.env.RENDER_GIT_REPO_SLUG?.trim() || "ssakthivel02/sakthiai-hitech",
+    commit,
+    exactCommitKnown: commit !== "unknown",
+  };
+}
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
@@ -47,7 +58,7 @@ async function startServer() {
       "Content-Security-Policy-Report-Only",
       "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https:; frame-ancestors 'self'",
     );
-    if (req.path.startsWith("/api/") || req.path === "/readyz" || req.path === "/healthz") {
+    if (req.path.startsWith("/api/") || req.path === "/readyz" || req.path === "/healthz" || req.path === "/releasez") {
       res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
     }
 
@@ -77,6 +88,8 @@ async function startServer() {
       environment: process.env.NODE_ENV || "unknown",
     }),
   );
+
+  app.get("/releasez", (_req, res) => res.status(200).json(releaseIdentity()));
 
   app.get("/readyz", async (_req, res) => {
     const db = await getDb();
