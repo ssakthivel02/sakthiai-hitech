@@ -7,6 +7,7 @@ on:
       - "render.yaml"
       - ".env.example"
       - "server/_core/mysql.ts"
+      - "server/_core/index.ts"
       - "server/db.ts"
       - ".github/workflows/preview-db-setup.yml"
       - ".github/workflows/preview-http-smoke.yml"
@@ -56,6 +57,19 @@ jobs:
           grep -q 'TLSv1.2' server/_core/mysql.ts
           grep -q 'DATABASE_CA_CERT_B64' .github/workflows/preview-db-setup.yml
 
+      - name: Validate exact deployed-commit contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'RENDER_GIT_COMMIT' server/_core/index.ts
+          grep -q 'RENDER_GIT_REPO_SLUG' server/_core/index.ts
+          grep -q 'app.get("/releasez"' server/_core/index.ts
+          smoke=.github/workflows/preview-http-smoke.yml
+          grep -q 'expected_commit' "$smoke"
+          grep -q '/releasez' "$smoke"
+          grep -q 'ssakthivel02/sakthiai-hitech' "$smoke"
+          grep -q 'exactCommitKnown' "$smoke"
+
       - name: Validate deployed readiness contract
         shell: bash
         run: |
@@ -69,4 +83,4 @@ jobs:
           grep -q 'storage' "$smoke"
 
       - name: Preview deployment preflight PASS
-        run: echo 'SakthiAI preview deployment configuration is internally consistent.'
+        run: echo 'SakthiAI preview deployment configuration is internally consistent and exact-commit verifiable.'
