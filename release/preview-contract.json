@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "application": "sakthiai-hitech",
+  "environment": "preview",
+  "canonicalRepository": "ssakthivel02/sakthiai-hitech",
+  "deployment": {
+    "provider": "render",
+    "serviceName": "sakthiai-hitech-preview",
+    "autoDeploy": false,
+    "healthPath": "/readyz",
+    "sourcePolicy": "exact-commit-only-after-green-gates"
+  },
+  "database": {
+    "engine": "mysql",
+    "provider": "aiven",
+    "expectedDatabase": "sakthiai_preview",
+    "forbiddenDatabases": ["defaultdb", "ramaverse_preview", "kirthiverse_preview"],
+    "verifiedTlsRequired": true,
+    "caEnvironmentVariable": "DATABASE_CA_CERT_B64"
+  },
+  "requiredPreviewGates": [
+    "quality-gate",
+    "preview-deployment-preflight",
+    "preview-db-setup",
+    "preview-http-smoke"
+  ],
+  "runtimeReadiness": {
+    "database": true,
+    "auth": true,
+    "llm": true,
+    "storage": true
+  },
+  "production": {
+    "approved": false,
+    "reason": "Preview validation and exact deployed-commit QA are mandatory before production approval."
+  }
+}
