@@ -1,0 +1,53 @@
+name: SakthiAI Preview Contract Gate
+
+on:
+  push:
+    paths:
+      - "release/preview-contract.json"
+      - "render.yaml"
+      - ".github/workflows/preview-contract-gate.yml"
+  pull_request:
+    paths:
+      - "release/preview-contract.json"
+      - "render.yaml"
+      - ".github/workflows/preview-contract-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-preview-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate contract against deployment manifest
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const contract = JSON.parse(fs.readFileSync('release/preview-contract.json', 'utf8'));
+          const render = fs.readFileSync('render.yaml', 'utf8');
+          const fail = (m) => { throw new Error(m); };
+          if (contract.application !== 'sakthiai-hitech') fail('Wrong application');
+          if (contract.environment !== 'preview') fail('Wrong environment');
+          if (contract.canonicalRepository !== 'ssakthivel02/sakthiai-hitech') fail('Wrong canonical repository');
+          if (contract.database.expectedDatabase !== 'sakthiai_preview') fail('Wrong expected preview database');
+          if (!contract.database.verifiedTlsRequired) fail('Verified TLS must remain mandatory');
+          if (contract.production.approved !== false) fail('Production approval cannot be enabled by preview contract');
+          for (const required of ['sakthiai-hitech-preview', 'autoDeployTrigger: off', 'healthCheckPath: /readyz', 'value: sakthiai_preview', 'DATABASE_CA_CERT_B64']) {
+            if (!render.includes(required)) fail(`render.yaml missing required value: ${required}`);
+          }
+          for (const forbidden of contract.database.forbiddenDatabases) {
+            if (render.includes(`value: ${forbidden}`)) fail(`render.yaml must not target forbidden database ${forbidden}`);
+          }
+          for (const gate of ['quality-gate','preview-deployment-preflight','preview-db-setup','preview-http-smoke']) {
+            if (!contract.requiredPreviewGates.includes(gate)) fail(`Required gate missing: ${gate}`);
+          }
+          for (const dep of ['database','auth','llm','storage']) {
+            if (contract.runtimeReadiness?.[dep] !== true) fail(`Readiness dependency missing: ${dep}`);
+          }
+          console.log('SakthiAI preview release contract is internally consistent.');
+          NODE
