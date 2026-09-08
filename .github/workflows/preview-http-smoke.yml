@@ -94,15 +94,24 @@ jobs:
             exit 1
           fi
 
-      - name: Verify baseline response headers
+      - name: Verify response security and operational cache headers
         shell: bash
         env:
           PREVIEW_URL: ${{ inputs.preview_url }}
         run: |
           set -euo pipefail
           base="${PREVIEW_URL%/}"
-          curl --fail --silent --show-error --head --max-time 20 "$base/" -o /tmp/headers.txt
-          cat /tmp/headers.txt
-          grep -Eqi '^x-content-type-options:[[:space:]]*nosniff' /tmp/headers.txt
-          grep -Eqi '^x-frame-options:[[:space:]]*SAMEORIGIN' /tmp/headers.txt
-          grep -Eqi '^referrer-policy:[[:space:]]*strict-origin-when-cross-origin' /tmp/headers.txt
+          curl --fail --silent --show-error --head --max-time 20 "$base/" -o /tmp/root-headers.txt
+          cat /tmp/root-headers.txt
+          grep -Eqi '^x-content-type-options:[[:space:]]*nosniff' /tmp/root-headers.txt
+          grep -Eqi '^x-frame-options:[[:space:]]*SAMEORIGIN' /tmp/root-headers.txt
+          grep -Eqi '^referrer-policy:[[:space:]]*strict-origin-when-cross-origin' /tmp/root-headers.txt
+
+          for path in healthz readyz releasez; do
+            headers="/tmp/${path}-headers.txt"
+            curl --fail --silent --show-error --head --max-time 20 "$base/$path" -o "$headers"
+            cat "$headers"
+            grep -Eqi '^x-robots-tag:[[:space:]]*noindex, nofollow, noarchive' "$headers"
+            grep -Eqi '^cache-control:[[:space:]]*no-store, max-age=0' "$headers"
+            grep -Eqi '^pragma:[[:space:]]*no-cache' "$headers"
+          done
