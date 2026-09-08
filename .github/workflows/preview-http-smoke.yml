@@ -7,6 +7,10 @@ on:
         description: "HTTPS base URL of the deployed SakthiAI preview"
         required: true
         type: string
+      expected_commit:
+        description: "Exact Git commit SHA expected to be running on the preview"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,16 +20,43 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Validate preview URL
+      - name: Validate preview inputs
         shell: bash
         env:
           PREVIEW_URL: ${{ inputs.preview_url }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
         run: |
           set -euo pipefail
           case "$PREVIEW_URL" in
             https://*) ;;
             *) echo "preview_url must use HTTPS"; exit 1 ;;
           esac
+          if ! [[ "$EXPECTED_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "expected_commit must be a full 40-character Git SHA"
+            exit 1
+          fi
+
+      - name: Verify exact deployed release identity
+        shell: bash
+        env:
+          PREVIEW_URL: ${{ inputs.preview_url }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+        run: |
+          set -euo pipefail
+          base="${PREVIEW_URL%/}"
+          curl --fail --silent --show-error --max-time 20 "$base/releasez" | tee /tmp/release.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const release = JSON.parse(fs.readFileSync('/tmp/release.json', 'utf8'));
+          const expected = process.env.EXPECTED_COMMIT.toLowerCase();
+          if (release.service !== 'sakthiai') throw new Error('Wrong service identity from /releasez.');
+          if (release.repository !== 'ssakthivel02/sakthiai-hitech') throw new Error(`Unexpected repository identity: ${String(release.repository)}`);
+          if (release.exactCommitKnown !== true) throw new Error('Deployed SakthiAI commit identity is not available.');
+          if (String(release.commit).toLowerCase() !== expected) {
+            throw new Error(`Deployed commit ${String(release.commit)} does not match expected commit ${expected}.`);
+          }
+          console.log(`SakthiAI exact deployed commit PASS: ${expected}`);
+          NODE
 
       - name: Verify live, ready and root surfaces
         shell: bash
