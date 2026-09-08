@@ -3,7 +3,7 @@ services:
     name: sakthiai-hitech-preview
     runtime: node
     plan: free
-    autoDeploy: false
+    autoDeployTrigger: off
     buildCommand: corepack enable && corepack prepare pnpm@10.4.1 --activate && pnpm install --frozen-lockfile && pnpm build
     startCommand: pnpm start
     healthCheckPath: /readyz
@@ -15,6 +15,10 @@ services:
       - key: JWT_SECRET
         sync: false
       - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_EXPECTED_NAME
+        value: sakthiai_preview
+      - key: DATABASE_CA_CERT_B64
         sync: false
       - key: OWNER_OPEN_ID
         sync: false
