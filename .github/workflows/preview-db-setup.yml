@@ -25,6 +25,27 @@ jobs:
             exit 1
           fi
 
+      - name: Validate isolated Aiven MySQL target
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const raw = process.env.DATABASE_URL;
+          const url = new URL(raw);
+          if (!['mysql:', 'mysql2:'].includes(url.protocol)) {
+            throw new Error('SakthiAI preview DATABASE_URL must use MySQL.');
+          }
+          const database = url.pathname.replace(/^\//, '');
+          if (database !== 'sakthiai_preview') {
+            throw new Error(`SakthiAI preview must target database sakthiai_preview, received ${database || '<none>'}.`);
+          }
+          const sslMode = (url.searchParams.get('ssl-mode') || url.searchParams.get('sslmode') || '').toUpperCase();
+          if (!['REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY'].includes(sslMode)) {
+            throw new Error('SakthiAI preview DATABASE_URL must require TLS (ssl-mode=REQUIRED or stronger).');
+          }
+          console.log('SakthiAI isolated MySQL/TLS target guard PASS');
+          NODE
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
