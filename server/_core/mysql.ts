@@ -1,4 +1,4 @@
-import mysql, { type Pool, type PoolOptions } from "mysql2/promise";
+import mysql, { type Pool, type PoolOptions } from "mysql2";
 
 export const AIVEN_CA_ENV = "DATABASE_CA_CERT_B64";
 
@@ -47,11 +47,6 @@ export function getMysqlConnectionOptions(connectionString: string, expectedData
 
 export async function createVerifiedMysqlPool(connectionString: string, expectedDatabase?: string): Promise<Pool> {
   const pool = mysql.createPool(getMysqlConnectionOptions(connectionString, expectedDatabase));
-  const connection = await pool.getConnection();
-  try {
-    await connection.query("SELECT 1");
-  } finally {
-    connection.release();
-  }
+  await pool.promise().query("SELECT 1");
   return pool;
 }
