@@ -2,13 +2,28 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, User, users, workspaces, workspaceMembers, projects, documents, documentChunks, conversations, messages } from "../drizzle/schema";
 import { ENV } from "./_core/env";
+import { createVerifiedMysqlPool } from "./_core/mysql";
 import { cosineSimilarity, parseEmbedding, tryEmbed } from "./embeddings";
 
 export type { Citation } from "../drizzle/schema";
 export type RetrievalMethod = "lexical" | "semantic" | "hybrid";
 export type SearchResult = typeof documentChunks.$inferSelect & { filename: string; mimeType: string; score: number; retrievalMethod: RetrievalMethod };
 let _db: ReturnType<typeof drizzle> | null = null;
-export async function getDb() { if (!_db && process.env.DATABASE_URL) { try { _db = drizzle(process.env.DATABASE_URL); } catch (error) { console.warn("[Database] Failed to connect:", error); } } return _db; }
+export async function getDb() {
+  if (!_db && process.env.DATABASE_URL) {
+    try {
+      const pool = await createVerifiedMysqlPool(
+        process.env.DATABASE_URL,
+        process.env.DATABASE_EXPECTED_NAME,
+      );
+      _db = drizzle(pool);
+    } catch (error) {
+      console.warn("[Database] Failed verified connection:", error);
+      _db = null;
+    }
+  }
+  return _db;
+}
 export async function upsertUser(user: InsertUser): Promise<void> { if (!user.openId) throw new Error("User openId is required for upsert"); const db = await getDb(); if (!db) return; const values: InsertUser = { openId: user.openId, name: user.name ?? null, email: user.email ?? null, loginMethod: user.loginMethod ?? null, lastSignedIn: new Date() }; const updateSet: Record<string, unknown> = { lastSignedIn: values.lastSignedIn, name: values.name, email: values.email, loginMethod: values.loginMethod }; if (user.role) { values.role = user.role; updateSet.role = user.role; } else if (user.openId === ENV.ownerOpenId) { values.role = "admin"; updateSet.role = "admin"; } await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet }); }
 export async function getUserByOpenId(openId: string) { const db = await getDb(); if (!db) return undefined; const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1); return result[0]; }
 export function assertWorkspaceAccess(userId: number, workspaceId: number, memberships: Array<{ userId: number; workspaceId: number }>) { return memberships.some(m => m.userId === userId && m.workspaceId === workspaceId); }
