@@ -64,5 +64,3 @@ services:
         sync: false
       - key: STORAGE_FORCE_PATH_STYLE
         value: "false"
-      - key: ALLOW_LEGACY_FORGE_RUNTIME
-        value: "false"
