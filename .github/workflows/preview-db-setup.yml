@@ -12,16 +12,22 @@ jobs:
     timeout-minutes: 20
     env:
       DATABASE_URL: ${{ secrets.SAKTHIAI_PREVIEW_DATABASE_URL }}
+      DATABASE_EXPECTED_NAME: sakthiai_preview
+      DATABASE_CA_CERT_B64: ${{ secrets.AIVEN_MYSQL_CA_CERT_B64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Require preview database secret
+      - name: Require preview database secrets
         shell: bash
         run: |
           set -euo pipefail
           if [ -z "${DATABASE_URL:-}" ]; then
             echo "SAKTHIAI_PREVIEW_DATABASE_URL is not configured."
+            exit 1
+          fi
+          if [ -z "${DATABASE_CA_CERT_B64:-}" ]; then
+            echo "AIVEN_MYSQL_CA_CERT_B64 is not configured."
             exit 1
           fi
 
@@ -30,20 +36,14 @@ jobs:
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
-          const raw = process.env.DATABASE_URL;
-          const url = new URL(raw);
-          if (!['mysql:', 'mysql2:'].includes(url.protocol)) {
-            throw new Error('SakthiAI preview DATABASE_URL must use MySQL.');
+          const url = new URL(process.env.DATABASE_URL);
+          if (url.protocol !== 'mysql:') throw new Error('SakthiAI preview DATABASE_URL must use mysql://.');
+          if (!url.hostname.endsWith('.aivencloud.com')) throw new Error('SakthiAI preview must target the approved Aiven MySQL host.');
+          const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
+          if (database !== process.env.DATABASE_EXPECTED_NAME) {
+            throw new Error(`SakthiAI preview must target ${process.env.DATABASE_EXPECTED_NAME}, received ${database || '<none>'}.`);
           }
-          const database = url.pathname.replace(/^\//, '');
-          if (database !== 'sakthiai_preview') {
-            throw new Error(`SakthiAI preview must target database sakthiai_preview, received ${database || '<none>'}.`);
-          }
-          const sslMode = (url.searchParams.get('ssl-mode') || url.searchParams.get('sslmode') || '').toUpperCase();
-          if (!['REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY'].includes(sslMode)) {
-            throw new Error('SakthiAI preview DATABASE_URL must require TLS (ssl-mode=REQUIRED or stronger).');
-          }
-          console.log('SakthiAI isolated MySQL/TLS target guard PASS');
+          console.log('SakthiAI isolated Aiven MySQL target guard PASS');
           NODE
 
       - name: Setup Node
@@ -65,17 +65,29 @@ jobs:
       - name: Apply preview schema
         run: pnpm db:push
 
-      - name: Verify database connectivity
+      - name: Verify database connectivity over trusted TLS
         shell: bash
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
           import mysql from 'mysql2/promise';
-          const connection = await mysql.createConnection(process.env.DATABASE_URL);
+          const url = new URL(process.env.DATABASE_URL);
+          const connection = await mysql.createConnection({
+            host: url.hostname,
+            port: url.port ? Number(url.port) : 3306,
+            user: decodeURIComponent(url.username),
+            password: decodeURIComponent(url.password),
+            database: decodeURIComponent(url.pathname.replace(/^\//, '')),
+            ssl: {
+              ca: Buffer.from(process.env.DATABASE_CA_CERT_B64, 'base64').toString('utf8'),
+              rejectUnauthorized: true,
+              minVersion: 'TLSv1.2',
+            },
+          });
           const [rows] = await connection.query('SELECT 1 AS ok');
           await connection.end();
           if (!Array.isArray(rows) || rows[0]?.ok !== 1) process.exit(1);
-          console.log('SakthiAI preview database connectivity PASS');
+          console.log('SakthiAI preview verified-TLS database connectivity PASS');
           NODE
 
       - name: Unit and regression tests
