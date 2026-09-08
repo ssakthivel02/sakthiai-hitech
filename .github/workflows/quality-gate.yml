@@ -57,3 +57,20 @@ jobs:
             echo "Forbidden Manus/Forge/WebDev marker found in deployable SakthiAI dist output."
             exit 1
           fi
+
+      - name: Built-server health smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORT=3211 NODE_ENV=production node dist/index.js >/tmp/sakthiai-server.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error http://127.0.0.1:3211/healthz >/tmp/sakthiai-health.json; then
+              cat /tmp/sakthiai-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/sakthiai-server.log
+          exit 1
