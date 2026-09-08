@@ -1,0 +1,109 @@
+name: SakthiAI Preview Release Candidate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "client/**"
+      - "server/**"
+      - "shared/**"
+      - "release/preview-contract.json"
+      - "render.yaml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/preview-rc.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Frozen install
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate release contract
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const c = JSON.parse(fs.readFileSync('release/preview-contract.json','utf8'));
+          if (c.canonicalRepository !== process.env.GITHUB_REPOSITORY) throw new Error('Canonical repository mismatch');
+          if (c.database?.expectedDatabase !== 'sakthiai_preview') throw new Error('Wrong preview database');
+          if (c.database?.verifiedTlsRequired !== true) throw new Error('Verified TLS must remain required');
+          if (c.deployment?.sourcePolicy !== 'exact-commit-only-after-green-gates') throw new Error('Exact-commit policy missing');
+          if (c.production?.approved !== false) throw new Error('Preview contract cannot approve production');
+          NODE
+
+      - name: Typecheck
+        run: pnpm check
+
+      - name: Tests
+        run: pnpm test
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Scan deployable output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/index.js
+          test -d dist/public
+          if grep -REn -i "forge\.manus\.im|vite-plugin-manus-runtime|manuspre\.computer|manus\.computer|WebDevAuthPublicService|/app-auth|/__manus__/|/manus-storage/" dist; then
+            echo "Forbidden legacy runtime marker found in release candidate output"
+            exit 1
+          fi
+
+      - name: Create deterministic evidence bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release/evidence
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner -czf release/evidence/sakthiai-preview-build.tgz dist
+          contract_sha=$(sha256sum release/preview-contract.json | awk '{print $1}')
+          build_sha=$(sha256sum release/evidence/sakthiai-preview-build.tgz | awk '{print $1}')
+          node --input-type=module <<NODE
+          import fs from 'node:fs';
+          const evidence = {
+            schemaVersion: 1,
+            application: 'sakthiai-hitech',
+            environment: 'preview',
+            repository: process.env.GITHUB_REPOSITORY,
+            commitSha: process.env.GITHUB_SHA,
+            workflowRunId: process.env.GITHUB_RUN_ID,
+            contractSha256: '${contract_sha}',
+            buildArchiveSha256: '${build_sha}',
+            databaseTarget: 'sakthiai_preview',
+            exactCommitRequired: true,
+            productionApproved: false,
+            generatedAt: new Date().toISOString()
+          };
+          fs.writeFileSync('release/evidence/preview-rc-evidence.json', JSON.stringify(evidence, null, 2) + '\n');
+          NODE
+          cat release/evidence/preview-rc-evidence.json
+
+      - name: Upload release-candidate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: sakthiai-preview-rc-${{ github.sha }}
+          path: release/evidence/
+          if-no-files-found: error
+          retention-days: 3
