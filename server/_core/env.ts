@@ -1,5 +1,3 @@
-const allowLegacyForgeRuntime = process.env.ALLOW_LEGACY_FORGE_RUNTIME === "true";
-
 export const ENV = {
   appId: process.env.VITE_APP_ID ?? "sakthiai",
   cookieSecret: process.env.JWT_SECRET ?? "",
@@ -35,12 +33,4 @@ export const ENV = {
   storageAccessKeyId: process.env.STORAGE_ACCESS_KEY_ID ?? "",
   storageSecretAccessKey: process.env.STORAGE_SECRET_ACCESS_KEY ?? "",
   storageForcePathStyle: process.env.STORAGE_FORCE_PATH_STYLE === "true",
-
-  // Transitional compatibility only. These fields exist so imported helper
-  // modules still compile while they are being replaced. They are empty unless
-  // the owner explicitly opts in, so production does not silently depend on
-  // Manus/Forge.
-  allowLegacyForgeRuntime,
-  forgeApiUrl: allowLegacyForgeRuntime ? (process.env.BUILT_IN_FORGE_API_URL ?? "") : "",
-  forgeApiKey: allowLegacyForgeRuntime ? (process.env.BUILT_IN_FORGE_API_KEY ?? "") : "",
 };
