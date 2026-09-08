@@ -10,15 +10,14 @@ The backend owns authenticated workspaces, projects, private document upload, PD
 
 - Manus Vite runtime/debug instrumentation removed.
 - Browser Manus debug collector removed.
-- `vite-plugin-manus-runtime` removed from both the manifest and lockfile.
+- `vite-plugin-manus-runtime` removed from both manifest and lockfile.
 - Package identity normalized to `sakthiai-hitech`.
-- Core LLM client targets an explicit OpenAI-compatible `LLM_API_URL`; no hardcoded Manus/Forge fallback exists in the production-critical path.
-- Core object storage uses generic S3-compatible configuration rather than Forge presign APIs.
-- Storage download proxy is `/api/storage/*`.
+- Core LLM client targets an explicit OpenAI-compatible `LLM_API_URL`.
+- Core object storage uses generic S3-compatible configuration and `/api/storage/*`.
 - Authentication uses a provider-neutral OAuth 2.0 / OIDC authorization-code adapter and SakthiAI-owned application sessions.
-- Core frontend auth no longer writes Manus preview/session artifacts.
-- Legacy Forge runtime remains gated off by default and must not be enabled in production.
-- CI contains runtime-neutrality guards plus TypeScript, tests, and production build validation.
+- Core frontend auth no longer writes preview/session artifacts from the imported scaffold.
+- Unused imported Forge Data API, heartbeat, image, maps, notification, and voice helpers were removed rather than carried into production.
+- CI validates production-critical source and scans the compiled `dist/` deployment artifact for prohibited legacy runtime markers.
 
 ## Preview architecture
 
@@ -37,8 +36,6 @@ Core variables include:
 - embedding configuration when enabled
 - S3-compatible `STORAGE_*` settings
 
-`ALLOW_LEGACY_FORGE_RUNTIME` must remain unset or false.
-
 ## Validation
 
 ```bash
@@ -48,4 +45,4 @@ pnpm test
 pnpm build
 ```
 
-GitHub Actions repeats these checks on `main` and pull requests. A green build does not by itself mean production-ready: preview runtime provisioning, integration tests, login/API/storage smoke tests, responsive/accessibility/security QA, and exact-deployed-commit validation are still required before custom-domain promotion.
+GitHub Actions repeats these checks on `main` and pull requests, then scans the deployable artifact. A green build does not by itself mean production-ready: preview runtime provisioning, integration tests, login/API/storage smoke tests, responsive/accessibility/security QA, and exact-deployed-commit validation are still required before custom-domain promotion.
