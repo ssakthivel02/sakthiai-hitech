@@ -1,0 +1,72 @@
+name: SakthiAI Preview Deployment Preflight
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "render.yaml"
+      - ".env.example"
+      - "server/_core/mysql.ts"
+      - "server/db.ts"
+      - ".github/workflows/preview-db-setup.yml"
+      - ".github/workflows/preview-http-smoke.yml"
+      - ".github/workflows/preview-deploy-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Render preview contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Eq '^    name: sakthiai-hitech-preview$' render.yaml
+          grep -Eq '^    healthCheckPath: /readyz$' render.yaml
+          grep -Eq '^    autoDeployTrigger: off$' render.yaml
+          grep -q 'key: DATABASE_URL' render.yaml
+          grep -q 'key: DATABASE_CA_CERT_B64' render.yaml
+          grep -q 'key: DATABASE_EXPECTED_NAME' render.yaml
+          grep -q 'value: sakthiai_preview' render.yaml
+
+      - name: Validate database isolation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(render.yaml .env.example server/_core/mysql.ts server/db.ts .github/workflows/preview-db-setup.yml)
+          if grep -En 'defaultdb|ramaverse_preview' "${files[@]}"; then
+            echo 'Unsafe or cross-project database target found in SakthiAI preview configuration.'
+            exit 1
+          fi
+          grep -q 'sakthiai_preview' render.yaml
+          grep -q 'sakthiai_preview' .github/workflows/preview-db-setup.yml
+
+      - name: Validate verified TLS contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'DATABASE_CA_CERT_B64' .env.example
+          grep -q 'rejectUnauthorized: true' server/_core/mysql.ts
+          grep -q 'TLSv1.2' server/_core/mysql.ts
+          grep -q 'DATABASE_CA_CERT_B64' .github/workflows/preview-db-setup.yml
+
+      - name: Validate deployed readiness contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke=.github/workflows/preview-http-smoke.yml
+          grep -q '/healthz' "$smoke"
+          grep -q '/readyz' "$smoke"
+          grep -q 'database' "$smoke"
+          grep -q 'authentication' "$smoke"
+          grep -q 'llm' "$smoke"
+          grep -q 'storage' "$smoke"
+
+      - name: Preview deployment preflight PASS
+        run: echo 'SakthiAI preview deployment configuration is internally consistent.'
