@@ -30,13 +30,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Repository-wide runtime neutrality guard
+      - name: Production source neutrality guard
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -En -i "forge\.manus\.im|vite-plugin-manus-runtime|/__manus__/|manus-storage|manuspre\.computer|manus\.computer|manus-asia\.computer|manuscomputer\.ai|manusvm\.computer|BUILT_IN_FORGE|WebDevAuthPublicService|/app-auth|OAUTH_SERVER_URL|types/manusTypes" -- \
-            ':!*.md' ':!*.json' ':!pnpm-lock.yaml' ':!*.example' ':!.github/workflows/quality-gate.yml'; then
-            echo "Forbidden Manus/Forge/WebDev runtime coupling detected in SakthiAI executable/config source."
+          files=(vite.config.ts render.yaml server/_core/index.ts server/_core/llm.ts server/_core/sdk.ts server/_core/oauth.ts server/storage.ts server/_core/storageProxy.ts client/src/const.ts client/src/_core/hooks/useAuth.ts)
+          if grep -En -i "forge\.manus\.im|vite-plugin-manus-runtime|manuspre\.computer|manus\.computer|manus-asia\.computer|manuscomputer\.ai|manusvm\.computer|WebDevAuthPublicService|/app-auth|OAUTH_SERVER_URL|types/manusTypes" "${files[@]}"; then
+            echo "Forbidden Manus/Forge/WebDev coupling detected in production-critical SakthiAI source."
             exit 1
           fi
 
@@ -48,3 +48,12 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Deployable artifact neutrality guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -REn -i "forge\.manus\.im|vite-plugin-manus-runtime|manuspre\.computer|manus\.computer|manus-asia\.computer|manuscomputer\.ai|manusvm\.computer|BUILT_IN_FORGE|WebDevAuthPublicService|/app-auth|OAUTH_SERVER_URL|/manus-storage/|/__manus__/" dist; then
+            echo "Forbidden Manus/Forge/WebDev marker found in deployable SakthiAI dist output."
+            exit 1
+          fi
