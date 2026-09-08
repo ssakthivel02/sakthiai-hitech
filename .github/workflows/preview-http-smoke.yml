@@ -39,6 +39,25 @@ jobs:
           curl --fail --silent --show-error --max-time 20 "$base/" -o /tmp/root.html
           test -s /tmp/root.html
 
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const health = JSON.parse(fs.readFileSync('/tmp/health.json', 'utf8'));
+          const ready = JSON.parse(fs.readFileSync('/tmp/ready.json', 'utf8'));
+          if (health.status !== 'alive' || health.service !== 'sakthiai') {
+            throw new Error('SakthiAI /healthz payload is invalid.');
+          }
+          if (ready.status !== 'ready' || ready.service !== 'sakthiai') {
+            throw new Error('SakthiAI /readyz did not report ready.');
+          }
+          const deps = ready.dependencies || {};
+          for (const key of ['database', 'authentication', 'llm', 'storage']) {
+            if (deps[key] !== 'configured') {
+              throw new Error(`SakthiAI dependency ${key} is not configured: ${String(deps[key])}`);
+            }
+          }
+          console.log('SakthiAI dependency readiness payload PASS');
+          NODE
+
           if grep -Eqi "forge\.manus\.im|vite-plugin-manus-runtime|manuspre\.computer|manus\.computer|WebDevAuthPublicService|/app-auth|/__manus__/" /tmp/root.html; then
             echo "Legacy runtime marker found in deployed root HTML"
             exit 1
