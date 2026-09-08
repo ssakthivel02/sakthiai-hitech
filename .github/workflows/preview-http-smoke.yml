@@ -106,6 +106,11 @@ jobs:
           grep -Eqi '^x-content-type-options:[[:space:]]*nosniff' /tmp/root-headers.txt
           grep -Eqi '^x-frame-options:[[:space:]]*SAMEORIGIN' /tmp/root-headers.txt
           grep -Eqi '^referrer-policy:[[:space:]]*strict-origin-when-cross-origin' /tmp/root-headers.txt
+          grep -Eqi '^strict-transport-security:[[:space:]]*max-age=31536000; includeSubDomains' /tmp/root-headers.txt
+          if grep -Eqi '^x-powered-by:' /tmp/root-headers.txt; then
+            echo "SakthiAI must not expose X-Powered-By"
+            exit 1
+          fi
 
           for path in healthz readyz releasez; do
             headers="/tmp/${path}-headers.txt"
@@ -114,4 +119,9 @@ jobs:
             grep -Eqi '^x-robots-tag:[[:space:]]*noindex, nofollow, noarchive' "$headers"
             grep -Eqi '^cache-control:[[:space:]]*no-store, max-age=0' "$headers"
             grep -Eqi '^pragma:[[:space:]]*no-cache' "$headers"
+            grep -Eqi '^strict-transport-security:[[:space:]]*max-age=31536000; includeSubDomains' "$headers"
+            if grep -Eqi '^x-powered-by:' "$headers"; then
+              echo "SakthiAI operational endpoint must not expose X-Powered-By"
+              exit 1
+            fi
           done
