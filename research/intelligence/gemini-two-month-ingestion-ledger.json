@@ -1,0 +1,96 @@
+{
+  "schemaVersion": "1.0.0",
+  "source": {
+    "title": "SakthiAI Generative Media Task Setup",
+    "pages": 298,
+    "period": "August-September 2026",
+    "origin": "Gemini scheduled-task outputs supplied by owner",
+    "status": "research-evidence",
+    "productionTruth": false
+  },
+  "policy": {
+    "newSchedulesCreated": false,
+    "providerNeutral": true,
+    "requirePrimarySourceReverificationBeforeRuntimeUse": true,
+    "paidProviderActivation": false,
+    "productionApproval": false,
+    "preserveStableIds": true,
+    "deduplicateAcrossPipelines": true
+  },
+  "domains": [
+    {
+      "id": "SAI-03",
+      "name": "Generative Media Intelligence",
+      "destination": "research/generative-media",
+      "surfaces": ["web", "server", "mobile-api"],
+      "status": "integrating",
+      "use": "provider/model/capability/prompt/workflow/evaluation/safety intelligence"
+    },
+    {
+      "id": "SAI-04",
+      "name": "AI Provider & API Integration",
+      "destination": "research/providers",
+      "surfaces": ["server", "web-admin", "mobile-api"],
+      "status": "reviewed-for-ingestion",
+      "use": "provider-neutral API/model/cost/privacy/change intelligence"
+    },
+    {
+      "id": "SAI-05",
+      "name": "Local & Offline AI",
+      "destination": "research/local-models",
+      "surfaces": ["server", "desktop", "mobile-api", "edge"],
+      "status": "mission-complete-in-source",
+      "sourceEvidence": "70-record completion checkpoint observed in supplied output",
+      "use": "open-weight model, license, hardware, runtime and deployment-profile intelligence"
+    },
+    {
+      "id": "SAI-06",
+      "name": "Document, Data & RAG Intelligence",
+      "destination": "research/document-rag",
+      "surfaces": ["web", "server", "mobile-api"],
+      "status": "mission-complete-rag-phase-in-source",
+      "sourceEvidence": "79-record RAG completion checkpoint observed in supplied output",
+      "use": "format extraction, provenance, ingestion, retrieval, reranking, tenant isolation and multimodal RAG"
+    },
+    {
+      "id": "SAI-07",
+      "name": "Conversational Voice Intelligence",
+      "destination": "research/voice",
+      "surfaces": ["web", "server", "mobile-api"],
+      "status": "reviewed-for-ingestion",
+      "use": "VAD, ASR, S2S, TTS, barge-in, Tamil-English code-switching, privacy and latency architecture"
+    },
+    {
+      "id": "SAI-08",
+      "name": "AI Evaluation & Benchmark Intelligence",
+      "destination": "research/evaluation",
+      "surfaces": ["server", "dashboard", "ci"],
+      "status": "nominal-phase-complete-plus-continuous-updates",
+      "sourceEvidence": "99-record nominal completion checkpoint followed by newer benchmark updates",
+      "use": "provider-independent benchmarks and SakthiAI-owned evaluation specifications"
+    },
+    {
+      "id": "SAI-09",
+      "name": "AI Security & Defensive Intelligence",
+      "destination": "research/security",
+      "surfaces": ["server", "dashboard", "ci"],
+      "status": "reviewed-for-ingestion",
+      "use": "prompt injection, RAG poisoning, MCP/tool risk, output handling, tenant isolation and agent least privilege"
+    },
+    {
+      "id": "SAI-CF",
+      "name": "Cloudflare Edge Architecture Intelligence",
+      "destination": "research/cloudflare",
+      "surfaces": ["web", "server", "edge", "deployment"],
+      "status": "reviewed-for-ingestion",
+      "use": "Workers, Workflows, Agents, Vectorize, Hyperdrive, D1, Durable Objects, R2, KV and edge architecture"
+    }
+  ],
+  "dashboard": {
+    "route": "/intelligence",
+    "showSourcePageCount": true,
+    "showResearchOnlyBanner": true,
+    "showDomainLifecycle": true,
+    "showRuntimeApprovalSeparately": true
+  }
+}
