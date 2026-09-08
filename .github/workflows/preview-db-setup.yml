@@ -44,5 +44,18 @@ jobs:
       - name: Apply preview schema
         run: pnpm db:push
 
+      - name: Verify database connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import mysql from 'mysql2/promise';
+          const connection = await mysql.createConnection(process.env.DATABASE_URL);
+          const [rows] = await connection.query('SELECT 1 AS ok');
+          await connection.end();
+          if (!Array.isArray(rows) || rows[0]?.ok !== 1) process.exit(1);
+          console.log('SakthiAI preview database connectivity PASS');
+          NODE
+
       - name: Unit and regression tests
         run: pnpm test
