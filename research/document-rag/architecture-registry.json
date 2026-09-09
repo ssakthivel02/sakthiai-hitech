@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "1.0.0",
+  "domain": "SAI-06 Document & Data Intelligence / RAG Architecture",
+  "sourceStatus": "historical-owner-supplied-research",
+  "runtimeTruth": false,
+  "runtimeApproved": false,
+  "records": [
+    {
+      "stableId": "PAT_RAG_MULTIMODAL_COLPALI",
+      "category": "multimodal-rag",
+      "title": "ColPali OCR-Free Vision-Language Retrieval",
+      "sourceTask": "SAI-06",
+      "retrievalDate": "2026-09-06",
+      "confidence": "SOURCE_RECORDED",
+      "verificationState": "HISTORICAL_SOURCE",
+      "runtimeApproved": false,
+      "problemSolved": "Preserve visual and spatial structure in complex PDF pages without flattening through OCR.",
+      "architectureSummary": "Indexes page images as multi-vector visual representations and uses late-interaction retrieval between query tokens and page patches.",
+      "implementationUse": ["document retrieval", "complex PDF evidence discovery", "multimodal RAG"],
+      "notes": "Owner-supplied Gemini output records this as a 2026 research pattern. Storage and dimensionality claims require current primary-source verification before implementation."
+    },
+    {
+      "stableId": "PAT_RAG_AGENTIC_CRAG",
+      "category": "agentic-rag",
+      "title": "Corrective RAG (CRAG) Retrieval Evaluator",
+      "sourceTask": "SAI-06",
+      "retrievalDate": "2026-09-06",
+      "confidence": "SOURCE_RECORDED",
+      "verificationState": "HISTORICAL_SOURCE",
+      "runtimeApproved": false,
+      "problemSolved": "Prevent irrelevant retrieved context from being forwarded blindly to generation.",
+      "architectureSummary": "Adds a retrieval-evaluator gate that classifies retrieved evidence and can trigger query rewriting or fallback retrieval before generation.",
+      "implementationUse": ["retrieval quality gate", "hallucination reduction", "fallback retrieval orchestration"],
+      "notes": "Research evidence only. Exact evaluator design, thresholds and fallback providers are not approved by this registry."
+    },
+    {
+      "stableId": "PAT_RAG_AGENTIC_SELF_RAG",
+      "category": "agentic-rag",
+      "title": "Self-RAG Reflective Generation",
+      "sourceTask": "SAI-06",
+      "retrievalDate": "2026-09-06",
+      "confidence": "SOURCE_RECORDED",
+      "verificationState": "HISTORICAL_SOURCE",
+      "runtimeApproved": false,
+      "problemSolved": "Detect unsupported claims and insufficient evidence during generation.",
+      "architectureSummary": "Uses reflection or critique signals during generation so the model can request additional retrieval and revise unsupported output.",
+      "implementationUse": ["evidence-aware generation", "self-correction", "citation quality"],
+      "notes": "Research evidence only; reflection-token details and implementation mechanism require model-specific verification."
+    }
+  ],
+  "sourceCheckpoint": {
+    "cumulativeCorpusCount": 79,
+    "sourceDeclaredState": "MISSION_COMPLETE (RAG Architecture Phase - Awaiting further directives)"
+  }
+}
