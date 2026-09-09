@@ -4,6 +4,7 @@ const files = [
   'research/intelligence/gemini-two-month-ingestion-ledger.json',
   'research/document-rag/architecture-registry.json',
   'research/evaluation/benchmark-registry.json',
+  'research/evaluation/video-quality-spec.json',
   'research/security/threat-control-registry.json',
 ];
 
@@ -36,6 +37,7 @@ for (const [file, value] of parsed) {
   }
   if (value.runtimeTruth === true) throw new Error(`${file} cannot declare research as runtime truth.`);
   if (value.runtimeApproved === true) throw new Error(`${file} cannot self-approve runtime use.`);
+  if (value.productionApproved === true) throw new Error(`${file} cannot self-approve production use.`);
 }
 
 const rag = parsed.get('research/document-rag/architecture-registry.json');
@@ -55,6 +57,31 @@ for (const record of evaluation.sakthiaiOwnedSpecifications ?? []) {
   if (record.verificationState !== 'SOURCE_DEFINED_SPEC') throw new Error(`${record.stableId} must remain SOURCE_DEFINED_SPEC until implemented and verified`);
 }
 if (evaluation.rules?.neverFabricateScores !== true) throw new Error('Evaluation registry must forbid fabricated scores.');
+
+const video = parsed.get('research/evaluation/video-quality-spec.json');
+registerId(video.stableId, 'video quality specification');
+if (video.verificationState !== 'SOURCE_DEFINED_SPEC') throw new Error('Video quality specification must remain SOURCE_DEFINED_SPEC.');
+if (video.runtimeApproved !== false || video.productionApproved !== false) throw new Error('Video quality specification cannot self-approve runtime or production use.');
+if (video.policy?.providerNeutral !== true) throw new Error('Video quality specification must remain provider-neutral.');
+if (video.policy?.neverFabricateScores !== true) throw new Error('Video quality specification must forbid fabricated scores.');
+if (video.policy?.humanReviewRequiredForPublishCandidate !== true) throw new Error('Publish-candidate video must require human review.');
+if (video.policy?.tamilQualityRequiresHumanEvaluation !== true) throw new Error('Tamil video quality must require human evaluation.');
+if (video.policy?.paidProviderActivation !== false) throw new Error('Video-quality research cannot activate paid providers.');
+const qualityDimensions = video.sakthiaiAcceptanceDimensions ?? [];
+if (qualityDimensions.length < 8) throw new Error('Video quality specification requires the complete acceptance dimension set.');
+const totalWeight = qualityDimensions.reduce((sum, dimension) => sum + Number(dimension.weight ?? 0), 0);
+if (totalWeight !== 100) throw new Error(`Video quality dimension weights must total 100; got ${totalWeight}`);
+for (const dimension of qualityDimensions) {
+  registerId(dimension.id, 'video quality dimension');
+  if (!dimension.name || !dimension.review) throw new Error(`${dimension.id} missing name/review guidance.`);
+  if (!Number.isFinite(dimension.weight) || dimension.weight <= 0) throw new Error(`${dimension.id} has invalid weight.`);
+}
+if ((video.criticalDefects ?? []).length === 0) throw new Error('Video quality specification must define critical defects.');
+if (video.acceptanceGates?.previewCandidate?.maximumCriticalDefects !== 0) throw new Error('Preview candidate must fail on any critical defect.');
+if (video.acceptanceGates?.publishCandidate?.maximumCriticalDefects !== 0) throw new Error('Publish candidate must fail on any critical defect.');
+if (video.acceptanceGates?.publishCandidate?.minimumWeightedScore <= video.acceptanceGates?.previewCandidate?.minimumWeightedScore) {
+  throw new Error('Publish-candidate threshold must be stricter than preview-candidate threshold.');
+}
 
 const security = parsed.get('research/security/threat-control-registry.json');
 if (security.defensiveOnly !== true) throw new Error('Security registry must remain defensive-only.');
@@ -76,7 +103,6 @@ if (ledger?.policy?.productionApproval !== false) throw new Error('Research inge
 for (const domain of ledger?.domains ?? []) {
   if (!domain.id || !domain.destination) throw new Error('Every intelligence domain requires id and destination.');
   if (!fs.existsSync(domain.destination)) {
-    // Some mapped destinations are intentionally staged for later normalization.
     console.log(`INTELLIGENCE_DESTINATION_PENDING ${domain.id} ${domain.destination}`);
   }
 }
