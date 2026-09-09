@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1.0.0",
+  "specId": "SAI-VIDEO-QUALITY",
+  "sourcePromptOrStoryboard": "Synthetic CI fixture only: coherent 16:9 video with stable subject, motion, audio and captions.",
+  "providerOrLocalAdapterId": null,
+  "modelIdIfKnown": null,
+  "generationSettingsIfKnown": null,
+  "output": {
+    "filename": "ci-fixture.mp4",
+    "durationSeconds": 10,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "hasAudio": true
+  },
+  "reviewer": {
+    "type": "HUMAN",
+    "reviewTimestamp": "2026-09-09T00:00:00Z",
+    "tamilQualityHumanReviewed": false
+  },
+  "dimensionScores": {
+    "VQ-CONTENT-01": 5,
+    "VQ-TEMPORAL-01": 5,
+    "VQ-IDENTITY-01": 5,
+    "VQ-VISUAL-01": 5,
+    "VQ-CAMERA-01": 5,
+    "VQ-AUDIO-01": 5,
+    "VQ-TEXT-01": 5,
+    "VQ-DELIVERY-01": 5
+  },
+  "criticalDefects": [],
+  "notes": ["CI logic fixture; not evidence of a real generated video."],
+  "decision": "PUBLISH_CANDIDATE"
+}
