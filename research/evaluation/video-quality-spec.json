@@ -1,0 +1,159 @@
+{
+  "schemaVersion": "1.0.0",
+  "stableId": "SAI-VIDEO-QUALITY",
+  "domain": "SAI-08 AI Evaluation & Benchmark Intelligence",
+  "sourceTasks": ["SAI-03", "SAI-08"],
+  "sourceStatus": "owner-supplied-research-derived-specification",
+  "verificationState": "SOURCE_DEFINED_SPEC",
+  "runtimeTruth": false,
+  "runtimeApproved": false,
+  "productionApproved": false,
+  "objective": "Provide a provider-neutral acceptance protocol that prevents visibly weak generated video from being promoted as high-quality output without structured review.",
+  "scope": [
+    "GM-T2V",
+    "GM-I2V",
+    "GM-V2V",
+    "GM-EXTEND",
+    "GM-REFCOND",
+    "GM-CONSISTENCY",
+    "GM-CAMERA",
+    "GM-MULTISHOT",
+    "GM-EDIT-VIDEO",
+    "GM-ASSEMBLY",
+    "GM-LIPSYNC",
+    "GM-CAPTIONS"
+  ],
+  "sourceDefinedQualityDimensions": [
+    "promptAdherence",
+    "temporalConsistency",
+    "identityReferenceConsistency",
+    "motionQuality",
+    "visualArtifacts",
+    "textRendering",
+    "audioSynchronization",
+    "lipSynchronization",
+    "speechIntelligibility",
+    "generationLatency",
+    "cost",
+    "reproducibility",
+    "safety"
+  ],
+  "sakthiaiAcceptanceDimensions": [
+    {
+      "id": "VQ-CONTENT-01",
+      "name": "Prompt and storyboard adherence",
+      "weight": 18,
+      "review": "Confirm requested subject, action, environment, shot intent, duration and continuity are materially present without major invented scene changes."
+    },
+    {
+      "id": "VQ-TEMPORAL-01",
+      "name": "Temporal and motion coherence",
+      "weight": 18,
+      "review": "Check frame-to-frame stability, natural motion, object permanence, camera continuity and absence of abrupt morphology changes or unexplained motion jumps."
+    },
+    {
+      "id": "VQ-IDENTITY-01",
+      "name": "Character, face and reference consistency",
+      "weight": 16,
+      "review": "Check identity, clothing, proportions, product details and other reference-bound features remain stable across shots where consistency is required."
+    },
+    {
+      "id": "VQ-VISUAL-01",
+      "name": "Visual fidelity and artifact control",
+      "weight": 16,
+      "review": "Check anatomy, hands, eyes, edges, textures, duplicated objects, warping, flicker, ghosting, compression-like artifacts and unreadable generated text."
+    },
+    {
+      "id": "VQ-CAMERA-01",
+      "name": "Composition and camera quality",
+      "weight": 8,
+      "review": "Check framing, shot size, camera movement, horizon, focus, lighting continuity and whether the camera behavior supports the requested scene rather than distracting from it."
+    },
+    {
+      "id": "VQ-AUDIO-01",
+      "name": "Audio, speech and lip synchronization",
+      "weight": 10,
+      "review": "When audio exists, check intelligibility, clipping, timing, background balance, dialogue continuity and visible mouth-to-speech alignment where applicable."
+    },
+    {
+      "id": "VQ-TEXT-01",
+      "name": "Captions, overlays and readable text",
+      "weight": 6,
+      "review": "Check captions and overlays are readable, correctly timed, safe inside the target frame and free from obvious spelling or character corruption."
+    },
+    {
+      "id": "VQ-DELIVERY-01",
+      "name": "Delivery integrity",
+      "weight": 8,
+      "review": "Check expected aspect ratio, duration, complete beginning/end, absence of unintended black frames or frozen tails, and suitability for the target publishing surface."
+    }
+  ],
+  "scoring": {
+    "dimensionScale": {
+      "0": "unusable or missing",
+      "1": "major visible failures",
+      "2": "multiple distracting failures",
+      "3": "acceptable with noticeable defects",
+      "4": "strong with minor defects",
+      "5": "excellent for the intended use"
+    },
+    "weightedScoreRange": "0-100",
+    "formula": "sum((dimensionScore / 5) * dimensionWeight)",
+    "note": "Thresholds below are SakthiAI internal engineering gates, not claims sourced from an external benchmark."
+  },
+  "acceptanceGates": {
+    "previewCandidate": {
+      "minimumWeightedScore": 80,
+      "maximumCriticalDefects": 0,
+      "minimumPerDimensionScore": 3
+    },
+    "publishCandidate": {
+      "minimumWeightedScore": 88,
+      "maximumCriticalDefects": 0,
+      "minimumPerDimensionScore": 3,
+      "requiredDimensionsAtLeast4": ["VQ-CONTENT-01", "VQ-TEMPORAL-01", "VQ-IDENTITY-01", "VQ-VISUAL-01"]
+    }
+  },
+  "criticalDefects": [
+    "identity changes that materially alter the intended person or principal character",
+    "severe anatomy or object deformation dominating a shot",
+    "persistent flicker or temporal collapse",
+    "unintended black/frozen/missing sections",
+    "audio absent when explicitly required",
+    "gross lip-sync failure when synchronized speech is a core requirement",
+    "unreadable or materially wrong required on-screen text",
+    "unsafe or non-consensual identity/voice use",
+    "output substantially contradicts the approved prompt/storyboard"
+  ],
+  "reviewProtocol": [
+    "Review the complete video once at normal playback speed without pausing.",
+    "Review a second time shot-by-shot for temporal, identity, anatomy, camera and text defects.",
+    "Review audio separately with headphones when speech, music or synchronization matters.",
+    "Record dimension scores and every critical defect; do not hide defects behind a single average score.",
+    "Reject a candidate immediately when any critical defect is present.",
+    "If two candidate renders exist, compare them against the same rubric and keep the better evidence-backed result rather than selecting by provider reputation.",
+    "Do not claim Tamil speech, pronunciation, captions or cultural quality without SakthiAI Tamil-specific human evaluation."
+  ],
+  "requiredEvidence": [
+    "sourcePromptOrStoryboard",
+    "providerOrLocalAdapterId",
+    "modelIdIfKnown",
+    "generationSettingsIfKnown",
+    "outputDuration",
+    "outputDimensions",
+    "dimensionScores",
+    "criticalDefects",
+    "reviewerType",
+    "reviewTimestamp",
+    "decision"
+  ],
+  "decisionValues": ["REJECT", "REGENERATE", "PREVIEW_CANDIDATE", "PUBLISH_CANDIDATE"],
+  "policy": {
+    "providerNeutral": true,
+    "neverFabricateScores": true,
+    "humanReviewRequiredForPublishCandidate": true,
+    "tamilQualityRequiresHumanEvaluation": true,
+    "paidProviderActivation": false,
+    "researchSpecDoesNotEnableRuntime": true
+  }
+}
