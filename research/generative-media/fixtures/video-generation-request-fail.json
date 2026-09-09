@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0.0",
+  "requestId": "VGEN-CI-FAIL-001",
+  "capabilityId": "GM-MULTISHOT",
+  "providerOrLocalAdapterId": null,
+  "modelIdIfKnown": null,
+  "target": {
+    "aspectRatio": "16:9",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "durationSeconds": 12
+  },
+  "continuity": {
+    "identityLockRequired": true,
+    "referenceAssetIds": [],
+    "wardrobeLockRequired": true,
+    "environmentLockRequired": true
+  },
+  "textPolicy": {
+    "criticalOnScreenTextAllowedInGeneration": true,
+    "criticalTextHandling": "POST_PROCESS"
+  },
+  "audioPolicy": {
+    "audioRequired": false,
+    "lipSyncRequired": true,
+    "tamilHumanReviewRequiredWhenApplicable": true
+  },
+  "shots": [
+    {
+      "shotId": "SHOT-001",
+      "durationSeconds": 12,
+      "subject": "Primary character",
+      "action": "Runs while turning, gesturing and interacting with several moving objects",
+      "environment": "Complex moving environment",
+      "camera": {"shotSize": "MS", "movement": "ORBIT"},
+      "activeMotionCount": 4,
+      "negativeConstraints": ["no flicker"]
+    }
+  ],
+  "qualityPolicy": {
+    "regenerateFailedShotsOnly": false,
+    "maximumWholeVideoRetriesBeforeDiagnosis": 5,
+    "postGenerationSpecId": "SAI-VIDEO-QUALITY",
+    "productionApproved": false,
+    "paidProviderApproved": false
+  }
+}
