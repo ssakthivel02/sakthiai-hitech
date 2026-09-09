@@ -1,0 +1,100 @@
+{
+  "schemaVersion": "1.0.0",
+  "status": "current-primary-source-evidence",
+  "lastVerifiedDate": "2026-09-10",
+  "policy": {
+    "providerNeutral": true,
+    "researchOnly": true,
+    "productionApproved": false,
+    "paidProviderApproved": false,
+    "noProviderRankingWithoutSakthiAIBenchmark": true,
+    "deprecatedOrSunsettingProvidersExcludedFromNewIntegration": true
+  },
+  "providers": [
+    {
+      "providerId": "GOOGLE_GEMINI_VEO_3_1",
+      "provider": "Google",
+      "product": "Veo 3.1 in Gemini API",
+      "verificationState": "VERIFIED_CURRENT_PRIMARY",
+      "integrationState": "CANDIDATE_RESEARCH_ONLY",
+      "productionApproved": false,
+      "paidProviderApproved": false,
+      "sourceUrls": [
+        "https://ai.google.dev/gemini-api/docs/veo?hl=en"
+      ],
+      "verifiedFacts": {
+        "textToVideo": true,
+        "imageToVideo": true,
+        "nativeAudio": true,
+        "documentedClipDurationSeconds": [8],
+        "documentedResolutions": ["720p", "1080p", "4k"],
+        "documentedAspectRatios": ["16:9", "9:16"],
+        "videoExtension": true,
+        "firstAndLastFrameConditioning": true,
+        "referenceImagesMaximum": 3,
+        "documentedExampleModelId": "veo-3.1-generate-preview"
+      },
+      "sakthiaiRoutingSignals": [
+        "reference-conditioned shots",
+        "first/last-frame controlled transitions",
+        "native-audio experiments",
+        "short high-quality cinematic shot candidates"
+      ],
+      "notes": "Capability facts are recorded from current Google primary documentation. This is not SakthiAI quality approval, pricing approval, or a provider ranking."
+    },
+    {
+      "providerId": "RUNWAY_GEN_4_5",
+      "provider": "Runway",
+      "product": "Gen-4.5",
+      "verificationState": "VERIFIED_CURRENT_PRIMARY",
+      "integrationState": "CANDIDATE_RESEARCH_ONLY",
+      "productionApproved": false,
+      "paidProviderApproved": false,
+      "sourceUrls": [
+        "https://docs.dev.runwayml.com/guides/using-the-api/",
+        "https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5",
+        "https://help.runwayml.com/hc/en-us/articles/48324313115155-Image-to-Video-Prompting-Guide"
+      ],
+      "verifiedFacts": {
+        "textToVideo": true,
+        "imageToVideo": true,
+        "documentedDurationRangeSeconds": [2, 10],
+        "documentedOutputResolution": "720p",
+        "documentedFrameRates": [24, 25],
+        "documentedApiModelId": "gen4.5",
+        "imageToVideoPromptFocus": "motion-camera-temporal-progression"
+      },
+      "sakthiaiRoutingSignals": [
+        "short text-to-video shot candidates",
+        "image-anchored motion shots",
+        "controlled camera-motion experiments",
+        "candidate comparison against the same SakthiAI video quality rubric"
+      ],
+      "notes": "Runway marketing quality language is not promoted as a SakthiAI benchmark result. Only documented API/mode/spec facts are retained here."
+    },
+    {
+      "providerId": "OPENAI_SORA_2_API",
+      "provider": "OpenAI",
+      "product": "Sora 2 API",
+      "verificationState": "VERIFIED_CURRENT_PRIMARY",
+      "integrationState": "EXCLUDED_SUNSET_IMMINENT",
+      "productionApproved": false,
+      "paidProviderApproved": false,
+      "sourceUrls": [
+        "https://developers.openai.com/api/reference/typescript/resources/videos/methods/create",
+        "https://developers.openai.com/api/docs/models/sora-2"
+      ],
+      "verifiedFacts": {
+        "textPrompt": true,
+        "optionalImageReference": true,
+        "documentedDurationsSeconds": [4, 8, 12],
+        "documentedLandscapeResolution": "1280x720",
+        "documentedPortraitResolution": "720x1280",
+        "syncedAudio": true,
+        "apiSunsetDate": "2026-09-24"
+      },
+      "sakthiaiRoutingSignals": [],
+      "notes": "Current OpenAI primary documentation marks the Sora API deprecated and scheduled to shut down on 2026-09-24. It is therefore excluded from new SakthiAI integration planning despite documented video capability."
+    }
+  ]
+}
