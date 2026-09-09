@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import {
   creatorGenerations,
   creatorProjects,
@@ -6,10 +6,12 @@ import {
   creatorShots,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { generationStateAfterProviderState } from "./lifecycle";
 import {
   assertCreatorJobTransition,
   type CreatorFailureClass,
   type CreatorJobState,
+  type CreatorMediaKind,
   type CreatorProviderPoll,
   type CreatorProviderSubmission,
 } from "./types";
@@ -20,15 +22,7 @@ async function requireDb() {
   return db;
 }
 
-export async function createQueuedVideoGeneration(input: {
-  workspaceId: number;
-  creatorProjectId: number;
-  shotId: number;
-  provider: string;
-  model: string;
-  parameters: unknown;
-  sourceAssetIds?: number[];
-}) {
+async function requireProjectAndShot(input: { workspaceId: number; creatorProjectId: number; shotId: number }) {
   const db = await requireDb();
   const [project] = await db
     .select({ id: creatorProjects.id })
@@ -49,12 +43,25 @@ export async function createQueuedVideoGeneration(input: {
     )
     .limit(1);
   if (!shot) throw new Error("CREATOR_SHOT_NOT_FOUND");
+  return db;
+}
 
+export async function createQueuedGeneration(input: {
+  workspaceId: number;
+  creatorProjectId: number;
+  shotId: number;
+  kind: CreatorMediaKind;
+  provider: string;
+  model: string;
+  parameters: unknown;
+  sourceAssetIds?: number[];
+}) {
+  const db = await requireProjectAndShot(input);
   const result = await db.insert(creatorGenerations).values({
     workspaceId: input.workspaceId,
     creatorProjectId: input.creatorProjectId,
     shotId: input.shotId,
-    kind: "VIDEO",
+    kind: input.kind,
     provider: input.provider,
     model: input.model,
     parametersJson: JSON.stringify(input.parameters),
@@ -67,6 +74,18 @@ export async function createQueuedVideoGeneration(input: {
   return generationId;
 }
 
+export async function createQueuedVideoGeneration(input: {
+  workspaceId: number;
+  creatorProjectId: number;
+  shotId: number;
+  provider: string;
+  model: string;
+  parameters: unknown;
+  sourceAssetIds?: number[];
+}) {
+  return createQueuedGeneration({ ...input, kind: "VIDEO" });
+}
+
 export async function recordProviderSubmission(input: {
   workspaceId: number;
   creatorProjectId: number;
@@ -74,7 +93,23 @@ export async function recordProviderSubmission(input: {
   submission: CreatorProviderSubmission;
 }) {
   const db = await requireDb();
-  assertCreatorJobTransition("QUEUED", input.submission.state);
+  const [generation] = await db
+    .select()
+    .from(creatorGenerations)
+    .where(
+      and(
+        eq(creatorGenerations.id, input.generationId),
+        eq(creatorGenerations.workspaceId, input.workspaceId),
+        eq(creatorGenerations.creatorProjectId, input.creatorProjectId),
+      ),
+    )
+    .limit(1);
+  if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
+
+  const generationState = generationStateAfterProviderState(input.submission.state);
+  assertCreatorJobTransition(generation.status as CreatorJobState, generationState);
+  const providerCompletedAt = input.submission.state === "SUCCEEDED" ? new Date() : null;
+
   await db.insert(creatorProviderJobs).values({
     workspaceId: input.workspaceId,
     creatorProjectId: input.creatorProjectId,
@@ -85,21 +120,17 @@ export async function recordProviderSubmission(input: {
     snapshotJson: JSON.stringify(input.submission.raw),
     costMicros: input.submission.costMicros ?? null,
     currency: input.submission.currency ?? null,
+    completedAt: providerCompletedAt,
   });
   await db
     .update(creatorGenerations)
     .set({
-      status: input.submission.state,
+      status: generationState,
       costMicros: input.submission.costMicros ?? null,
       currency: input.submission.currency ?? null,
+      completedAt: null,
     })
-    .where(
-      and(
-        eq(creatorGenerations.id, input.generationId),
-        eq(creatorGenerations.workspaceId, input.workspaceId),
-        eq(creatorGenerations.creatorProjectId, input.creatorProjectId),
-      ),
-    );
+    .where(eq(creatorGenerations.id, input.generationId));
 }
 
 export async function recordProviderPoll(input: {
@@ -115,8 +146,19 @@ export async function recordProviderPoll(input: {
     .limit(1);
   if (!job) throw new Error("CREATOR_PROVIDER_JOB_NOT_FOUND");
 
+  const [generation] = await db
+    .select()
+    .from(creatorGenerations)
+    .where(and(eq(creatorGenerations.id, job.generationId), eq(creatorGenerations.workspaceId, input.workspaceId)))
+    .limit(1);
+  if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
+
   assertCreatorJobTransition(job.status as CreatorJobState, input.poll.state);
-  const completedAt = ["SUCCEEDED", "FAILED", "CANCELLED"].includes(input.poll.state) ? new Date() : null;
+  const generationState = generationStateAfterProviderState(input.poll.state);
+  assertCreatorJobTransition(generation.status as CreatorJobState, generationState);
+  const providerCompletedAt = ["SUCCEEDED", "FAILED", "CANCELLED"].includes(input.poll.state) ? new Date() : null;
+  const generationCompletedAt = ["FAILED", "CANCELLED"].includes(generationState) ? new Date() : null;
+
   await db
     .update(creatorProviderJobs)
     .set({
@@ -125,23 +167,47 @@ export async function recordProviderPoll(input: {
       failureClass: input.poll.failureClass ?? null,
       costMicros: input.poll.costMicros ?? null,
       currency: input.poll.currency ?? null,
-      completedAt,
+      completedAt: providerCompletedAt,
     })
     .where(eq(creatorProviderJobs.id, job.id));
 
   await db
     .update(creatorGenerations)
     .set({
-      status: input.poll.state,
+      status: generationState,
       failureClass: input.poll.failureClass ?? null,
       errorMessage: input.poll.errorMessage ?? null,
       costMicros: input.poll.costMicros ?? null,
       currency: input.poll.currency ?? null,
-      completedAt,
+      completedAt: generationCompletedAt,
     })
     .where(eq(creatorGenerations.id, job.generationId));
 
-  return { generationId: job.generationId, creatorProjectId: job.creatorProjectId, state: input.poll.state };
+  return {
+    generationId: job.generationId,
+    creatorProjectId: job.creatorProjectId,
+    providerState: input.poll.state,
+    generationState,
+  };
+}
+
+export async function getGenerationExecutionContext(workspaceId: number, generationId: number) {
+  const db = await requireDb();
+  const [generation] = await db
+    .select()
+    .from(creatorGenerations)
+    .where(and(eq(creatorGenerations.id, generationId), eq(creatorGenerations.workspaceId, workspaceId)))
+    .limit(1);
+  if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
+
+  const [providerJob] = await db
+    .select()
+    .from(creatorProviderJobs)
+    .where(and(eq(creatorProviderJobs.generationId, generationId), eq(creatorProviderJobs.workspaceId, workspaceId)))
+    .orderBy(desc(creatorProviderJobs.id))
+    .limit(1);
+
+  return { generation, providerJob: providerJob ?? null };
 }
 
 export async function markGenerationFailed(input: {

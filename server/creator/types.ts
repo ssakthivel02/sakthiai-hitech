@@ -87,6 +87,11 @@ export interface CreatorProviderArtifact {
   dataBase64?: string;
 }
 
+export interface CreatorFetchedArtifact {
+  mimeType: string;
+  data: Uint8Array;
+}
+
 export interface CreatorProviderPoll {
   providerJobId: string;
   state: "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "RETRYABLE";
@@ -105,6 +110,7 @@ export interface CreatorMediaProvider {
   submit(request: CreatorMediaRequest): Promise<CreatorProviderSubmission>;
   poll(providerJobId: string): Promise<CreatorProviderPoll>;
   cancel?(providerJobId: string): Promise<CreatorProviderPoll>;
+  fetchArtifact?(artifact: CreatorProviderArtifact): Promise<CreatorFetchedArtifact>;
   classifyFailure(error: unknown): CreatorFailureClass;
 }
 
