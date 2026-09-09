@@ -1,6 +1,11 @@
 {
   "schemaVersion": "1.0.0",
   "specId": "SAI-VIDEO-QUALITY",
+  "generationRequest": {
+    "path": "research/generative-media/fixtures/video-generation-request-pass.json",
+    "requestId": "VGEN-CI-PASS-001",
+    "gitBlobSha": "028d209511546796466a4358f8b371d4f281aaaf"
+  },
   "sourcePromptOrStoryboard": "Synthetic CI fixture only: intentionally defective output.",
   "providerOrLocalAdapterId": null,
   "modelIdIfKnown": null,
