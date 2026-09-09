@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Intelligence research integrity
+        run: node scripts/validate-intelligence-research.mjs
+
       - name: Production source neutrality guard
         shell: bash
         run: |
