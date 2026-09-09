@@ -5,6 +5,7 @@ const ROOT = process.cwd();
 const registryPath = path.join(ROOT, 'research/generative-media/capability-registry.json');
 const contractPath = path.join(ROOT, 'research/generative-media/studio-contracts.json');
 const evidenceSchemaPath = path.join(ROOT, 'research/generative-media/evidence.schema.json');
+const videoProviderEvidencePath = path.join(ROOT, 'research/generative-media/video-provider-evidence.json');
 
 const fail = (message) => {
   console.error(`GENERATIVE_MEDIA_GATE_FAIL: ${message}`);
@@ -20,7 +21,7 @@ const readJson = (file) => {
   }
 };
 
-for (const file of [registryPath, contractPath, evidenceSchemaPath]) {
+for (const file of [registryPath, contractPath, evidenceSchemaPath, videoProviderEvidencePath]) {
   if (!fs.existsSync(file)) fail(`required file missing: ${path.relative(ROOT, file)}`);
 }
 
@@ -29,7 +30,8 @@ if (process.exitCode) process.exit(process.exitCode);
 const registry = readJson(registryPath);
 const contracts = readJson(contractPath);
 const evidenceSchema = readJson(evidenceSchemaPath);
-if (!registry || !contracts || !evidenceSchema) process.exit(1);
+const videoProviderEvidence = readJson(videoProviderEvidencePath);
+if (!registry || !contracts || !evidenceSchema || !videoProviderEvidence) process.exit(1);
 
 if (registry.policy?.providerNeutral !== true) fail('registry.policy.providerNeutral must be true');
 if (registry.policy?.productionApproval !== false) fail('research registry must not grant production approval');
@@ -80,7 +82,41 @@ for (const capabilityId of capabilityIds) {
   if (!contractIds.has(capabilityId)) fail(`missing studio contract for ${capabilityId}`);
 }
 
-const serialized = JSON.stringify({ registry, contracts, evidenceSchema });
+if (videoProviderEvidence.status !== 'current-primary-source-evidence') fail('video provider evidence must declare current-primary-source-evidence status');
+if (!/^\d{4}-\d{2}-\d{2}$/.test(videoProviderEvidence.lastVerifiedDate ?? '')) fail('video provider evidence requires lastVerifiedDate');
+if (videoProviderEvidence.policy?.providerNeutral !== true) fail('video provider evidence must remain provider-neutral');
+if (videoProviderEvidence.policy?.researchOnly !== true) fail('video provider evidence must remain research-only');
+if (videoProviderEvidence.policy?.productionApproved !== false) fail('video provider evidence cannot approve production');
+if (videoProviderEvidence.policy?.paidProviderApproved !== false) fail('video provider evidence cannot approve paid providers');
+if (videoProviderEvidence.policy?.noProviderRankingWithoutSakthiAIBenchmark !== true) fail('provider ranking must remain blocked until SakthiAI benchmark evidence exists');
+if (videoProviderEvidence.policy?.deprecatedOrSunsettingProvidersExcludedFromNewIntegration !== true) fail('sunsetting providers must be excluded from new integration');
+
+const providerIds = new Set();
+let excludedSunsetCount = 0;
+for (const provider of videoProviderEvidence.providers ?? []) {
+  if (!/^[A-Z0-9_]+$/.test(provider.providerId ?? '')) fail(`invalid providerId: ${provider.providerId}`);
+  if (providerIds.has(provider.providerId)) fail(`duplicate video provider evidence: ${provider.providerId}`);
+  providerIds.add(provider.providerId);
+  if (!provider.provider || !provider.product) fail(`${provider.providerId}: provider/product required`);
+  if (provider.verificationState !== 'VERIFIED_CURRENT_PRIMARY') fail(`${provider.providerId}: verificationState must be VERIFIED_CURRENT_PRIMARY`);
+  if (!['CANDIDATE_RESEARCH_ONLY', 'EXCLUDED_SUNSET_IMMINENT'].includes(provider.integrationState)) fail(`${provider.providerId}: invalid integrationState`);
+  if (provider.productionApproved !== false || provider.paidProviderApproved !== false) fail(`${provider.providerId}: research evidence cannot grant approvals`);
+  if (!Array.isArray(provider.sourceUrls) || provider.sourceUrls.length === 0) fail(`${provider.providerId}: sourceUrls required`);
+  for (const sourceUrl of provider.sourceUrls) {
+    if (!/^https:\/\//.test(sourceUrl)) fail(`${provider.providerId}: source must use HTTPS`);
+  }
+  if (!provider.verifiedFacts || typeof provider.verifiedFacts !== 'object') fail(`${provider.providerId}: verifiedFacts required`);
+  if (!Array.isArray(provider.sakthiaiRoutingSignals)) fail(`${provider.providerId}: sakthiaiRoutingSignals must be an array`);
+  if (provider.integrationState === 'EXCLUDED_SUNSET_IMMINENT') {
+    excludedSunsetCount += 1;
+    if (provider.sakthiaiRoutingSignals.length !== 0) fail(`${provider.providerId}: excluded sunsetting provider cannot expose routing signals`);
+    if (!provider.verifiedFacts.apiSunsetDate) fail(`${provider.providerId}: excluded sunsetting provider requires apiSunsetDate`);
+  }
+}
+if (providerIds.size < 2) fail('video provider evidence requires at least two independently verified provider records');
+if (excludedSunsetCount < 1) fail('video provider evidence should explicitly preserve known sunset exclusion evidence when present');
+
+const serialized = JSON.stringify({ registry, contracts, evidenceSchema, videoProviderEvidence });
 const forbiddenSecretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /ghp_[A-Za-z0-9]{20,}/,
@@ -99,4 +135,4 @@ if (contracts.policy?.mobileConsumesServerContracts !== true) fail('mobileConsum
 if (contracts.policy?.noVendorLockIn !== true) fail('noVendorLockIn must be true');
 
 if (process.exitCode) process.exit(1);
-console.log(`GENERATIVE_MEDIA_GATE_PASS capabilities=${capabilityIds.size} contracts=${contractIds.size}`);
+console.log(`GENERATIVE_MEDIA_GATE_PASS capabilities=${capabilityIds.size} contracts=${contractIds.size} videoProviders=${providerIds.size} excludedSunsets=${excludedSunsetCount}`);
