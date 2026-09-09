@@ -1,0 +1,74 @@
+name: SakthiAI Parallel Work Guard
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coordination-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout proposed head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify canonical repository and branch discipline
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REPOSITORY" != "ssakthivel02/sakthiai-hitech" ]; then
+            echo "Wrong canonical repository: $GITHUB_REPOSITORY"
+            exit 1
+          fi
+          if [ "${GITHUB_HEAD_REF:-}" = "main" ]; then
+            echo "Do not develop from a branch named main. Use a dedicated task branch."
+            exit 1
+          fi
+
+      - name: Require branch to contain latest main before merge validation
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "Task branch does not contain the latest main."
+            echo "Reconcile current main into this branch, resolve overlap deliberately, then rerun CI."
+            exit 1
+          fi
+          echo "Latest-main ancestry guard PASS"
+
+      - name: Classify high-risk overlap surface
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$base" "$head" > /tmp/changed-files.txt
+          cat /tmp/changed-files.txt
+          if grep -E '^(\.github/workflows/|drizzle/|server/|release/|render\.yaml$|package\.json$|pnpm-lock\.yaml$)' /tmp/changed-files.txt >/dev/null; then
+            echo "High-risk files changed: deliberate reconciliation + exact-head validation required."
+          else
+            echo "No high-risk coordination surface detected."
+          fi
+
+      - name: Reject committed secret files
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          if git diff --name-only "$base" "$head" | grep -E '(^|/)(\.env|\.env\..+|.*\.pem|.*\.key|.*\.p12|.*\.pfx)$' | grep -Ev '(^|/)\.env\.example$'; then
+            echo "Potential secret-bearing file committed. Remove it from the branch."
+            exit 1
+          fi
+          echo "Secret-file path guard PASS"
