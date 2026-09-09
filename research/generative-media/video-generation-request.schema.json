@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sakthiai.local/schemas/video-generation-request.schema.json",
+  "title": "SakthiAI Video Generation Quality Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "capabilityId",
+    "providerOrLocalAdapterId",
+    "target",
+    "continuity",
+    "textPolicy",
+    "audioPolicy",
+    "shots",
+    "qualityPolicy"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "1.0.0"},
+    "requestId": {"type": "string", "pattern": "^VGEN-[A-Z0-9-]+$"},
+    "capabilityId": {"enum": ["GM-T2V", "GM-I2V", "GM-V2V", "GM-EXTEND", "GM-REFCOND", "GM-CONSISTENCY", "GM-CAMERA", "GM-MULTISHOT", "GM-EDIT-VIDEO"]},
+    "providerOrLocalAdapterId": {"type": ["string", "null"]},
+    "modelIdIfKnown": {"type": ["string", "null"]},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["aspectRatio", "width", "height", "fps", "durationSeconds"],
+      "properties": {
+        "aspectRatio": {"enum": ["16:9", "9:16", "1:1", "4:5", "21:9"]},
+        "width": {"type": "integer", "minimum": 720},
+        "height": {"type": "integer", "minimum": 720},
+        "fps": {"type": "number", "minimum": 23.976, "maximum": 60},
+        "durationSeconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 600}
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identityLockRequired", "referenceAssetIds", "wardrobeLockRequired", "environmentLockRequired"],
+      "properties": {
+        "identityLockRequired": {"type": "boolean"},
+        "referenceAssetIds": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "wardrobeLockRequired": {"type": "boolean"},
+        "environmentLockRequired": {"type": "boolean"}
+      }
+    },
+    "textPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["criticalOnScreenTextAllowedInGeneration", "criticalTextHandling"],
+      "properties": {
+        "criticalOnScreenTextAllowedInGeneration": {"const": false},
+        "criticalTextHandling": {"enum": ["POST_PROCESS", "CAPTION_LAYER", "NONE_REQUIRED"]}
+      }
+    },
+    "audioPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["audioRequired", "lipSyncRequired", "tamilHumanReviewRequiredWhenApplicable"],
+      "properties": {
+        "audioRequired": {"type": "boolean"},
+        "lipSyncRequired": {"type": "boolean"},
+        "tamilHumanReviewRequiredWhenApplicable": {"const": true}
+      }
+    },
+    "shots": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 120,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["shotId", "durationSeconds", "subject", "action", "environment", "camera", "activeMotionCount", "negativeConstraints"],
+        "properties": {
+          "shotId": {"type": "string", "pattern": "^SHOT-[0-9]{3}$"},
+          "durationSeconds": {"type": "number", "minimum": 1, "maximum": 12},
+          "subject": {"type": "string", "minLength": 3},
+          "action": {"type": "string", "minLength": 3},
+          "environment": {"type": "string", "minLength": 3},
+          "camera": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["shotSize", "movement"],
+            "properties": {
+              "shotSize": {"enum": ["ECU", "CU", "MCU", "MS", "MLS", "WS", "EWS"]},
+              "movement": {"enum": ["LOCKED", "PAN", "TILT", "DOLLY_IN", "DOLLY_OUT", "TRACK", "ORBIT", "CRANE", "HANDHELD_CONTROLLED"]}
+            }
+          },
+          "activeMotionCount": {"type": "integer", "minimum": 0, "maximum": 2},
+          "negativeConstraints": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 3}, "uniqueItems": true}
+        }
+      }
+    },
+    "qualityPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["regenerateFailedShotsOnly", "maximumWholeVideoRetriesBeforeDiagnosis", "postGenerationSpecId", "productionApproved", "paidProviderApproved"],
+      "properties": {
+        "regenerateFailedShotsOnly": {"const": true},
+        "maximumWholeVideoRetriesBeforeDiagnosis": {"type": "integer", "minimum": 0, "maximum": 1},
+        "postGenerationSpecId": {"const": "SAI-VIDEO-QUALITY"},
+        "productionApproved": {"const": false},
+        "paidProviderApproved": {"const": false}
+      }
+    }
+  }
+}
