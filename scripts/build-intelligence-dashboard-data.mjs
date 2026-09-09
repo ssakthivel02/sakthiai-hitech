@@ -5,6 +5,7 @@ const outputPath = 'client/src/generated/intelligence-dashboard-data.json';
 const ledgerPath = 'research/intelligence/gemini-two-month-ingestion-ledger.json';
 const ragPath = 'research/document-rag/architecture-registry.json';
 const evaluationPath = 'research/evaluation/benchmark-registry.json';
+const videoQualityPath = 'research/evaluation/video-quality-spec.json';
 const securityPath = 'research/security/threat-control-registry.json';
 
 function readJson(file) {
@@ -15,22 +16,23 @@ function readJson(file) {
 const ledger = readJson(ledgerPath);
 const rag = readJson(ragPath);
 const evaluation = readJson(evaluationPath);
+const videoQuality = readJson(videoQualityPath);
 const security = readJson(securityPath);
 
 const domainEvidence = {
-  'SAI-03': 'Provider/model capability layer already governed under research/generative-media.',
+  'SAI-03': 'Provider/model capability layer already governed under research/generative-media; video outputs now have a provider-neutral quality acceptance specification.',
   'SAI-04': 'Primary-source re-verification is required before any runtime provider binding.',
   'SAI-05': ledger.domains.find(domain => domain.id === 'SAI-05')?.sourceEvidence ?? 'Historical owner-supplied research checkpoint.',
   'SAI-06': `${rag.records?.length ?? 0} normalized architecture patterns; ${rag.sourceCheckpoint?.cumulativeCorpusCount ?? 'unknown'}-record source checkpoint.`,
   'SAI-07': 'Provider-independent voice architecture remains research evidence pending normalization.',
-  'SAI-08': `${evaluation.sakthiaiOwnedSpecifications?.length ?? 0} SakthiAI-owned benchmark specifications; ${evaluation.sourceCheckpoint?.nominalCumulativeCorpusCount ?? 'unknown'}-record nominal source checkpoint.`,
+  'SAI-08': `${evaluation.sakthiaiOwnedSpecifications?.length ?? 0} SakthiAI-owned benchmark specifications plus ${videoQuality.sakthiaiAcceptanceDimensions?.length ?? 0} governed video-quality acceptance dimensions; ${evaluation.sourceCheckpoint?.nominalCumulativeCorpusCount ?? 'unknown'}-record nominal source checkpoint.`,
   'SAI-09': `${security.records?.length ?? 0} normalized defensive threat/control records; defensive-only policy enforced.`,
   'SAI-CF': 'Edge architecture intelligence remains research evidence; deployment changes stay gated.',
 };
 
 const dashboard = {
   schemaVersion: '1.0.0',
-  generatedFrom: [ledgerPath, ragPath, evaluationPath, securityPath],
+  generatedFrom: [ledgerPath, ragPath, evaluationPath, videoQualityPath, securityPath],
   source: {
     title: ledger.source?.title,
     pages: ledger.source?.pages,
@@ -65,6 +67,15 @@ const dashboard = {
       evaluationDimensions: evaluation.evaluationDimensions?.length ?? 0,
       sourceCheckpoint: evaluation.sourceCheckpoint?.nominalCumulativeCorpusCount ?? null,
       runtimeApproved: evaluation.runtimeApproved === true,
+    },
+    videoQuality: {
+      stableId: videoQuality.stableId,
+      acceptanceDimensions: videoQuality.sakthiaiAcceptanceDimensions?.length ?? 0,
+      criticalDefects: videoQuality.criticalDefects?.length ?? 0,
+      previewMinimumScore: videoQuality.acceptanceGates?.previewCandidate?.minimumWeightedScore ?? null,
+      publishMinimumScore: videoQuality.acceptanceGates?.publishCandidate?.minimumWeightedScore ?? null,
+      humanReviewRequiredForPublish: videoQuality.policy?.humanReviewRequiredForPublishCandidate === true,
+      runtimeApproved: videoQuality.runtimeApproved === true,
     },
     security: {
       normalizedRecords: security.records?.length ?? 0,
