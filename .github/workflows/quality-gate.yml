@@ -33,6 +33,17 @@ jobs:
       - name: Governed intelligence integrity
         run: pnpm intelligence:check
 
+      - name: Video pre-generation quality contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/validate-video-generation-request.mjs research/generative-media/fixtures/video-generation-request-pass.json
+          if node scripts/validate-video-generation-request.mjs research/generative-media/fixtures/video-generation-request-fail.json; then
+            echo "Deliberately invalid video generation request unexpectedly passed."
+            exit 1
+          fi
+          echo "Invalid pre-generation request correctly rejected."
+
       - name: Video quality scoring fixtures
         run: |
           node scripts/score-video-quality-review.mjs research/evaluation/fixtures/video-quality-publish-pass.json
