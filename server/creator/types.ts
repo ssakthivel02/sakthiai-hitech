@@ -109,7 +109,7 @@ export interface CreatorMediaProvider {
 }
 
 const ALLOWED_TRANSITIONS: Record<CreatorJobState, readonly CreatorJobState[]> = {
-  QUEUED: ["SUBMITTED", "FAILED", "CANCELLED"],
+  QUEUED: ["SUBMITTED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"],
   SUBMITTED: ["RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "RETRYABLE"],
   RUNNING: ["SUCCEEDED", "FAILED", "CANCELLED", "RETRYABLE"],
   SUCCEEDED: [],
