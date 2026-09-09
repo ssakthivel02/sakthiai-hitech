@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 
 const specPath = 'research/evaluation/video-quality-spec.json';
 const remediationPath = 'research/evaluation/video-quality-remediation-map.json';
@@ -14,6 +15,12 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
+function gitBlobSha(file) {
+  const body = fs.readFileSync(file);
+  const header = Buffer.from(`blob ${body.length}\0`);
+  return crypto.createHash('sha1').update(Buffer.concat([header, body])).digest('hex');
+}
+
 const spec = readJson(specPath);
 const remediation = readJson(remediationPath);
 const review = readJson(reviewPath);
@@ -21,6 +28,25 @@ const review = readJson(reviewPath);
 if (review.specId !== spec.stableId) throw new Error(`Review specId must be ${spec.stableId}`);
 if (remediation.specId !== spec.stableId) throw new Error(`Remediation map specId must be ${spec.stableId}`);
 if (remediation.providerNeutral !== true || remediation.runtimeApproved !== false) throw new Error('Video remediation map must remain provider-neutral and runtimeApproved=false');
+
+const requestRef = review.generationRequest;
+if (!requestRef || typeof requestRef !== 'object') throw new Error('generationRequest traceability evidence is required');
+if (typeof requestRef.path !== 'string' || !requestRef.path.startsWith('research/generative-media/') || !requestRef.path.endsWith('.json')) {
+  throw new Error('generationRequest.path must point to a governed research/generative-media JSON request');
+}
+if (!fs.existsSync(requestRef.path)) throw new Error(`Linked generation request not found: ${requestRef.path}`);
+if (!/^[0-9a-f]{40}$/.test(requestRef.gitBlobSha ?? '')) throw new Error('generationRequest.gitBlobSha must be a 40-character lowercase Git blob SHA');
+const linkedRequestSha = gitBlobSha(requestRef.path);
+if (linkedRequestSha !== requestRef.gitBlobSha) {
+  throw new Error(`Linked generation request content drift detected: expected ${requestRef.gitBlobSha}, got ${linkedRequestSha}`);
+}
+const linkedRequest = readJson(requestRef.path);
+if (linkedRequest.requestId !== requestRef.requestId) throw new Error('generationRequest.requestId does not match linked request content');
+if (linkedRequest.qualityPolicy?.postGenerationSpecId !== spec.stableId) throw new Error('Linked generation request does not target the active SakthiAI video quality specification');
+if (linkedRequest.qualityPolicy?.productionApproved !== false || linkedRequest.qualityPolicy?.paidProviderApproved !== false) {
+  throw new Error('Linked generation request cannot self-approve production or paid-provider use');
+}
+
 if (!review.sourcePromptOrStoryboard || typeof review.sourcePromptOrStoryboard !== 'string') throw new Error('sourcePromptOrStoryboard is required');
 if (!review.reviewer || !['HUMAN', 'ASSISTED_HUMAN'].includes(review.reviewer.type)) throw new Error('reviewer.type must be HUMAN or ASSISTED_HUMAN');
 if (!review.reviewer.reviewTimestamp) throw new Error('reviewer.reviewTimestamp is required');
@@ -103,6 +129,12 @@ remediationItems.sort((a, b) => {
 
 const result = {
   specId: spec.stableId,
+  generationRequest: {
+    requestId: requestRef.requestId,
+    path: requestRef.path,
+    gitBlobSha: linkedRequestSha,
+    traceabilityVerified: true,
+  },
   weightedScore,
   criticalDefectCount: criticalDefects.length,
   decision: computedDecision,
