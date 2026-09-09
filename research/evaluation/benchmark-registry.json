@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "1.0.0",
+  "domain": "SAI-08 AI Evaluation & Benchmark Intelligence",
+  "sourceStatus": "historical-owner-supplied-research",
+  "runtimeTruth": false,
+  "runtimeApproved": false,
+  "rules": {
+    "neverFabricateScores": true,
+    "singleBenchmarkRankingForbidden": true,
+    "currentPrimaryVerificationRequiredBeforeOperationalUse": true
+  },
+  "sakthiaiOwnedSpecifications": [
+    {"stableId":"SAI-TAMIL","category":"language","title":"SakthiAI Tamil Evaluation","verificationState":"SOURCE_DEFINED_SPEC","runtimeApproved":false},
+    {"stableId":"SAI-RAG","category":"retrieval","title":"SakthiAI RAG Evaluation","verificationState":"SOURCE_DEFINED_SPEC","runtimeApproved":false},
+    {"stableId":"SAI-CODE","category":"coding","title":"SakthiAI Coding Evaluation","verificationState":"SOURCE_DEFINED_SPEC","runtimeApproved":false},
+    {"stableId":"SAI-AGENT","category":"agents","title":"SakthiAI Agent Evaluation","verificationState":"SOURCE_DEFINED_SPEC","runtimeApproved":false},
+    {"stableId":"SAI-DOCUMENT","category":"documents","title":"SakthiAI Document Evaluation","verificationState":"SOURCE_DEFINED_SPEC","runtimeApproved":false},
+    {"stableId":"SAI-AUDIO","category":"audio","title":"SakthiAI Audio Evaluation","verificationState":"SOURCE_DEFINED_SPEC","runtimeApproved":false},
+    {"stableId":"SAI-VISION","category":"vision","title":"SakthiAI Vision Evaluation","verificationState":"SOURCE_DEFINED_SPEC","runtimeApproved":false},
+    {"stableId":"SAI-SECURITY","category":"security","title":"SakthiAI Security Evaluation","verificationState":"SOURCE_DEFINED_SPEC","runtimeApproved":false},
+    {"stableId":"SAI-LATENCY","category":"performance","title":"SakthiAI Latency Evaluation","verificationState":"SOURCE_DEFINED_SPEC","runtimeApproved":false}
+  ],
+  "requiredSpecificationFields": [
+    "objective",
+    "testCases",
+    "inputs",
+    "expectedOutputs",
+    "scoring",
+    "passThreshold",
+    "failureCategories",
+    "reproducibility",
+    "hardwareRecordingRequirements"
+  ],
+  "evaluationDimensions": [
+    "reasoning",
+    "mathematics",
+    "coding",
+    "instruction-following",
+    "factuality",
+    "hallucination",
+    "Tamil",
+    "multilingual",
+    "translation",
+    "RAG",
+    "tool-use",
+    "agents",
+    "speech",
+    "TTS",
+    "vision",
+    "OCR",
+    "documents",
+    "tables",
+    "image-generation",
+    "video-generation",
+    "security",
+    "latency",
+    "throughput",
+    "RAM",
+    "VRAM",
+    "cost-efficiency"
+  ],
+  "sourceCheckpoint": {
+    "nominalCumulativeCorpusCount": 99,
+    "continuationState": "nominal phase completed in source, followed by later updates"
+  }
+}
