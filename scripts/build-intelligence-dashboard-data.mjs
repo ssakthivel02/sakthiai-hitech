@@ -90,8 +90,13 @@ const mode = process.argv[2] ?? '--write';
 
 if (mode === '--check') {
   if (!fs.existsSync(outputPath)) throw new Error(`Generated dashboard data missing: ${outputPath}`);
-  const existing = fs.readFileSync(outputPath, 'utf8');
-  if (existing !== serialized) {
+  let existing;
+  try {
+    existing = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Generated dashboard data is invalid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (JSON.stringify(existing) !== JSON.stringify(dashboard)) {
     throw new Error(`Intelligence dashboard data is stale. Run: node ${process.argv[1]} --write`);
   }
   console.log(`INTELLIGENCE_DASHBOARD_DATA_PASS domains=${dashboard.domains.length}`);
