@@ -5,6 +5,7 @@ const files = [
   'research/document-rag/architecture-registry.json',
   'research/evaluation/benchmark-registry.json',
   'research/evaluation/video-quality-spec.json',
+  'research/evaluation/video-quality-remediation-map.json',
   'research/security/threat-control-registry.json',
 ];
 
@@ -81,6 +82,24 @@ if (video.acceptanceGates?.previewCandidate?.maximumCriticalDefects !== 0) throw
 if (video.acceptanceGates?.publishCandidate?.maximumCriticalDefects !== 0) throw new Error('Publish candidate must fail on any critical defect.');
 if (video.acceptanceGates?.publishCandidate?.minimumWeightedScore <= video.acceptanceGates?.previewCandidate?.minimumWeightedScore) {
   throw new Error('Publish-candidate threshold must be stricter than preview-candidate threshold.');
+}
+
+const remediation = parsed.get('research/evaluation/video-quality-remediation-map.json');
+if (remediation.specId !== video.stableId) throw new Error('Video remediation map must target the active video quality specification.');
+if (remediation.providerNeutral !== true || remediation.runtimeApproved !== false) throw new Error('Video remediation map must remain provider-neutral and runtimeApproved=false.');
+const remediationIds = Object.keys(remediation.remediationByDimension ?? {});
+const qualityIds = qualityDimensions.map(dimension => dimension.id);
+for (const id of qualityIds) {
+  const guidance = remediation.remediationByDimension?.[id];
+  if (!guidance) throw new Error(`Missing remediation guidance for ${id}`);
+  if (!['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(guidance.priority)) throw new Error(`${id} remediation has invalid priority`);
+  if (!guidance.problem || !Array.isArray(guidance.actions) || guidance.actions.length < 2) throw new Error(`${id} remediation guidance is incomplete`);
+}
+for (const id of remediationIds) {
+  if (!qualityIds.includes(id)) throw new Error(`Remediation map contains unknown quality dimension ${id}`);
+}
+for (const decision of video.decisionValues ?? []) {
+  if (!remediation.decisionGuidance?.[decision]) throw new Error(`Missing remediation decision guidance for ${decision}`);
 }
 
 const security = parsed.get('research/security/threat-control-registry.json');
