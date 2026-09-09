@@ -1,9 +1,18 @@
 {
+  "schemaVersion": "2.0.0",
   "task_id": "SAI-WEB-FUNCTIONAL-004A",
   "baseline": "SAI-WEB-RECOVERY-001",
-  "authoritative_source": "/home/ubuntu/sakthi-ai-nexus-w25-recovery",
-  "protected_original_source": "Unavailable unrecoverable WebDev project; not reopened",
-  "canary_source": "/home/ubuntu/sakthi-ai-nexus-w25-recovery",
+  "source_of_truth_status": "HI-TECH — ACTIVE MASTER",
+  "authoritative_source": "ssakthivel02/sakthiai-hitech",
+  "active_branch": "main",
+  "source_of_truth_policy": "ACTIVE_MASTER_CONTROL.json",
+  "canary_source": "exact commit from ssakthivel02/sakthiai-hitech after green gates",
+  "historical_provenance": {
+    "recovery_source": "/home/ubuntu/sakthi-ai-nexus-w25-recovery",
+    "protected_original_source": "Unavailable unrecoverable WebDev project; not reopened",
+    "status": "READ_ONLY_REFERENCE",
+    "rule": "Historical recovery provenance may be consulted only as reference. Any genuinely missing item must be reconciled once into the HI-TECH active master; the recovery source must not receive new development."
+  },
   "release_checkpoint": "functional-004A-local-verified",
   "capability_registry": "SAI-01 existing project registries; not duplicated",
   "provider_registry": "Provider-neutral optional OpenAI-compatible embedding adapter; no speculative provider integration",
@@ -11,17 +20,80 @@
   "SAI_01_continuation": "No new capability collection in this implementation task",
   "SAI_02_continuation": "No new knowledge family in this implementation task",
   "SAI_GM_01_continuation": "No generative-media work",
-  "accepted_family_ids": ["FAM-AIO-001"],
+  "accepted_family_ids": [
+    "FAM-AIO-001"
+  ],
   "implemented_vs_research_state": {
-    "implemented": ["WEB_CHAT", "TAMIL_CHAT", "PROJECTS", "FILE_UPLOAD", "DOCUMENT_EXTRACTION", "LEXICAL_RAG", "OPTIONAL_SEMANTIC_RAG", "HYBRID_RAG", "PDF_PROVENANCE", "DOCX_SECTION_PARAGRAPH_PROVENANCE", "CITATIONS", "GROUNDED_ANSWERS", "INSUFFICIENT_EVIDENCE", "AUTH", "TENANT_ISOLATION", "CROSS_USER_DENIAL", "INGESTION_LIMITS", "DUPLICATE_DOCUMENT_DETECTION", "HEALTH_READINESS", "REQUEST_CORRELATION", "ANDROID_API_CONTRACT"],
+    "implemented": [
+      "WEB_CHAT",
+      "TAMIL_CHAT",
+      "PROJECTS",
+      "FILE_UPLOAD",
+      "DOCUMENT_EXTRACTION",
+      "LEXICAL_RAG",
+      "OPTIONAL_SEMANTIC_RAG",
+      "HYBRID_RAG",
+      "PDF_PROVENANCE",
+      "DOCX_SECTION_PARAGRAPH_PROVENANCE",
+      "CITATIONS",
+      "GROUNDED_ANSWERS",
+      "INSUFFICIENT_EVIDENCE",
+      "AUTH",
+      "TENANT_ISOLATION",
+      "CROSS_USER_DENIAL",
+      "INGESTION_LIMITS",
+      "DUPLICATE_DOCUMENT_DETECTION",
+      "HEALTH_READINESS",
+      "REQUEST_CORRELATION",
+      "ANDROID_API_CONTRACT"
+    ],
     "research_only": [],
     "semantic_runtime": "optional; unavailable unless EMBEDDING_API_URL is configured and usable",
     "scanner_runtime": "SCANNER_NOT_CONFIGURED"
   },
-  "known_blockers": ["Managed database migration not executed locally because DATABASE_URL is not configured", "Managed preview/runtime URL not available in this sandbox"],
-  "task_output_map": { "source": ".", "schema": "drizzle/schema.ts", "migration": "drizzle/0002_semantic_rag_provenance.sql", "tests": ["server/recovery.security.test.ts", "server/functional.core.test.ts"], "api_contract": "API_CONTRACT.md", "config": "config/backend-config.example.md" },
-  "validation": { "typecheck": "PASS", "tests": "PASS: 10 tests", "production_build": "PASS", "database_migration": "NOT_RUN: DATABASE_URL unavailable", "semantic_rag": "NOT_RUN: embedding runtime unavailable", "health_readiness": "implemented; live runtime check not run" },
-  "latest_source_freeze": "SAI-WEB-FUNCTIONAL-004A portable source export",
-  "SHA256": "see SHA256SUMS.txt and the adjacent .tar.gz.sha256 archive checksum",
-  "exact_next_point": "Provide managed DATABASE_URL/runtime for migration and live web validation before classifying as fully ready"
+  "known_blockers": [
+    "Managed preview database migration and verified-TLS connectivity evidence have not yet been demonstrated against the current HI-TECH active master.",
+    "A deployed preview URL serving an exact canonical commit has not yet been demonstrated with /releasez and /readyz evidence in this project-state checkpoint."
+  ],
+  "task_output_map": {
+    "source": ".",
+    "schema": "drizzle/schema.ts",
+    "migration": "drizzle/0002_semantic_rag_provenance.sql",
+    "tests": [
+      "server/recovery.security.test.ts",
+      "server/functional.core.test.ts"
+    ],
+    "api_contract": "API_CONTRACT.md",
+    "config": "config/backend-config.example.md"
+  },
+  "historical_validation_checkpoint": {
+    "typecheck": "PASS",
+    "tests": "PASS: 10 tests",
+    "production_build": "PASS",
+    "database_migration": "NOT_RUN: DATABASE_URL unavailable",
+    "semantic_rag": "NOT_RUN: embedding runtime unavailable",
+    "health_readiness": "implemented; live runtime check not run"
+  },
+  "active_master_validation_checkpoint": {
+    "pull_request": 5,
+    "validated_head": "88f684f42fd2932e1d8b73934ede662e610796a1",
+    "merge_commit": "87b392e44bc2387e93321d87f030a4af6f941ea7",
+    "protected_main_gate": "PASS",
+    "quality_gate": "PASS",
+    "quality_gate_scope": [
+      "governed intelligence integrity",
+      "video quality scoring fixtures",
+      "production source neutrality",
+      "typecheck",
+      "tests",
+      "build",
+      "deployable artifact neutrality",
+      "built-server behavior smoke"
+    ],
+    "live_preview_runtime": "NOT_DEMONSTRATED",
+    "managed_preview_database": "NOT_DEMONSTRATED"
+  },
+  "latest_source_freeze": "Canonical GitHub HI-TECH active master; historical functional-004A recovery provenance retained as read-only reference",
+  "historical_archive_checksum_note": "Historical recovery archive checksum references remain historical provenance only and do not define current source truth.",
+  "exact_next_point": "Run the existing SakthiAI Preview DB Setup against the isolated managed preview database, then deploy an exact canonical commit and run the existing Preview HTTP Smoke before classifying the controlled preview as ready."
 }
