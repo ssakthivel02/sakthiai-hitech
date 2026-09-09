@@ -34,6 +34,46 @@ jobs:
             exit 1
           fi
 
+      - name: Validate HI-TECH active master contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const control = JSON.parse(fs.readFileSync('ACTIVE_MASTER_CONTROL.json', 'utf8'));
+          const requiredTrue = [
+            'verifyActiveMasterBeforeWork',
+            'inventoryCompletedWorkBeforeChanges',
+            'changeOnlyEvidenceBackedGaps',
+            'neverRebuildCompletedTasks',
+            'legacyDevelopmentProhibited',
+            'duplicateRepositoryProhibited',
+            'duplicateBranchForCompletedWorkProhibited',
+            'oneTaskAtATime',
+            'requireBuildTestEvidenceBeforeNextTask',
+            'clarifyIfActiveMasterUnknown'
+          ];
+
+          if (control.project !== 'SakthiAI') throw new Error('Wrong active-master project');
+          if (control.status !== 'HI-TECH — ACTIVE MASTER') throw new Error('Repository is not declared HI-TECH — ACTIVE MASTER');
+          if (control.canonicalRepository !== 'ssakthivel02/sakthiai-hitech') throw new Error('Wrong canonical repository');
+          if (control.activeBranch !== 'main') throw new Error('Active integration branch must remain main');
+          if (control.oldLegacyPolicy !== 'READ_ONLY_REFERENCE') throw new Error('OLD/LEGACY policy must remain read-only reference');
+          for (const key of requiredTrue) {
+            if (control.taskPolicy?.[key] !== true) throw new Error(`Active-master task rule must remain true: ${key}`);
+          }
+          if (control.taskPolicy?.legacyReconciliation !== 'ONE_TIME_INTO_ACTIVE_MASTER_ONLY') {
+            throw new Error('Legacy reconciliation policy changed');
+          }
+          if (process.env.GITHUB_REPOSITORY !== control.canonicalRepository) {
+            throw new Error(`Workflow running in non-canonical repository: ${process.env.GITHUB_REPOSITORY}`);
+          }
+          if (process.env.GITHUB_BASE_REF && process.env.GITHUB_BASE_REF !== control.activeBranch) {
+            throw new Error(`Pull request must target active branch ${control.activeBranch}`);
+          }
+          console.log('ACTIVE_MASTER_CONTRACT_PASS project=SakthiAI repo=ssakthivel02/sakthiai-hitech branch=main');
+          NODE
+
       - name: Validate repository contract
         shell: bash
         run: |
@@ -59,7 +99,9 @@ jobs:
         if: always()
         run: |
           echo '### SakthiAI Protected Main Gate' >> "$GITHUB_STEP_SUMMARY"
-          echo '- always runs for pull requests targeting main' >> "$GITHUB_STEP_SUMMARY"
+          echo '- HI-TECH — ACTIVE MASTER identity and canonical repository check' >> "$GITHUB_STEP_SUMMARY"
+          echo '- OLD/LEGACY remains read-only reference' >> "$GITHUB_STEP_SUMMARY"
+          echo '- completed-work duplication and evidence-first task rules enforced' >> "$GITHUB_STEP_SUMMARY"
           echo '- whitespace and merge-conflict defects rejected' >> "$GITHUB_STEP_SUMMARY"
           echo '- canonical sakthiai-hitech repository contract checked' >> "$GITHUB_STEP_SUMMARY"
           echo '- deep build/type/test validation remains in SakthiAI Quality Gate' >> "$GITHUB_STEP_SUMMARY"
