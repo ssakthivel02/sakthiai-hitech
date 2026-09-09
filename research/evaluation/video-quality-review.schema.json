@@ -7,6 +7,7 @@
   "required": [
     "schemaVersion",
     "specId",
+    "generationRequest",
     "sourcePromptOrStoryboard",
     "output",
     "reviewer",
@@ -17,6 +18,16 @@
   "properties": {
     "schemaVersion": {"const": "1.0.0"},
     "specId": {"const": "SAI-VIDEO-QUALITY"},
+    "generationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "requestId", "gitBlobSha"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^research/generative-media/.+\\.json$"},
+        "requestId": {"type": "string", "pattern": "^VGEN-[A-Z0-9-]+$"},
+        "gitBlobSha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
     "sourcePromptOrStoryboard": {"type": "string", "minLength": 1},
     "providerOrLocalAdapterId": {"type": ["string", "null"]},
     "modelIdIfKnown": {"type": ["string", "null"]},
