@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": "SakthiAI",
+  "status": "HI-TECH — ACTIVE MASTER",
+  "canonicalRepository": "ssakthivel02/sakthiai-hitech",
+  "activeBranch": "main",
+  "sourceOfTruth": "This HI-TECH repository and main branch are the only active development source of truth.",
+  "oldLegacyPolicy": "READ_ONLY_REFERENCE",
+  "taskPolicy": {
+    "verifyActiveMasterBeforeWork": true,
+    "inventoryCompletedWorkBeforeChanges": true,
+    "changeOnlyEvidenceBackedGaps": true,
+    "neverRebuildCompletedTasks": true,
+    "legacyReconciliation": "ONE_TIME_INTO_ACTIVE_MASTER_ONLY",
+    "legacyDevelopmentProhibited": true,
+    "duplicateRepositoryProhibited": true,
+    "duplicateBranchForCompletedWorkProhibited": true,
+    "newTaskBranchPolicy": "A new task branch is permitted only for a genuinely new evidence-backed gap, must start from current main, and must merge back through QA.",
+    "oneTaskAtATime": true,
+    "requireBuildTestEvidenceBeforeNextTask": true,
+    "clarifyIfActiveMasterUnknown": true
+  },
+  "prohibitedActions": [
+    "new development in OLD or LEGACY repositories",
+    "fixes or redesigns in OLD or LEGACY repositories",
+    "deployment or content updates in OLD or LEGACY repositories",
+    "recreating already completed work without failure evidence",
+    "creating duplicate repositories, previews, dashboards, folders or websites for completed scope",
+    "promoting an OLD or LEGACY branch to active source without explicit reconciliation into this master"
+  ]
+}
