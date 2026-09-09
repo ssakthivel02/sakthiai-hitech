@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "1.0.0",
+  "requestId": "VGEN-CI-PASS-001",
+  "capabilityId": "GM-MULTISHOT",
+  "providerOrLocalAdapterId": null,
+  "modelIdIfKnown": null,
+  "target": {
+    "aspectRatio": "16:9",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "durationSeconds": 12
+  },
+  "continuity": {
+    "identityLockRequired": true,
+    "referenceAssetIds": ["ref-character-primary"],
+    "wardrobeLockRequired": true,
+    "environmentLockRequired": true
+  },
+  "textPolicy": {
+    "criticalOnScreenTextAllowedInGeneration": false,
+    "criticalTextHandling": "POST_PROCESS"
+  },
+  "audioPolicy": {
+    "audioRequired": true,
+    "lipSyncRequired": false,
+    "tamilHumanReviewRequiredWhenApplicable": true
+  },
+  "shots": [
+    {
+      "shotId": "SHOT-001",
+      "durationSeconds": 4,
+      "subject": "Primary character with locked identity and wardrobe",
+      "action": "Walks slowly toward camera with restrained natural motion",
+      "environment": "Stable cinematic interior with fixed lighting continuity",
+      "camera": {"shotSize": "MS", "movement": "DOLLY_IN"},
+      "activeMotionCount": 2,
+      "negativeConstraints": ["no identity drift", "no anatomy deformation", "no flicker"]
+    },
+    {
+      "shotId": "SHOT-002",
+      "durationSeconds": 4,
+      "subject": "Same primary character and wardrobe",
+      "action": "Pauses and turns head gently toward the key light",
+      "environment": "Same cinematic interior and lighting state",
+      "camera": {"shotSize": "CU", "movement": "LOCKED"},
+      "activeMotionCount": 1,
+      "negativeConstraints": ["no face morphing", "no background warping", "no eye artifacts"]
+    },
+    {
+      "shotId": "SHOT-003",
+      "durationSeconds": 4,
+      "subject": "Same primary character with reference continuity",
+      "action": "Looks forward while the scene resolves naturally",
+      "environment": "Same interior with preserved object permanence",
+      "camera": {"shotSize": "MCU", "movement": "DOLLY_OUT"},
+      "activeMotionCount": 1,
+      "negativeConstraints": ["no clothing change", "no object duplication", "no frozen tail"]
+    }
+  ],
+  "qualityPolicy": {
+    "regenerateFailedShotsOnly": true,
+    "maximumWholeVideoRetriesBeforeDiagnosis": 1,
+    "postGenerationSpecId": "SAI-VIDEO-QUALITY",
+    "productionApproved": false,
+    "paidProviderApproved": false
+  }
+}
