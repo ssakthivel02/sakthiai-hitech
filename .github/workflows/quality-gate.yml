@@ -44,6 +44,9 @@ jobs:
           fi
           echo "Invalid pre-generation request correctly rejected."
 
+      - name: Evidence-based video candidate routing
+        run: node scripts/test-video-generation-routing.mjs
+
       - name: Video quality scoring fixtures
         run: |
           node scripts/score-video-quality-review.mjs research/evaluation/fixtures/video-quality-publish-pass.json
