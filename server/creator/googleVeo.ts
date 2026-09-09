@@ -102,6 +102,8 @@ export function buildVeoPayload(input: CreatorVeoRequest) {
     }));
   }
 
+  const usesImageConditioning = Boolean(request.firstFrame || request.referenceImages?.length);
+
   return {
     model: request.model,
     body: {
@@ -111,7 +113,7 @@ export function buildVeoPayload(input: CreatorVeoRequest) {
         aspectRatio: request.aspectRatio,
         durationSeconds: request.durationSeconds,
         resolution: request.resolution,
-        personGeneration: "allow_adult",
+        personGeneration: usesImageConditioning ? "allow_adult" : "allow_all",
       },
     },
   };
