@@ -1,0 +1,149 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedFrom": [
+    "research/intelligence/gemini-two-month-ingestion-ledger.json",
+    "research/document-rag/architecture-registry.json",
+    "research/evaluation/benchmark-registry.json",
+    "research/security/threat-control-registry.json"
+  ],
+  "source": {
+    "title": "SakthiAI Generative Media Task Setup",
+    "pages": 298,
+    "period": "August-September 2026",
+    "status": "research-evidence",
+    "productionTruth": false
+  },
+  "policy": {
+    "providerNeutral": true,
+    "paidProviderActivationApproved": false,
+    "productionApproved": false,
+    "primarySourceReverificationRequired": true,
+    "newSchedulesCreated": false
+  },
+  "domains": [
+    {
+      "id": "SAI-03",
+      "name": "Generative Media Intelligence",
+      "destination": "research/generative-media",
+      "surfaces": [
+        "web",
+        "server",
+        "mobile-api"
+      ],
+      "status": "integrating",
+      "use": "provider/model/capability/prompt/workflow/evaluation/safety intelligence",
+      "evidence": "Provider/model capability layer already governed under research/generative-media."
+    },
+    {
+      "id": "SAI-04",
+      "name": "AI Provider & API Integration",
+      "destination": "research/providers",
+      "surfaces": [
+        "server",
+        "web-admin",
+        "mobile-api"
+      ],
+      "status": "reviewed-for-ingestion",
+      "use": "provider-neutral API/model/cost/privacy/change intelligence",
+      "evidence": "Primary-source re-verification is required before any runtime provider binding."
+    },
+    {
+      "id": "SAI-05",
+      "name": "Local & Offline AI",
+      "destination": "research/local-models",
+      "surfaces": [
+        "server",
+        "desktop",
+        "mobile-api",
+        "edge"
+      ],
+      "status": "mission-complete-in-source",
+      "use": "open-weight model, license, hardware, runtime and deployment-profile intelligence",
+      "evidence": "70-record completion checkpoint observed in supplied output"
+    },
+    {
+      "id": "SAI-06",
+      "name": "Document, Data & RAG Intelligence",
+      "destination": "research/document-rag",
+      "surfaces": [
+        "web",
+        "server",
+        "mobile-api"
+      ],
+      "status": "mission-complete-rag-phase-in-source",
+      "use": "format extraction, provenance, ingestion, retrieval, reranking, tenant isolation and multimodal RAG",
+      "evidence": "3 normalized architecture patterns; 79-record source checkpoint."
+    },
+    {
+      "id": "SAI-07",
+      "name": "Conversational Voice Intelligence",
+      "destination": "research/voice",
+      "surfaces": [
+        "web",
+        "server",
+        "mobile-api"
+      ],
+      "status": "reviewed-for-ingestion",
+      "use": "VAD, ASR, S2S, TTS, barge-in, Tamil-English code-switching, privacy and latency architecture",
+      "evidence": "Provider-independent voice architecture remains research evidence pending normalization."
+    },
+    {
+      "id": "SAI-08",
+      "name": "AI Evaluation & Benchmark Intelligence",
+      "destination": "research/evaluation",
+      "surfaces": [
+        "server",
+        "dashboard",
+        "ci"
+      ],
+      "status": "nominal-phase-complete-plus-continuous-updates",
+      "use": "provider-independent benchmarks and SakthiAI-owned evaluation specifications",
+      "evidence": "9 SakthiAI-owned benchmark specifications; 99-record nominal source checkpoint."
+    },
+    {
+      "id": "SAI-09",
+      "name": "AI Security & Defensive Intelligence",
+      "destination": "research/security",
+      "surfaces": [
+        "server",
+        "dashboard",
+        "ci"
+      ],
+      "status": "reviewed-for-ingestion",
+      "use": "prompt injection, RAG poisoning, MCP/tool risk, output handling, tenant isolation and agent least privilege",
+      "evidence": "2 normalized defensive threat/control records; defensive-only policy enforced."
+    },
+    {
+      "id": "SAI-CF",
+      "name": "Cloudflare Edge Architecture Intelligence",
+      "destination": "research/cloudflare",
+      "surfaces": [
+        "web",
+        "server",
+        "edge",
+        "deployment"
+      ],
+      "status": "reviewed-for-ingestion",
+      "use": "Workers, Workflows, Agents, Vectorize, Hyperdrive, D1, Durable Objects, R2, KV and edge architecture",
+      "evidence": "Edge architecture intelligence remains research evidence; deployment changes stay gated."
+    }
+  ],
+  "registryMetrics": {
+    "documentRag": {
+      "normalizedRecords": 3,
+      "sourceCheckpoint": 79,
+      "runtimeApproved": false
+    },
+    "evaluation": {
+      "ownedSpecifications": 9,
+      "evaluationDimensions": 26,
+      "sourceCheckpoint": 99,
+      "runtimeApproved": false
+    },
+    "security": {
+      "normalizedRecords": 2,
+      "defensiveOnly": true,
+      "runtimeApproved": false
+    }
+  }
+}
