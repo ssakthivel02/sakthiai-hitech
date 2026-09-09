@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1.0.0",
+  "specId": "SAI-VIDEO-QUALITY",
+  "sourcePromptOrStoryboard": "Synthetic CI fixture only: intentionally defective output.",
+  "providerOrLocalAdapterId": null,
+  "modelIdIfKnown": null,
+  "generationSettingsIfKnown": null,
+  "output": {
+    "filename": "ci-reject-fixture.mp4",
+    "durationSeconds": 10,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "hasAudio": true
+  },
+  "reviewer": {
+    "type": "HUMAN",
+    "reviewTimestamp": "2026-09-09T00:00:00Z",
+    "tamilQualityHumanReviewed": false
+  },
+  "dimensionScores": {
+    "VQ-CONTENT-01": 4,
+    "VQ-TEMPORAL-01": 1,
+    "VQ-IDENTITY-01": 4,
+    "VQ-VISUAL-01": 2,
+    "VQ-CAMERA-01": 4,
+    "VQ-AUDIO-01": 4,
+    "VQ-TEXT-01": 4,
+    "VQ-DELIVERY-01": 4
+  },
+  "criticalDefects": ["persistent flicker or temporal collapse"],
+  "notes": ["CI logic fixture; not evidence of a real generated video."],
+  "decision": "REJECT"
+}
