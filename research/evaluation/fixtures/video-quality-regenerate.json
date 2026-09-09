@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "1.0.0",
+  "specId": "SAI-VIDEO-QUALITY",
+  "sourcePromptOrStoryboard": "Synthetic CI fixture only: visually weak candidate with temporal, identity and artifact problems but no declared critical defect.",
+  "providerOrLocalAdapterId": null,
+  "modelIdIfKnown": null,
+  "generationSettingsIfKnown": null,
+  "output": {
+    "filename": "ci-regenerate.mp4",
+    "durationSeconds": 10,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "hasAudio": true
+  },
+  "reviewer": {
+    "type": "HUMAN",
+    "reviewTimestamp": "2026-09-09T00:00:00Z",
+    "tamilQualityHumanReviewed": false
+  },
+  "dimensionScores": {
+    "VQ-CONTENT-01": 4,
+    "VQ-TEMPORAL-01": 3,
+    "VQ-IDENTITY-01": 3,
+    "VQ-VISUAL-01": 2,
+    "VQ-CAMERA-01": 3,
+    "VQ-AUDIO-01": 4,
+    "VQ-TEXT-01": 4,
+    "VQ-DELIVERY-01": 4
+  },
+  "criticalDefects": [],
+  "notes": ["CI logic fixture; should produce targeted remediation and remain REGENERATE."],
+  "decision": "REGENERATE"
+}
