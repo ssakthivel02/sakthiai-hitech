@@ -11,6 +11,7 @@ import { getDb, ensureWorkspace, getWorkspaceForUser, listUserWorkspaces, listPr
 import { storagePut } from "./storage";
 import { extractDocument } from "./provenance";
 import { embeddingStatus, tryEmbed, serializeEmbedding } from "./embeddings";
+import { creatorRouter } from "./creator/router";
 
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -29,6 +30,7 @@ function validateFile(buffer: Buffer, mimeType: string, filename: string) {
 
 export const appRouter = router({
   system: systemRouter,
+  creator: creatorRouter,
   auth: router({ me: publicProcedure.query(opts => opts.ctx.user), logout: publicProcedure.mutation(({ ctx }) => { const options = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...options, maxAge: -1 }); return { success: true } as const; }) }),
   runtime: router({ status: publicProcedure.query(() => ({ health: "alive" as const, readiness: process.env.DATABASE_URL ? "configured" as const : "degraded" as const, embeddings: embeddingStatus(), scanner: "SCANNER_NOT_CONFIGURED" as const })) }),
   workspace: router({ list: protectedProcedure.query(({ ctx }) => listUserWorkspaces(ctx.user.id)), ensure: protectedProcedure.mutation(({ ctx }) => ensureWorkspace(ctx.user)) }),
