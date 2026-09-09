@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1.0.0",
+  "domain": "SAI-09 AI Security & Defensive Intelligence",
+  "sourceStatus": "historical-owner-supplied-research",
+  "defensiveOnly": true,
+  "runtimeTruth": false,
+  "runtimeApproved": false,
+  "records": [
+    {
+      "stableId": "THR_MCP_TOOL_POISON_01",
+      "category": "mcp-supply-chain",
+      "title": "MCP Tool Poisoning and Shadow Tool Abuse",
+      "sourceTask": "SAI-09",
+      "confidence": "SOURCE_RECORDED",
+      "verificationState": "HISTORICAL_SOURCE",
+      "runtimeApproved": false,
+      "attackSurface": ["MCP servers", "tool schemas", "dynamic client registration"],
+      "defensiveControls": ["trusted-server allowlisting", "schema validation", "cryptographic provenance where available", "network isolation", "tool permission review", "human approval for high-impact actions"],
+      "notes": "Source frames this defensively around malicious or manipulated MCP tool definitions. Exact framework mappings and vendor guidance require current primary-source verification before policy adoption."
+    },
+    {
+      "stableId": "THR_EXCESSIVE_AGENCY_01",
+      "category": "excessive-agency",
+      "title": "Unbalanced Tool-Driven Agency",
+      "sourceTask": "SAI-09",
+      "confidence": "SOURCE_RECORDED",
+      "verificationState": "HISTORICAL_SOURCE",
+      "runtimeApproved": false,
+      "attackSurface": ["multi-step autonomous agents", "static broad tool grants"],
+      "defensiveControls": ["least privilege", "task-scoped capabilities", "ephemeral permissions", "real-time privilege revocation", "approval gates", "auditable tool invocation"],
+      "notes": "Source identifies static broad tool whitelists as an excessive-agency risk. Runtime policy remains unapproved until current OWASP/NIST/MITRE/vendor verification."
+    }
+  ],
+  "requiredThreatFields": [
+    "stableId",
+    "category",
+    "attackSurface",
+    "preconditions",
+    "scenario",
+    "impact",
+    "detection",
+    "prevention",
+    "mitigation",
+    "logging",
+    "incidentResponse",
+    "testCase",
+    "authoritativeReferences"
+  ],
+  "sourcePriority": ["OWASP", "NIST AI RMF", "MITRE ATLAS", "CIS", "vendor guidance"]
+}
