@@ -67,7 +67,18 @@ for (const record of security.records ?? []) {
 }
 
 const ledger = parsed.get('research/intelligence/gemini-two-month-ingestion-ledger.json');
-if (ledger?.policy?.noNewSchedules !== true) throw new Error('Two-month ingestion ledger must preserve no-new-schedules policy.');
-if (ledger?.policy?.primarySourceReverificationBeforeRuntime !== true) throw new Error('Primary-source reverification policy missing.');
+if (ledger?.source?.productionTruth !== false) throw new Error('Two-month source must remain productionTruth=false.');
+if (ledger?.policy?.newSchedulesCreated !== false) throw new Error('Two-month ingestion ledger must preserve the no-new-schedules state.');
+if (ledger?.policy?.requirePrimarySourceReverificationBeforeRuntimeUse !== true) throw new Error('Primary-source reverification policy missing.');
+if (ledger?.policy?.paidProviderActivation !== false) throw new Error('Research ingestion cannot activate paid providers.');
+if (ledger?.policy?.productionApproval !== false) throw new Error('Research ingestion cannot self-approve production use.');
+
+for (const domain of ledger?.domains ?? []) {
+  if (!domain.id || !domain.destination) throw new Error('Every intelligence domain requires id and destination.');
+  if (!fs.existsSync(domain.destination)) {
+    // Some mapped destinations are intentionally staged for later normalization.
+    console.log(`INTELLIGENCE_DESTINATION_PENDING ${domain.id} ${domain.destination}`);
+  }
+}
 
 console.log(`INTELLIGENCE_RESEARCH_GATE_PASS stableIds=${ids.size} files=${files.length}`);
