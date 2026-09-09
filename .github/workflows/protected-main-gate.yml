@@ -41,6 +41,7 @@ jobs:
           node - <<'NODE'
           const fs = require('fs');
           const control = JSON.parse(fs.readFileSync('ACTIVE_MASTER_CONTROL.json', 'utf8'));
+          const state = JSON.parse(fs.readFileSync('SAKTHIAI_PROJECT_STATE.json', 'utf8'));
           const requiredTrue = [
             'verifyActiveMasterBeforeWork',
             'inventoryCompletedWorkBeforeChanges',
@@ -65,6 +66,19 @@ jobs:
           if (control.taskPolicy?.legacyReconciliation !== 'ONE_TIME_INTO_ACTIVE_MASTER_ONLY') {
             throw new Error('Legacy reconciliation policy changed');
           }
+
+          if (state.source_of_truth_status !== control.status) throw new Error('Project state source-of-truth status drifted from ACTIVE MASTER contract');
+          if (state.authoritative_source !== control.canonicalRepository) throw new Error('Project state authoritative source must be canonical HI-TECH repository');
+          if (state.active_branch !== control.activeBranch) throw new Error('Project state active branch must match ACTIVE MASTER branch');
+          if (state.source_of_truth_policy !== 'ACTIVE_MASTER_CONTROL.json') throw new Error('Project state must cite ACTIVE_MASTER_CONTROL.json as source policy');
+          if (state.historical_provenance?.status !== 'READ_ONLY_REFERENCE') throw new Error('Historical recovery provenance must remain read-only reference');
+          if (typeof state.historical_provenance?.recovery_source !== 'string' || state.historical_provenance.recovery_source.length < 1) {
+            throw new Error('Historical recovery provenance must be preserved explicitly');
+          }
+          if (state.authoritative_source.startsWith('/') || state.canary_source?.startsWith('/')) {
+            throw new Error('Local filesystem path cannot be an active authoritative/canary source');
+          }
+
           if (process.env.GITHUB_REPOSITORY !== control.canonicalRepository) {
             throw new Error(`Workflow running in non-canonical repository: ${process.env.GITHUB_REPOSITORY}`);
           }
@@ -72,6 +86,7 @@ jobs:
             throw new Error(`Pull request must target active branch ${control.activeBranch}`);
           }
           console.log('ACTIVE_MASTER_CONTRACT_PASS project=SakthiAI repo=ssakthivel02/sakthiai-hitech branch=main');
+          console.log('PROJECT_STATE_SOURCE_TRUTH_PASS authoritative=ssakthivel02/sakthiai-hitech historical=READ_ONLY_REFERENCE');
           NODE
 
       - name: Validate repository contract
@@ -100,7 +115,8 @@ jobs:
         run: |
           echo '### SakthiAI Protected Main Gate' >> "$GITHUB_STEP_SUMMARY"
           echo '- HI-TECH — ACTIVE MASTER identity and canonical repository check' >> "$GITHUB_STEP_SUMMARY"
-          echo '- OLD/LEGACY remains read-only reference' >> "$GITHUB_STEP_SUMMARY"
+          echo '- SAKTHIAI_PROJECT_STATE source truth must match ACTIVE MASTER contract' >> "$GITHUB_STEP_SUMMARY"
+          echo '- historical recovery provenance remains read-only reference only' >> "$GITHUB_STEP_SUMMARY"
           echo '- completed-work duplication and evidence-first task rules enforced' >> "$GITHUB_STEP_SUMMARY"
           echo '- whitespace and merge-conflict defects rejected' >> "$GITHUB_STEP_SUMMARY"
           echo '- canonical sakthiai-hitech repository contract checked' >> "$GITHUB_STEP_SUMMARY"
