@@ -1,0 +1,65 @@
+name: Protected Main Gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protected-main-gate:
+    name: protected-main-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout full candidate
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Reject whitespace and conflict defects
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="$(git rev-parse HEAD^)"
+          fi
+          git diff --check "$base" HEAD
+          if git grep -n -E '^(<<<<<<<|=======|>>>>>>>)' -- '*.ts' '*.tsx' '*.js' '*.mjs' '*.json' '*.yml' '*.yaml' '*.css' '*.html'; then
+            echo 'Unresolved merge-conflict marker found.' >&2
+            exit 1
+          fi
+
+      - name: Validate repository contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f package.json
+          test -f pnpm-lock.yaml
+          test -d client
+          test -d server
+          test -d scripts
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (p.name !== 'sakthiai-hitech') throw new Error('Unexpected package name');
+          for (const script of ['build','check','test','intelligence:check']) {
+            if (!p.scripts?.[script]) throw new Error(`Missing package script: ${script}`);
+          }
+          console.log('SAKTHIAI_HITECH_REPOSITORY_CONTRACT_PASS');
+          NODE
+          node --check scripts/build-intelligence-dashboard-data.mjs
+          node --check scripts/validate-intelligence-research.mjs
+
+      - name: Governance summary
+        if: always()
+        run: |
+          echo '### SakthiAI Protected Main Gate' >> "$GITHUB_STEP_SUMMARY"
+          echo '- always runs for pull requests targeting main' >> "$GITHUB_STEP_SUMMARY"
+          echo '- whitespace and merge-conflict defects rejected' >> "$GITHUB_STEP_SUMMARY"
+          echo '- canonical sakthiai-hitech repository contract checked' >> "$GITHUB_STEP_SUMMARY"
+          echo '- deep build/type/test validation remains in SakthiAI Quality Gate' >> "$GITHUB_STEP_SUMMARY"
