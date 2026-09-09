@@ -1,6 +1,14 @@
-# SakthiAI Hi-Tech
+# SakthiAI HI-TECH — ACTIVE MASTER
 
-This repository is the canonical source for the new SakthiAI Hi-Tech website/runtime. It is a full-stack application: React/Vite frontend plus an Express/tRPC backend.
+Canonical active repository: `ssakthivel02/sakthiai-hitech`
+
+Active integration branch: `main`
+
+OLD and LEGACY versions are read-only references only. New development, fixes, redesign, deployment changes and content updates must be performed only in this HI-TECH active master after verifying the work is genuinely missing or failing here.
+
+See `ACTIVE_MASTER_CONTROL.md` and `ACTIVE_MASTER_CONTROL.json` for the enforced task-control contract.
+
+This repository is the canonical source for the SakthiAI HI-TECH website/runtime. It is a full-stack application: React/Vite frontend plus an Express/tRPC backend.
 
 ## Current functional boundary
 
