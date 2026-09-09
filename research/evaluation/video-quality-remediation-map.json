@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "1.0.0",
+  "specId": "SAI-VIDEO-QUALITY",
+  "providerNeutral": true,
+  "runtimeApproved": false,
+  "purpose": "Turn failed or marginal SakthiAI video-quality dimensions into concrete regeneration guidance without binding to a vendor or enabling runtime generation.",
+  "remediationByDimension": {
+    "VQ-CONTENT-01": {
+      "priority": "HIGH",
+      "problem": "Prompt or storyboard intent is missing, materially altered, or padded with unwanted scenes.",
+      "actions": [
+        "Reduce the generation prompt to one shot objective at a time.",
+        "Make subject, action, environment, shot size, camera motion and duration explicit.",
+        "Remove conflicting style or motion instructions.",
+        "Regenerate only the failed shot instead of replacing an otherwise good sequence."
+      ]
+    },
+    "VQ-TEMPORAL-01": {
+      "priority": "CRITICAL",
+      "problem": "Frame-to-frame motion, object permanence or geometry is unstable.",
+      "actions": [
+        "Shorten shot duration and reduce simultaneous subject and camera motion.",
+        "Prefer a locked or simple camera move when the subject already has complex motion.",
+        "Use a stable reference/start frame where supported.",
+        "Split multi-action scenes into separate shots and assemble after each shot passes QA."
+      ]
+    },
+    "VQ-IDENTITY-01": {
+      "priority": "CRITICAL",
+      "problem": "Character, face, clothing, product or reference identity drifts between frames or shots.",
+      "actions": [
+        "Use the same approved reference asset for every shot requiring identity continuity.",
+        "Keep wardrobe, age, facial description, proportions and distinguishing features unchanged in prompts.",
+        "Avoid unnecessary angle or lighting changes during identity-critical moments.",
+        "Regenerate the drifting shot rather than accepting a high average score."
+      ]
+    },
+    "VQ-VISUAL-01": {
+      "priority": "CRITICAL",
+      "problem": "Visible anatomy, object, texture, flicker, warping, ghosting or generated-text artifacts reduce quality.",
+      "actions": [
+        "Simplify crowded scenes and reduce the number of independently moving objects.",
+        "Avoid asking the video model to render important readable text; add verified text in post-production instead.",
+        "Inspect hands, eyes, faces and object edges shot-by-shot and regenerate any dominant defect.",
+        "Prefer a cleaner source/reference frame before attempting enhancement or extension."
+      ]
+    },
+    "VQ-CAMERA-01": {
+      "priority": "MEDIUM",
+      "problem": "Framing, focus, horizon, lighting continuity or camera motion distracts from the scene.",
+      "actions": [
+        "Specify one camera move per shot and avoid contradictory dolly/pan/orbit instructions.",
+        "Define shot size and subject placement explicitly.",
+        "Use slower camera movement for scenes with dialogue, faces or detailed objects.",
+        "Maintain lighting direction and exposure intent across connected shots."
+      ]
+    },
+    "VQ-AUDIO-01": {
+      "priority": "HIGH",
+      "problem": "Speech, music, timing, clipping or lip synchronization is visibly or audibly weak.",
+      "actions": [
+        "Separate visual generation from final speech/audio mastering when the generator cannot maintain synchronization reliably.",
+        "Keep dialogue segments short and use one speaker at a time for lip-sync-critical shots.",
+        "Normalize dialogue/background balance and reject clipped or unintelligible speech.",
+        "For Tamil, require human pronunciation review before publish approval."
+      ]
+    },
+    "VQ-TEXT-01": {
+      "priority": "HIGH",
+      "problem": "Captions or on-screen text are unreadable, incorrect, mistimed or outside safe framing.",
+      "actions": [
+        "Do not rely on generative video frames for exact captions, names or important written content.",
+        "Add final text as a deterministic overlay after generation.",
+        "Verify spelling, language, timing, line breaks and mobile-safe margins.",
+        "Require human review for Tamil text before publishing."
+      ]
+    },
+    "VQ-DELIVERY-01": {
+      "priority": "HIGH",
+      "problem": "Output has incorrect dimensions, duration, aspect ratio, black/frozen sections or incomplete start/end.",
+      "actions": [
+        "Validate container duration, dimensions, frame rate and audio presence before editorial review.",
+        "Trim frozen tails and unintended blank frames rather than publishing them.",
+        "Render the target aspect ratio directly where possible instead of destructive cropping.",
+        "Recheck the final assembled export, not only the individual generated clips."
+      ]
+    }
+  },
+  "decisionGuidance": {
+    "REJECT": "Do not repair around a critical defect. Replace or regenerate the affected shot/output before further promotion.",
+    "REGENERATE": "Use the lowest-scoring dimensions to drive a targeted regeneration pass; preserve already-good shots.",
+    "PREVIEW_CANDIDATE": "Suitable for controlled internal preview only; address remaining dimensions below publish quality before release.",
+    "PUBLISH_CANDIDATE": "Quality gate passed, but publishing still requires the recorded human review and all external release gates."
+  }
+}
