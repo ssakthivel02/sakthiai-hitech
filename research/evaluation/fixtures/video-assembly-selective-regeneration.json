@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "1.0.0",
+  "requestId": "VGEN-CI-PASS-001",
+  "transitionPolicy": "CUT_ONLY",
+  "policy": {
+    "evidenceBased": true,
+    "preserveAcceptedShots": true,
+    "productionApproved": false,
+    "paidProviderApproved": false
+  },
+  "shots": [
+    {
+      "shotId": "SHOT-001",
+      "assetId": "asset-shot-001-original",
+      "parentAssetId": null,
+      "sourceType": "ORIGINAL_ACCEPTED",
+      "durationSeconds": 4,
+      "qualityReviewRequired": false,
+      "immutable": true
+    },
+    {
+      "shotId": "SHOT-002",
+      "assetId": "asset-shot-002-regenerated-v2",
+      "parentAssetId": "asset-shot-002-original",
+      "sourceType": "REGENERATED",
+      "durationSeconds": 4,
+      "qualityReviewRequired": true,
+      "immutable": false
+    },
+    {
+      "shotId": "SHOT-003",
+      "assetId": "asset-shot-003-original",
+      "parentAssetId": null,
+      "sourceType": "ORIGINAL_ACCEPTED",
+      "durationSeconds": 4,
+      "qualityReviewRequired": false,
+      "immutable": true
+    }
+  ]
+}
