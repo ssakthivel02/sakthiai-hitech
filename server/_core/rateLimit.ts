@@ -106,9 +106,9 @@ export class InMemoryRateLimiter {
   }
 
   private pruneExpired(now: number): void {
-    for (const [key, bucket] of this.buckets) {
+    this.buckets.forEach((bucket, key) => {
       if (now >= bucket.resetAt) this.buckets.delete(key);
-    }
+    });
   }
 
   private ensureCapacity(incomingKey: string): void {
