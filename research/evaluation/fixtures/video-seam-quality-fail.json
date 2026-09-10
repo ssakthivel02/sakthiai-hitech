@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0.0",
+  "specId": "SAI-VIDEO-SEAM-QUALITY",
+  "requestId": "VGEN-CI-PASS-001",
+  "assemblyManifest": {
+    "path": "research/evaluation/fixtures/video-assembly-selective-regeneration.json",
+    "gitBlobSha": "e01e06a868f0d89214f5366c6d439b5c0f997d39"
+  },
+  "reviewer": {
+    "type": "HUMAN",
+    "reviewTimestamp": "2026-09-10T00:00:00Z"
+  },
+  "seams": [
+    {
+      "fromShotId": "SHOT-001",
+      "toShotId": "SHOT-002",
+      "dimensionScores": {
+        "VS-IDENTITY": 2,
+        "VS-ENVIRONMENT": 4,
+        "VS-MOTION": 4,
+        "VS-OBJECT": 4,
+        "VS-CAMERA": 4,
+        "VS-AUDIO": 4
+      },
+      "criticalDefects": ["principal identity changes across an adjacent-shot boundary"]
+    },
+    {
+      "fromShotId": "SHOT-002",
+      "toShotId": "SHOT-003",
+      "dimensionScores": {
+        "VS-IDENTITY": 5,
+        "VS-ENVIRONMENT": 5,
+        "VS-MOTION": 4,
+        "VS-OBJECT": 4,
+        "VS-CAMERA": 4,
+        "VS-AUDIO": 4
+      },
+      "criticalDefects": []
+    }
+  ],
+  "productionApproved": false,
+  "paidProviderApproved": false,
+  "decision": "REASSEMBLE_OR_REGENERATE",
+  "notes": ["Synthetic negative CI fixture; the first seam must be rejected for identity discontinuity."]
+}
