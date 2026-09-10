@@ -75,6 +75,16 @@ async function requireDb() {
   return db;
 }
 
+function readDurationFromProvenance(provenanceJson: string): number {
+  try {
+    const value = JSON.parse(provenanceJson) as { durationMs?: unknown };
+    if (Number.isInteger(value.durationMs) && Number(value.durationMs) > 0) return Number(value.durationMs);
+  } catch {
+    // Fall through to a bounded Creator error rather than trusting malformed provenance.
+  }
+  throw new Error("CREATOR_AUDIO_DURATION_PROVENANCE_INVALID");
+}
+
 export async function ingestApprovedAudioMaster(input: {
   workspaceId: number;
   creatorProjectId: number;
@@ -160,13 +170,11 @@ export async function replaceLockedCaptionCues(input: {
   workspaceId: number;
   creatorProjectId: number;
   timelineId: number;
-  audioDurationMs: number;
   cues: CaptionCueInput[];
 }) {
-  const cues = validateCaptionCues(input.cues, input.audioDurationMs);
   const db = await requireDb();
   const [timeline] = await db
-    .select({ id: creatorTimelines.id })
+    .select({ id: creatorTimelines.id, audioMasterAssetId: creatorTimelines.audioMasterAssetId })
     .from(creatorTimelines)
     .where(
       and(
@@ -177,6 +185,25 @@ export async function replaceLockedCaptionCues(input: {
     )
     .limit(1);
   if (!timeline) throw new Error("CREATOR_TIMELINE_NOT_FOUND");
+  if (!timeline.audioMasterAssetId) throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_MISSING");
+
+  const [audioMaster] = await db
+    .select({ id: creatorAssets.id, assetType: creatorAssets.assetType, immutable: creatorAssets.immutable, provenanceJson: creatorAssets.provenanceJson })
+    .from(creatorAssets)
+    .where(
+      and(
+        eq(creatorAssets.id, timeline.audioMasterAssetId),
+        eq(creatorAssets.workspaceId, input.workspaceId),
+        eq(creatorAssets.creatorProjectId, input.creatorProjectId),
+      ),
+    )
+    .limit(1);
+  if (!audioMaster || audioMaster.assetType !== "AUDIO_MASTER" || audioMaster.immutable !== 1) {
+    throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_INVALID");
+  }
+
+  const audioDurationMs = readDurationFromProvenance(audioMaster.provenanceJson);
+  const cues = validateCaptionCues(input.cues, audioDurationMs);
 
   await db
     .delete(creatorCaptionCues)
@@ -203,5 +230,5 @@ export async function replaceLockedCaptionCues(input: {
     );
   }
 
-  return { timelineId: input.timelineId, cueCount: cues.length, locked: true as const };
+  return { timelineId: input.timelineId, audioMasterAssetId: audioMaster.id, audioDurationMs, cueCount: cues.length, locked: true as const };
 }
