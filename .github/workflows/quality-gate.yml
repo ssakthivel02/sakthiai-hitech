@@ -53,6 +53,17 @@ jobs:
       - name: Video assembly integrity
         run: node scripts/test-video-assembly-integrity.mjs
 
+      - name: Cross-shot video seam quality
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/validate-video-seam-quality.mjs research/evaluation/fixtures/video-seam-quality-pass.json
+          if node scripts/validate-video-seam-quality.mjs research/evaluation/fixtures/video-seam-quality-fail.json; then
+            echo "Deliberately discontinuous video seam fixture unexpectedly passed."
+            exit 1
+          fi
+          echo "Discontinuous video seam correctly rejected."
+
       - name: Video quality scoring fixtures
         shell: bash
         run: |
