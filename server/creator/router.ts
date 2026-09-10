@@ -5,6 +5,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { creatorAudioRouter } from "./audioRouter";
 import { creatorReviewRouter } from "./reviewRouter";
 import { creatorTimelineRouter } from "./timelineRouter";
+import { creatorWorkspaceRouter } from "./workspaceRouter";
 import {
   cancelCreatorGeneration,
   pollCreatorGeneration,
@@ -44,6 +45,7 @@ function creatorError(error: unknown): never {
 }
 
 export const creatorRouter = router({
+  workspace: creatorWorkspaceRouter,
   audio: creatorAudioRouter,
   timeline: creatorTimelineRouter,
   review: creatorReviewRouter,
@@ -51,7 +53,7 @@ export const creatorRouter = router({
   status: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
     return {
-      stage: "P0_REVIEW_AND_FINAL_MASTER_GATE_RUNTIME" as const,
+      stage: "P0_CREATOR_WORKSPACE_UI_RUNTIME" as const,
       productionApproved: false,
       providers: listCreatorProviderStatuses(),
       guarantees: {
@@ -79,7 +81,7 @@ export const creatorRouter = router({
         "apply Creator database migration to an approved runtime",
         "configure approved provider credential and S3-compatible storage outside Git",
         "run one real Murugan image generation and one real Murugan video generation",
-        "build Creator project-to-shots-to-jobs-to-timeline-to-review-to-export UI",
+        "complete Creator timeline-review-export workspace UI controls",
         "run the complete Murugan 16:9 acceptance sequence with real output and human Tamil/visual evidence",
       ],
     };
