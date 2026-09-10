@@ -118,7 +118,10 @@ const ALLOWED_TRANSITIONS: Record<CreatorJobState, readonly CreatorJobState[]> =
   QUEUED: ["SUBMITTED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"],
   SUBMITTED: ["RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "RETRYABLE"],
   RUNNING: ["SUCCEEDED", "FAILED", "CANCELLED", "RETRYABLE"],
-  SUCCEEDED: [],
+  // Provider completion can precede SakthiAI-controlled artifact persistence. A
+  // persistence failure must be able to reopen only into RETRYABLE; it still
+  // cannot jump back to QUEUED/RUNNING and cannot silently regenerate media.
+  SUCCEEDED: ["RETRYABLE"],
   FAILED: [],
   CANCELLED: [],
   RETRYABLE: ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"],
