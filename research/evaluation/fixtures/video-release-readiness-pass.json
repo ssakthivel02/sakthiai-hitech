@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0.0",
+  "specId": "SAI-VIDEO-RELEASE-READINESS",
+  "qualityReview": {
+    "path": "research/evaluation/fixtures/video-quality-publish-pass.json",
+    "gitBlobSha": "ba526ce979cfbf0e5b6df2193284a21f134e139e"
+  },
+  "rightsReview": {
+    "sourceAssetsRightsCleared": true,
+    "musicRightsCleared": true,
+    "voiceRightsCleared": true,
+    "identityConsentSatisfied": true
+  },
+  "platformPolicyReviewed": true,
+  "languageReview": {
+    "tamilContentPresent": false,
+    "tamilHumanReviewSatisfied": false
+  },
+  "ownerPublishApproved": false,
+  "productionApproved": false,
+  "paidProviderApproved": false,
+  "decision": "READY_FOR_OWNER_APPROVAL",
+  "notes": [
+    "Synthetic CI fixture only; this is not evidence that any real video is cleared for publication.",
+    "Passing this gate must never publish content automatically."
+  ]
+}
