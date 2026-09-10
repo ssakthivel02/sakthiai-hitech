@@ -115,7 +115,8 @@ export default function Creator() {
 
   function addCaptionCue() {
     if (!captionText.trim() || captionEndMs <= captionStartMs) return;
-    setCueDrafts(current => [...current, { startMs: captionStartMs, endMs: captionEndMs, text: captionText.trim(), language: "ta" }].sort((a, b) => a.startMs - b.startMs));
+    const cue: CueDraft = { startMs: captionStartMs, endMs: captionEndMs, text: captionText.trim(), language: "ta" };
+    setCueDrafts(current => [...current, cue].sort((a, b) => a.startMs - b.startMs));
     setCaptionText("");
     setCaptionStartMs(captionEndMs);
     setCaptionEndMs(captionEndMs + 3000);
