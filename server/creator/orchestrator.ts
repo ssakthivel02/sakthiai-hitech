@@ -1,4 +1,5 @@
 import { markCreatorArtifactRetryable, persistCreatorGenerationArtifact } from "./artifactPersistence";
+import { requireCreatorRemoteCancel, resolveCreatorRetryMode } from "./jobControl";
 import {
   createQueuedGeneration,
   getGenerationExecutionContext,
@@ -8,7 +9,7 @@ import {
 } from "./persistence";
 import { getCreatorProvider, selectCreatorProvider } from "./providerRegistry";
 import { generationStateAfterProviderState } from "./lifecycle";
-import type { CreatorFailureClass, CreatorMediaRequest } from "./types";
+import type { CreatorFailureClass, CreatorJobState, CreatorMediaRequest } from "./types";
 
 const RETRYABLE_FAILURES = new Set<CreatorFailureClass>([
   "QUOTA",
@@ -236,4 +237,46 @@ export async function pollCreatorGeneration(input: { workspaceId: number; genera
       productionApproved: false,
     };
   }
+}
+
+export async function retryCreatorGeneration(input: { workspaceId: number; generationId: number }) {
+  const { generation, providerJob } = await getGenerationExecutionContext(input.workspaceId, input.generationId);
+  const retryMode = resolveCreatorRetryMode({
+    generationState: generation.status as CreatorJobState,
+    failureClass: generation.failureClass as CreatorFailureClass | null,
+    providerJobState: providerJob?.status as CreatorJobState | null | undefined,
+  });
+
+  const result = await pollCreatorGeneration(input);
+  return { ...result, retryMode, regeneratedMedia: false as const };
+}
+
+export async function cancelCreatorGeneration(input: { workspaceId: number; generationId: number }) {
+  const { generation, providerJob } = await getGenerationExecutionContext(input.workspaceId, input.generationId);
+  if (["SUCCEEDED", "FAILED", "CANCELLED"].includes(generation.status)) {
+    throw new Error(`CREATOR_GENERATION_NOT_CANCELLABLE_${generation.status}`);
+  }
+  if (!providerJob) throw new Error("CREATOR_PROVIDER_JOB_NOT_FOUND");
+
+  const provider = getCreatorProvider(generation.provider);
+  if (!provider) throw new Error("CREATOR_PROVIDER_NOT_REGISTERED");
+  const remoteCancel = requireCreatorRemoteCancel(provider);
+  const poll = await remoteCancel(providerJob.providerJobId);
+  const persistedState = await recordProviderPoll({
+    workspaceId: input.workspaceId,
+    providerJobId: providerJob.providerJobId,
+    poll,
+  });
+
+  return {
+    generationId: generation.id,
+    provider: generation.provider,
+    providerState: poll.state,
+    state: persistedState.generationState,
+    cancellationAcknowledged: poll.state === "CANCELLED",
+    outputAssetId: null,
+    failureClass: poll.failureClass ?? null,
+    errorMessage: poll.errorMessage ?? null,
+    productionApproved: false,
+  };
 }
