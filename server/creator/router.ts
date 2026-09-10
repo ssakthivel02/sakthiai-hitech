@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { creatorAudioRouter } from "./audioRouter";
+import { resolveApprovedConditionedFrameAsset } from "./conditionedFrameAsset";
 import { creatorReferenceRouter } from "./referenceRouter";
 import { resolveApprovedProjectReferenceImages } from "./referenceResolution";
 import { creatorReviewRouter } from "./reviewRouter";
@@ -99,6 +100,7 @@ export const creatorRouter = router({
         cancellationRequiresRemoteProviderAcknowledgement: true,
         immutableApprovedReferences: true,
         providerRequestsResolveProjectReferenceLocksServerSide: true,
+        conditionedFramesResolveApprovedImmutableProjectAssetsServerSide: true,
         boundedShotTimingMutation: true,
         immutableApprovedAudioMaster: true,
         captionBoundsDerivedFromAudioMaster: true,
@@ -186,6 +188,8 @@ export const creatorRouter = router({
         aspectRatio: z.enum(["16:9", "9:16"]).default("16:9"),
         resolution: z.enum(["720p", "1080p", "4k"]).default("720p"),
         durationSeconds: z.union([z.literal(4), z.literal(6), z.literal(8)]).default(8),
+        firstFrameAssetId: z.number().int().positive().optional(),
+        lastFrameAssetId: z.number().int().positive().optional(),
         firstFrame: imageInput.optional(),
         lastFrame: imageInput.optional(),
         referenceImages: z.array(imageInput).max(3).optional(),
@@ -201,6 +205,20 @@ export const creatorRouter = router({
           limit: 3,
           fallback: input.referenceImages,
         });
+        const firstFrame = input.firstFrameAssetId
+          ? await resolveApprovedConditionedFrameAsset({
+              workspaceId: input.workspaceId,
+              creatorProjectId: input.creatorProjectId,
+              assetId: input.firstFrameAssetId,
+            })
+          : input.firstFrame;
+        const lastFrame = input.lastFrameAssetId
+          ? await resolveApprovedConditionedFrameAsset({
+              workspaceId: input.workspaceId,
+              creatorProjectId: input.creatorProjectId,
+              assetId: input.lastFrameAssetId,
+            })
+          : input.lastFrame;
         return await submitCreatorGeneration({
           workspaceId: input.workspaceId,
           creatorProjectId: input.creatorProjectId,
@@ -212,8 +230,8 @@ export const creatorRouter = router({
             aspectRatio: input.aspectRatio,
             resolution: input.resolution,
             durationSeconds: input.durationSeconds,
-            firstFrame: input.firstFrame,
-            lastFrame: input.lastFrame,
+            firstFrame,
+            lastFrame,
             references,
           },
         });
