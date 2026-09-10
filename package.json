@@ -12,7 +12,8 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
-    "db:push": "drizzle-kit generate && drizzle-kit migrate"
+    "db:push": "drizzle-kit generate && drizzle-kit migrate",
+    "creator:runtime:acceptance": "tsx scripts/creator-runtime-acceptance.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
@@ -91,7 +92,6 @@
     "@types/node": "^24.7.0",
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
-    "@vitejs/plugin-react": "^5.0.4",
     "add": "^2.0.6",
     "autoprefixer": "^10.4.20",
     "drizzle-kit": "^0.31.4",
