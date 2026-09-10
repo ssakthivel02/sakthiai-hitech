@@ -6,13 +6,13 @@
     "requestId": "VGEN-CI-PASS-001",
     "gitBlobSha": "028d209511546796466a4358f8b371d4f281aaaf"
   },
-  "sourcePromptOrStoryboard": "Synthetic CI fixture only: intentionally defective output.",
+  "sourcePromptOrStoryboard": "Synthetic CI fixture only: intentionally nonconforming output that must fail despite perfect quality scores.",
   "providerOrLocalAdapterId": null,
   "modelIdIfKnown": null,
   "generationSettingsIfKnown": null,
   "output": {
-    "filename": "ci-reject-fixture.mp4",
-    "durationSeconds": 12,
+    "filename": "ci-output-mismatch.mp4",
+    "durationSeconds": 10,
     "width": 1920,
     "height": 1080,
     "fps": 30,
@@ -24,16 +24,16 @@
     "tamilQualityHumanReviewed": false
   },
   "dimensionScores": {
-    "VQ-CONTENT-01": 4,
-    "VQ-TEMPORAL-01": 1,
-    "VQ-IDENTITY-01": 4,
-    "VQ-VISUAL-01": 2,
-    "VQ-CAMERA-01": 4,
-    "VQ-AUDIO-01": 4,
-    "VQ-TEXT-01": 4,
-    "VQ-DELIVERY-01": 4
+    "VQ-CONTENT-01": 5,
+    "VQ-TEMPORAL-01": 5,
+    "VQ-IDENTITY-01": 5,
+    "VQ-VISUAL-01": 5,
+    "VQ-CAMERA-01": 5,
+    "VQ-AUDIO-01": 5,
+    "VQ-TEXT-01": 5,
+    "VQ-DELIVERY-01": 5
   },
-  "criticalDefects": ["persistent flicker or temporal collapse"],
-  "notes": ["CI logic fixture; not evidence of a real generated video."],
-  "decision": "REJECT"
+  "criticalDefects": [],
+  "notes": ["CI negative fixture: duration is deliberately 10 seconds while the governed request requires 12 seconds."],
+  "decision": "PUBLISH_CANDIDATE"
 }

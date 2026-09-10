@@ -47,12 +47,25 @@ jobs:
       - name: Evidence-based video candidate routing
         run: node scripts/test-video-generation-routing.mjs
 
+      - name: Selective video shot regeneration
+        run: node scripts/test-video-shot-regeneration.mjs
+
+      - name: Video assembly integrity
+        run: node scripts/test-video-assembly-integrity.mjs
+
       - name: Video quality scoring fixtures
+        shell: bash
         run: |
+          set -euo pipefail
           node scripts/score-video-quality-review.mjs research/evaluation/fixtures/video-quality-publish-pass.json
           node scripts/score-video-quality-review.mjs research/evaluation/fixtures/video-quality-assisted-human-preview.json
           node scripts/score-video-quality-review.mjs research/evaluation/fixtures/video-quality-regenerate.json
           node scripts/score-video-quality-review.mjs research/evaluation/fixtures/video-quality-reject.json
+          if node scripts/score-video-quality-review.mjs research/evaluation/fixtures/video-quality-output-mismatch.json; then
+            echo "Deliberately nonconforming video output unexpectedly passed."
+            exit 1
+          fi
+          echo "Output/request mismatch correctly rejected."
 
       - name: Production source neutrality guard
         shell: bash

@@ -51,6 +51,28 @@ if (!review.sourcePromptOrStoryboard || typeof review.sourcePromptOrStoryboard !
 if (!review.reviewer || !['HUMAN', 'ASSISTED_HUMAN'].includes(review.reviewer.type)) throw new Error('reviewer.type must be HUMAN or ASSISTED_HUMAN');
 if (!review.reviewer.reviewTimestamp) throw new Error('reviewer.reviewTimestamp is required');
 if (!review.output || !(review.output.durationSeconds > 0) || !(review.output.width > 0) || !(review.output.height > 0)) throw new Error('Valid output durationSeconds/width/height are required');
+if (!(review.output.fps > 0)) throw new Error('Valid output fps is required');
+
+const target = linkedRequest.target;
+if (!target || !(target.width > 0) || !(target.height > 0) || !(target.fps > 0) || !(target.durationSeconds > 0)) {
+  throw new Error('Linked generation request must define positive target width/height/fps/durationSeconds');
+}
+
+const durationToleranceSeconds = 0.1;
+const fpsTolerance = 0.01;
+const outputConformanceChecks = {
+  width: review.output.width === target.width,
+  height: review.output.height === target.height,
+  fps: Math.abs(review.output.fps - target.fps) <= fpsTolerance,
+  duration: Math.abs(review.output.durationSeconds - target.durationSeconds) <= durationToleranceSeconds,
+  audio: linkedRequest.audioPolicy?.audioRequired !== true || review.output.hasAudio === true,
+};
+const failedOutputConformance = Object.entries(outputConformanceChecks)
+  .filter(([, passed]) => !passed)
+  .map(([name]) => name);
+if (failedOutputConformance.length > 0) {
+  throw new Error(`Output does not conform to linked generation request: ${failedOutputConformance.join(', ')}`);
+}
 
 const dimensions = spec.sakthiaiAcceptanceDimensions ?? [];
 if (dimensions.length === 0) throw new Error('Video quality specification has no dimensions');
@@ -134,6 +156,25 @@ const result = {
     path: requestRef.path,
     gitBlobSha: linkedRequestSha,
     traceabilityVerified: true,
+  },
+  outputConformance: {
+    verified: true,
+    target: {
+      width: target.width,
+      height: target.height,
+      fps: target.fps,
+      durationSeconds: target.durationSeconds,
+      audioRequired: linkedRequest.audioPolicy?.audioRequired === true,
+    },
+    actual: {
+      width: review.output.width,
+      height: review.output.height,
+      fps: review.output.fps,
+      durationSeconds: review.output.durationSeconds,
+      hasAudio: review.output.hasAudio === true,
+    },
+    durationToleranceSeconds,
+    fpsTolerance,
   },
   weightedScore,
   criticalDefectCount: criticalDefects.length,

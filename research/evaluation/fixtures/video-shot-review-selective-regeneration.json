@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "1.0.0",
+  "requestId": "VGEN-CI-PASS-001",
+  "globalCriticalDefects": [],
+  "shots": [
+    {
+      "shotId": "SHOT-001",
+      "scores": {"temporal": 5, "identity": 5, "visual": 5, "camera": 4},
+      "criticalDefects": []
+    },
+    {
+      "shotId": "SHOT-002",
+      "scores": {"temporal": 3, "identity": 2, "visual": 3, "camera": 4},
+      "criticalDefects": []
+    },
+    {
+      "shotId": "SHOT-003",
+      "scores": {"temporal": 4, "identity": 5, "visual": 4, "camera": 4},
+      "criticalDefects": []
+    }
+  ]
+}
