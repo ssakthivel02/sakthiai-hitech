@@ -34,7 +34,7 @@ jobs:
             exit 1
           fi
 
-      - name: Validate HI-TECH active master contract
+      - name: Validate HI-TECH active master and GitHub safety contract
         shell: bash
         run: |
           set -euo pipefail
@@ -42,7 +42,7 @@ jobs:
           const fs = require('fs');
           const control = JSON.parse(fs.readFileSync('ACTIVE_MASTER_CONTROL.json', 'utf8'));
           const state = JSON.parse(fs.readFileSync('SAKTHIAI_PROJECT_STATE.json', 'utf8'));
-          const requiredTrue = [
+          const requiredTaskTrue = [
             'verifyActiveMasterBeforeWork',
             'inventoryCompletedWorkBeforeChanges',
             'changeOnlyEvidenceBackedGaps',
@@ -54,14 +54,35 @@ jobs:
             'requireBuildTestEvidenceBeforeNextTask',
             'clarifyIfActiveMasterUnknown'
           ];
+          const requiredSafetyTrue = [
+            'verifyCanonicalRepositoryBeforeWrite',
+            'verifyActiveBranchBeforeWrite',
+            'verifyCurrentMainShaBeforeWrite',
+            'inventoryOpenPullRequestsIssuesAndWorkflowsBeforeCreating',
+            'directWriteToProtectedMainProhibitedForNormalDevelopment',
+            'newTaskBranchMustStartFromExactCurrentMain',
+            'forcePushProhibited',
+            'destructiveRefMovementProhibited',
+            'requiredCiWeakeningProhibited',
+            'branchProtectionBypassProhibited',
+            'mergeOnlyAfterExactHeadRequiredChecksPass',
+            'apiMergeRequiresExpectedHeadShaGuard',
+            'postMergeMainShaAndProtectionReverificationRequired',
+            'preferSmallestEvidenceBackedChange',
+            'stopWhenOnlyManualOrExternalBlockersRemain'
+          ];
 
+          if (control.schemaVersion !== '1.1.0') throw new Error('ACTIVE MASTER schema must be 1.1.0');
           if (control.project !== 'SakthiAI') throw new Error('Wrong active-master project');
           if (control.status !== 'HI-TECH — ACTIVE MASTER') throw new Error('Repository is not declared HI-TECH — ACTIVE MASTER');
           if (control.canonicalRepository !== 'ssakthivel02/sakthiai-hitech') throw new Error('Wrong canonical repository');
           if (control.activeBranch !== 'main') throw new Error('Active integration branch must remain main');
           if (control.oldLegacyPolicy !== 'READ_ONLY_REFERENCE') throw new Error('OLD/LEGACY policy must remain read-only reference');
-          for (const key of requiredTrue) {
+          for (const key of requiredTaskTrue) {
             if (control.taskPolicy?.[key] !== true) throw new Error(`Active-master task rule must remain true: ${key}`);
+          }
+          for (const key of requiredSafetyTrue) {
+            if (control.githubSafetyPolicy?.[key] !== true) throw new Error(`GitHub safety rule must remain true: ${key}`);
           }
           if (control.taskPolicy?.legacyReconciliation !== 'ONE_TIME_INTO_ACTIVE_MASTER_ONLY') {
             throw new Error('Legacy reconciliation policy changed');
@@ -85,8 +106,12 @@ jobs:
           if (process.env.GITHUB_BASE_REF && process.env.GITHUB_BASE_REF !== control.activeBranch) {
             throw new Error(`Pull request must target active branch ${control.activeBranch}`);
           }
+          if (process.env.GITHUB_EVENT_NAME === 'pull_request') {
+            const head = process.env.GITHUB_HEAD_REF || '';
+            if (!head || head === control.activeBranch) throw new Error('Pull request head must be a dedicated task branch, not main');
+          }
           console.log('ACTIVE_MASTER_CONTRACT_PASS project=SakthiAI repo=ssakthivel02/sakthiai-hitech branch=main');
-          console.log('PROJECT_STATE_SOURCE_TRUTH_PASS authoritative=ssakthivel02/sakthiai-hitech historical=READ_ONLY_REFERENCE');
+          console.log('GITHUB_SAFETY_CONTRACT_PASS exact-head-ci=required expected-head-merge=required force-push=prohibited');
           NODE
 
       - name: Validate repository contract
@@ -118,6 +143,8 @@ jobs:
           echo '- SAKTHIAI_PROJECT_STATE source truth must match ACTIVE MASTER contract' >> "$GITHUB_STEP_SUMMARY"
           echo '- historical recovery provenance remains read-only reference only' >> "$GITHUB_STEP_SUMMARY"
           echo '- completed-work duplication and evidence-first task rules enforced' >> "$GITHUB_STEP_SUMMARY"
+          echo '- strict GitHub safety contract: verify before write, dedicated exact-main branch, no force/destructive ref movement' >> "$GITHUB_STEP_SUMMARY"
+          echo '- exact-head required checks and expected-head guarded API merge are mandatory policy' >> "$GITHUB_STEP_SUMMARY"
           echo '- whitespace and merge-conflict defects rejected' >> "$GITHUB_STEP_SUMMARY"
           echo '- canonical sakthiai-hitech repository contract checked' >> "$GITHUB_STEP_SUMMARY"
           echo '- deep build/type/test validation remains in SakthiAI Quality Gate' >> "$GITHUB_STEP_SUMMARY"
