@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0.0",
+  "stableId": "SAI-VIDEO-RELEASE-READINESS",
+  "domain": "SAI-08 AI Evaluation & Benchmark Intelligence",
+  "sourceStatus": "sakthiai-engineering-governance-specification",
+  "runtimeTruth": false,
+  "runtimeApproved": false,
+  "productionApproved": false,
+  "objective": "Prevent a technically strong generated video from being treated as publishable until quality, rights, consent, platform-policy and language-review evidence are present and explicit owner publication approval remains a separate final action.",
+  "requiredUpstreamEvidence": [
+    "SAI-VIDEO-QUALITY PUBLISH_CANDIDATE review",
+    "linked governed generation request",
+    "rights and consent review",
+    "platform policy review",
+    "Tamil human review when Tamil content is present"
+  ],
+  "readinessDecision": "READY_FOR_OWNER_APPROVAL",
+  "policy": {
+    "providerNeutral": true,
+    "qualityCandidateIsNotPublicationApproval": true,
+    "ownerPublishApprovalMustRemainSeparate": true,
+    "ownerPublishApprovedAtReadinessGate": false,
+    "productionApprovalAtReadinessGate": false,
+    "paidProviderApprovalAtReadinessGate": false,
+    "rightsEvidenceRequired": true,
+    "identityConsentRequiredWhenApplicable": true,
+    "voiceConsentRequiredWhenApplicable": true,
+    "platformPolicyReviewRequired": true,
+    "tamilHumanReviewRequiredWhenTamilPresent": true,
+    "syntheticFixturesAreNotRealPublicationEvidence": true
+  }
+}
