@@ -50,6 +50,9 @@ jobs:
       - name: Selective video shot regeneration
         run: node scripts/test-video-shot-regeneration.mjs
 
+      - name: Video assembly integrity
+        run: node scripts/test-video-assembly-integrity.mjs
+
       - name: Video quality scoring fixtures
         run: |
           node scripts/score-video-quality-review.mjs research/evaluation/fixtures/video-quality-publish-pass.json
