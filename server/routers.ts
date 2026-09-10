@@ -45,13 +45,17 @@ export const appRouter = router({
       const filename = safeFilename(input.filename); validateFile(buffer, input.mimeType, filename);
       const contentHash = createHash("sha256").update(buffer).digest("hex");
       const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+      if (input.projectId) {
+        const project = await db.select({ id: projects.id }).from(projects).where(and(eq(projects.id, input.projectId), eq(projects.workspaceId, input.workspaceId))).limit(1);
+        if (!project[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Project access denied" });
+      }
       const duplicate = await db.select({ id: documents.id }).from(documents).where(and(eq(documents.workspaceId, input.workspaceId), eq(documents.contentHash, contentHash))).limit(1);
       if (duplicate[0]) throw new TRPCError({ code: "CONFLICT", message: "Duplicate document already exists" });
       const extracted = await extractDocument(buffer, input.mimeType);
       if (!extracted.text) throw new TRPCError({ code: "BAD_REQUEST", message: "No extractable text" });
       const stored = await storagePut(`${ctx.user.id}/${input.workspaceId}/${filename}`, buffer, input.mimeType);
       await db.insert(documents).values({ workspaceId: input.workspaceId, projectId: input.projectId ?? null, filename, mimeType: input.mimeType, storageKey: stored.key, extractedText: extracted.text, contentHash, pageCount: extracted.pageCount });
-      const created = await db.select().from(documents).where(eq(documents.contentHash, contentHash)).limit(1); const document = created[0]; if (!document) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Document persistence failed" });
+      const created = await db.select().from(documents).where(and(eq(documents.workspaceId, input.workspaceId), eq(documents.contentHash, contentHash))).limit(1); const document = created[0]; if (!document) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Document persistence failed" });
       const adapter = embeddingStatus();
       const chunks = [];
       for (let index = 0; index < extracted.segments.length; index += 1) { const segment = extracted.segments[index]; const embedded = await tryEmbed(segment.content); chunks.push({ ...segment, chunkIndex: index, documentId: document.id, workspaceId: input.workspaceId, embeddingJson: embedded ? serializeEmbedding(embedded.vector) : null, embeddingModel: embedded?.adapter.model ?? null }); }
@@ -60,12 +64,18 @@ export const appRouter = router({
     }),
   }),
   chat: router({
-    history: protectedProcedure.input(workspaceInput.extend({ conversationId: z.number().int().positive() })).query(({ ctx, input }) => requireWorkspace(ctx.user.id, input.workspaceId).then(() => getConversationMessages(input.workspaceId, input.conversationId))),
+    history: protectedProcedure.input(workspaceInput.extend({ conversationId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+      const owned = await db.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.id, input.conversationId), eq(conversations.workspaceId, input.workspaceId), eq(conversations.userId, ctx.user.id))).limit(1);
+      if (!owned[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Conversation access denied" });
+      return getConversationMessages(input.workspaceId, input.conversationId);
+    }),
     send: protectedProcedure.input(workspaceInput.extend({ conversationId: z.number().int().positive().optional(), message: z.string().trim().min(1).max(12000), language: z.enum(["en", "ta"]).default("en") })).mutation(async ({ ctx, input }) => {
       const started = Date.now(); await requireWorkspace(ctx.user.id, input.workspaceId); const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
       let conversationId = input.conversationId;
       if (conversationId) { const owned = await db.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.id, conversationId), eq(conversations.workspaceId, input.workspaceId), eq(conversations.userId, ctx.user.id))).limit(1); if (!owned[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Conversation access denied" }); }
-      if (!conversationId) { await db.insert(conversations).values({ workspaceId: input.workspaceId, userId: ctx.user.id, title: input.message.slice(0, 80), language: input.language }); const row = await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.workspaceId, input.workspaceId)).orderBy(desc(conversations.id)).limit(1); conversationId = row[0]?.id; }
+      if (!conversationId) { await db.insert(conversations).values({ workspaceId: input.workspaceId, userId: ctx.user.id, title: input.message.slice(0, 80), language: input.language }); const row = await db.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.workspaceId, input.workspaceId), eq(conversations.userId, ctx.user.id))).orderBy(desc(conversations.id)).limit(1); conversationId = row[0]?.id; }
       if (!conversationId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Conversation creation failed" });
       const retrievalStarted = Date.now(); const matches = await searchChunks(input.workspaceId, input.message); const retrievalLatencyMs = Date.now() - retrievalStarted;
       const citations: Citation[] = matches.map(match => ({ filename: match.filename, mimeType: match.mimeType, documentId: match.documentId, page: match.page ?? undefined, section: match.section ?? undefined, paragraph: match.paragraph ?? undefined, chunkId: match.id, excerpt: match.content.slice(0, 260), sourceStart: match.sourceStart ?? undefined, sourceEnd: match.sourceEnd ?? undefined, retrievalMethod: match.retrievalMethod, retrievalScore: Number(match.score.toFixed(6)) }));
