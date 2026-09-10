@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Clapperboard, Film, Image, Plus, RefreshCw, ShieldCheck, Upload, Play, RotateCcw, Ban, CheckCircle2 } from "lucide-react";
+import CreatorReferenceControls from "./CreatorReferenceControls";
 
 type CueDraft = { startMs: number; endMs: number; text: string; language: "ta" | "en" };
 type TimelineDraft = { assetId: number; shotId?: number; startMs: number; endMs: number; track: 1; sortOrder: number };
@@ -159,6 +160,8 @@ export default function Creator() {
           </CardContent></Card>
 
           <Card><CardHeader><CardTitle>Generation jobs <Button size="sm" variant="ghost" onClick={() => project.refetch()}><RefreshCw size={14}/> Refresh</Button></CardTitle></CardHeader><CardContent><div className="list">{project.data?.generations.map(job => <div key={job.id} className="list-row"><div><span>#{job.id} · {job.kind} · {job.provider}</span><small>{job.status} · model {job.model}{job.outputAssetId ? ` · asset ${job.outputAssetId}` : ""}</small></div><div style={{ display: "flex", gap: 6 }}>{(job.status === "RETRYABLE" || job.status === "FAILED") && <Button size="sm" variant="outline" onClick={() => retryGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><RotateCcw size={14}/> Retry existing</Button>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => cancelGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><Ban size={14}/> Cancel</Button>}</div></div>)}</div></CardContent></Card>
+
+          {workspaceId && projectId && <CreatorReferenceControls workspaceId={workspaceId} creatorProjectId={projectId} onChanged={() => project.refetch()} />}
 
           <Card><CardHeader><CardTitle>1. Approved audio master</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 10 }}>
             <Input type="file" accept="audio/wav,.wav" onChange={e => setAudioFile(e.target.files?.[0])}/>
