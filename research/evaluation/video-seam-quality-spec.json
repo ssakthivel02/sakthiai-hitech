@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0.0",
+  "stableId": "SAI-VIDEO-SEAM-QUALITY",
+  "domain": "SAI-08 AI Evaluation & Benchmark Intelligence",
+  "runtimeTruth": false,
+  "runtimeApproved": false,
+  "productionApproved": false,
+  "objective": "Prevent individually acceptable shots from being assembled into a visibly discontinuous video by requiring evidence at every adjacent shot boundary.",
+  "appliesAfter": ["SAI-VIDEO-QUALITY", "video assembly integrity"],
+  "dimensions": [
+    {"id": "VS-IDENTITY", "name": "Identity continuity", "weight": 25},
+    {"id": "VS-ENVIRONMENT", "name": "Environment and lighting continuity", "weight": 20},
+    {"id": "VS-MOTION", "name": "Motion and temporal continuity", "weight": 20},
+    {"id": "VS-OBJECT", "name": "Wardrobe and object permanence", "weight": 15},
+    {"id": "VS-CAMERA", "name": "Camera-intent continuity", "weight": 10},
+    {"id": "VS-AUDIO", "name": "Audio continuity", "weight": 10}
+  ],
+  "scoring": {
+    "dimensionScale": "0-5",
+    "minimumWeightedScore": 82,
+    "minimumPerDimensionScore": 3,
+    "lockedContinuityMinimum": 4,
+    "lockedDimensions": ["VS-IDENTITY", "VS-ENVIRONMENT", "VS-OBJECT"],
+    "formula": "sum((dimensionScore / 5) * dimensionWeight)"
+  },
+  "criticalDefects": [
+    "principal identity changes across an adjacent-shot boundary",
+    "locked wardrobe changes without storyboard authorization",
+    "environment or lighting state jumps without storyboard authorization",
+    "persistent object disappearance or duplication across the boundary",
+    "audio discontinuity that materially interrupts required speech or music",
+    "boundary contains black, frozen, duplicated or missing frames"
+  ],
+  "reviewProtocol": [
+    "Review every adjacent shot boundary; for N shots require exactly N-1 seam reviews.",
+    "Inspect the end of the outgoing shot and beginning of the incoming shot at normal speed and frame-by-frame when a discontinuity is suspected.",
+    "Score continuity independently from within-shot quality; a strong shot cannot hide a poor boundary.",
+    "Fail the assembled candidate when any seam has a critical defect or misses the required score.",
+    "Do not invent transitions: CUT_ONLY assemblies remain cuts unless a separately governed transition contract authorizes another transition."
+  ],
+  "decisionValues": ["PASS", "REASSEMBLE_OR_REGENERATE"],
+  "policy": {
+    "providerNeutral": true,
+    "humanOrAssistedHumanReviewRequired": true,
+    "paidProviderActivation": false,
+    "researchSpecDoesNotEnableRuntime": true
+  }
+}
