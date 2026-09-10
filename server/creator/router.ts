@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { creatorAudioRouter } from "./audioRouter";
+import { creatorReviewRouter } from "./reviewRouter";
 import { creatorTimelineRouter } from "./timelineRouter";
 import {
   cancelCreatorGeneration,
@@ -45,11 +46,12 @@ function creatorError(error: unknown): never {
 export const creatorRouter = router({
   audio: creatorAudioRouter,
   timeline: creatorTimelineRouter,
+  review: creatorReviewRouter,
 
   status: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
     return {
-      stage: "P0_DETERMINISTIC_ASSEMBLY_RUNTIME" as const,
+      stage: "P0_REVIEW_AND_FINAL_MASTER_GATE_RUNTIME" as const,
       productionApproved: false,
       providers: listCreatorProviderStatuses(),
       guarantees: {
@@ -64,15 +66,21 @@ export const creatorRouter = router({
         approvedVisualTimelineCoverageRequired: true,
         deterministicFfmpegCandidateRender: true,
         renderChecksumAndProvenance: true,
+        governedVideoQualitySpecId: "SAI-VIDEO-QUALITY",
+        outputConformanceBeforeQualityScoring: true,
+        providerNeutralRemediation: true,
+        qualityPassRequiredBeforeFinalMaster: true,
         humanTamilReviewRequired: true,
         humanVisualReviewRequiredBeforeFinalMaster: true,
+        finalMasterPromotionDoesNotPublish: true,
         automaticPublish: false,
       },
       nextRequired: [
         "apply Creator database migration to an approved runtime",
         "configure approved provider credential and S3-compatible storage outside Git",
         "run one real Murugan image generation and one real Murugan video generation",
-        "connect rendered candidate to existing video-quality scorer/remediation and final human approval gate",
+        "build Creator project-to-shots-to-jobs-to-timeline-to-review-to-export UI",
+        "run the complete Murugan 16:9 acceptance sequence with real output and human Tamil/visual evidence",
       ],
     };
   }),
