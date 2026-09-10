@@ -13,6 +13,7 @@ import {
   submitCreatorGeneration,
 } from "./orchestrator";
 import { listCreatorProviderStatuses } from "./providerRegistry";
+import { buildCreatorRuntimePreflight } from "./runtimePreflight";
 
 const imageInput = z.object({
   mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
@@ -80,11 +81,16 @@ export const creatorRouter = router({
       nextRequired: [
         "apply Creator database migration to an approved runtime",
         "configure approved provider credential and S3-compatible storage outside Git",
+        "verify Creator runtime preflight before any paid generation",
         "run one real Murugan image generation and one real Murugan video generation",
-        "complete Creator timeline-review-export workspace UI controls",
         "run the complete Murugan 16:9 acceptance sequence with real output and human Tamil/visual evidence",
       ],
     };
+  }),
+
+  preflight: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    return buildCreatorRuntimePreflight();
   }),
 
   submitImage: protectedProcedure
