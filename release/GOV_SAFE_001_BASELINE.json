@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0.0",
+  "control": "GOV-SAFE-001",
+  "observedAtUtc": "2026-09-10T11:42:55Z",
+  "canonicalRepository": "ssakthivel02/sakthiai-hitech",
+  "mainShaAtTaskStart": "d6fa112f611e6cc17a24dc4787be244b9fd5d2c3",
+  "mainProtectedAtTaskStart": false,
+  "repositoryRulesetsAtTaskStart": 0,
+  "historicalGovernanceSource": {
+    "pullRequest": 2,
+    "classification": "ONE_TIME_RECONCILIATION_CANDIDATE",
+    "reason": "Useful governance concepts existed, but the draft PR was based on stale main and overlapped runtime/security code. Only governance concepts are reconciled into current architecture."
+  },
+  "productionAuthorizationCreated": false
+}
