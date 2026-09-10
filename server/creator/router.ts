@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { creatorAudioRouter } from "./audioRouter";
+import { creatorTimelineRouter } from "./timelineRouter";
 import {
   cancelCreatorGeneration,
   pollCreatorGeneration,
@@ -43,11 +44,12 @@ function creatorError(error: unknown): never {
 
 export const creatorRouter = router({
   audio: creatorAudioRouter,
+  timeline: creatorTimelineRouter,
 
   status: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
     return {
-      stage: "P0_AUDIO_MASTER_AND_CAPTION_RUNTIME" as const,
+      stage: "P0_DETERMINISTIC_ASSEMBLY_RUNTIME" as const,
       productionApproved: false,
       providers: listCreatorProviderStatuses(),
       guarantees: {
@@ -59,14 +61,18 @@ export const creatorRouter = router({
         cancellationRequiresRemoteProviderAcknowledgement: true,
         immutableApprovedAudioMaster: true,
         captionBoundsDerivedFromAudioMaster: true,
+        approvedVisualTimelineCoverageRequired: true,
+        deterministicFfmpegCandidateRender: true,
+        renderChecksumAndProvenance: true,
         humanTamilReviewRequired: true,
+        humanVisualReviewRequiredBeforeFinalMaster: true,
         automaticPublish: false,
       },
       nextRequired: [
         "apply Creator database migration to an approved runtime",
         "configure approved provider credential and S3-compatible storage outside Git",
         "run one real Murugan image generation and one real Murugan video generation",
-        "build deterministic FFmpeg render/export and connect quality review",
+        "connect rendered candidate to existing video-quality scorer/remediation and final human approval gate",
       ],
     };
   }),
