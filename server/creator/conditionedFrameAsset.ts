@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { creatorAssets } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { storageRead } from "../storage";
-import type { CreatorReferenceImage } from "./types";
+import type { CreatorInlineImage } from "./types";
 
 export type ConditionedFrameAssetRow = {
   id: number;
@@ -38,7 +38,7 @@ export async function resolveApprovedConditionedFrameAsset(input: {
   workspaceId: number;
   creatorProjectId: number;
   assetId: number;
-}): Promise<CreatorReferenceImage> {
+}): Promise<CreatorInlineImage> {
   const db = await getDb();
   if (!db) throw new Error("CREATOR_DATABASE_UNAVAILABLE");
 
@@ -60,7 +60,7 @@ export async function resolveApprovedConditionedFrameAsset(input: {
   const approved = validateConditionedFrameAsset(row, input);
   const bytes = await storageRead(approved.storageKey);
   return {
-    mimeType: approved.mimeType as CreatorReferenceImage["mimeType"],
+    mimeType: approved.mimeType as CreatorInlineImage["mimeType"],
     dataBase64: Buffer.from(bytes).toString("base64"),
     assetId: approved.id,
   };
