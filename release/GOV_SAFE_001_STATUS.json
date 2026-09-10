@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "1.0.0",
+  "control": "GOV-SAFE-001",
+  "canonicalRepository": "ssakthivel02/sakthiai-hitech",
+  "integrationBranch": "main",
+  "repositoryPolicyImplemented": true,
+  "serverSideProtectionVerified": false,
+  "productionImpactingReleaseAllowed": false,
+  "requiredServerSideControls": [
+    "pull_request_required",
+    "protected-main-gate_required",
+    "parallel-work-guard_required",
+    "branch_up_to_date_required",
+    "force_push_blocked",
+    "branch_deletion_blocked"
+  ],
+  "note": "Set serverSideProtectionVerified only from real GitHub ruleset/branch-protection evidence; never infer it from repository CI."
+}
