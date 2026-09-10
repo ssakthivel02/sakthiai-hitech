@@ -1,0 +1,81 @@
+name: SakthiAI Parallel Work Guard
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coordination-guard:
+    name: parallel-work-guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout proposed head
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify canonical repository and dedicated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "ssakthivel02/sakthiai-hitech"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            test -n "${GITHUB_HEAD_REF:-}"
+            test "${GITHUB_HEAD_REF}" != "main"
+            test "${GITHUB_BASE_REF}" = "main"
+          fi
+
+      - name: Require candidate to contain current main
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "Candidate does not contain current main. Reconcile drift deliberately and rerun exact-head CI." >&2
+            exit 1
+          fi
+          echo "CURRENT_MAIN_ANCESTRY_PASS"
+
+      - name: Classify high-risk overlap surface
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$base" "$head" | tee /tmp/changed-files.txt
+          if grep -E '^(\.github/workflows/|drizzle/|server/|release/|render\.yaml$|package\.json$|pnpm-lock\.yaml$|ACTIVE_MASTER_CONTROL\.(json|md)$)' /tmp/changed-files.txt >/dev/null; then
+            echo "HIGH_RISK_SURFACE_PRESENT=true"
+          else
+            echo "HIGH_RISK_SURFACE_PRESENT=false"
+          fi
+
+      - name: Reject newly committed secret-bearing paths
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          if git diff --name-only "$base" "$head" | grep -E '(^|/)(\.env|\.env\..+|.*\.pem|.*\.key|.*\.p12|.*\.pfx)$' | grep -Ev '(^|/)\.env\.example$'; then
+            echo "Potential secret-bearing file committed." >&2
+            exit 1
+          fi
+          echo "SECRET_PATH_GUARD_PASS"
+
+      - name: Coordination summary
+        if: always()
+        run: |
+          echo '### SakthiAI Parallel Work Guard' >> "$GITHUB_STEP_SUMMARY"
+          echo '- canonical repository and dedicated branch checked' >> "$GITHUB_STEP_SUMMARY"
+          echo '- candidate must contain current main before merge validation' >> "$GITHUB_STEP_SUMMARY"
+          echo '- high-risk overlap surface classified' >> "$GITHUB_STEP_SUMMARY"
+          echo '- secret-bearing committed paths rejected' >> "$GITHUB_STEP_SUMMARY"
+          echo '- server-side ruleset remains separately required to prevent direct main writes' >> "$GITHUB_STEP_SUMMARY"
