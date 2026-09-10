@@ -5,6 +5,7 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Creator from "./pages/Creator";
+import CreatorRuntime from "./pages/CreatorRuntime";
 import Home from "./pages/Home";
 import IntelligenceDashboard from "./pages/IntelligenceDashboard";
 
@@ -13,6 +14,7 @@ function Router() {
     <Switch>
       <Route path={"/"} component={Home} />
       <Route path={"/creator"} component={Creator} />
+      <Route path={"/creator/runtime"} component={CreatorRuntime} />
       <Route path={"/intelligence"} component={IntelligenceDashboard} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
