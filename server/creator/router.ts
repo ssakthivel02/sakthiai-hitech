@@ -4,6 +4,7 @@ import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { creatorAudioRouter } from "./audioRouter";
 import { creatorReferenceRouter } from "./referenceRouter";
+import { resolveApprovedProjectReferenceImages } from "./referenceResolution";
 import { creatorReviewRouter } from "./reviewRouter";
 import { creatorTimelineRouter } from "./timelineRouter";
 import { creatorWorkspaceRouter } from "./workspaceRouter";
@@ -62,6 +63,20 @@ function creatorError(error: unknown): never {
   throw new TRPCError({ code: "BAD_GATEWAY", message: "CREATOR_PROVIDER_REQUEST_FAILED" });
 }
 
+async function lockedReferencesOrFallback(input: {
+  workspaceId: number;
+  creatorProjectId: number;
+  limit: number;
+  fallback?: z.infer<typeof imageInput>[];
+}) {
+  const locked = await resolveApprovedProjectReferenceImages({
+    workspaceId: input.workspaceId,
+    creatorProjectId: input.creatorProjectId,
+    limit: input.limit,
+  });
+  return locked.length ? locked : input.fallback;
+}
+
 export const creatorRouter = router({
   workspace: creatorWorkspaceRouter,
   references: creatorReferenceRouter,
@@ -83,6 +98,7 @@ export const creatorRouter = router({
         retryReusesExistingProviderJob: true,
         cancellationRequiresRemoteProviderAcknowledgement: true,
         immutableApprovedReferences: true,
+        providerRequestsResolveProjectReferenceLocksServerSide: true,
         boundedShotTimingMutation: true,
         immutableApprovedAudioMaster: true,
         captionBoundsDerivedFromAudioMaster: true,
@@ -130,6 +146,12 @@ export const creatorRouter = router({
       await requireWorkspace(ctx.user.id, input.workspaceId);
       requirePaidGenerationReady();
       try {
+        const references = await lockedReferencesOrFallback({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          limit: 4,
+          fallback: input.references,
+        });
         return await submitCreatorGeneration({
           workspaceId: input.workspaceId,
           creatorProjectId: input.creatorProjectId,
@@ -140,7 +162,7 @@ export const creatorRouter = router({
             model: input.model,
             aspectRatio: input.aspectRatio,
             imageSize: input.imageSize,
-            references: input.references,
+            references,
           },
         });
       } catch (error) {
@@ -173,6 +195,12 @@ export const creatorRouter = router({
       await requireWorkspace(ctx.user.id, input.workspaceId);
       requirePaidGenerationReady();
       try {
+        const references = await lockedReferencesOrFallback({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          limit: 3,
+          fallback: input.referenceImages,
+        });
         return await submitCreatorGeneration({
           workspaceId: input.workspaceId,
           creatorProjectId: input.creatorProjectId,
@@ -186,7 +214,7 @@ export const creatorRouter = router({
             durationSeconds: input.durationSeconds,
             firstFrame: input.firstFrame,
             lastFrame: input.lastFrame,
-            references: input.referenceImages,
+            references,
           },
         });
       } catch (error) {
