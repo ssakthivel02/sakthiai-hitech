@@ -12,7 +12,7 @@
   "generationSettingsIfKnown": null,
   "output": {
     "filename": "ci-fixture.mp4",
-    "durationSeconds": 10,
+    "durationSeconds": 12,
     "width": 1920,
     "height": 1080,
     "fps": 30,
