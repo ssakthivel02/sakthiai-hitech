@@ -1,0 +1,50 @@
+name: SakthiAI GitHub Safety Contract QA
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ACTIVE_MASTER_CONTROL.json'
+      - 'ACTIVE_MASTER_CONTROL.md'
+      - 'GOV_SAFE_001_GITHUB_SAFETY.md'
+      - '.github/PARALLEL_WORK_POLICY.md'
+      - '.github/CODEOWNERS'
+      - '.github/pull_request_template.md'
+      - '.github/workflows/protected-main-gate.yml'
+      - '.github/workflows/parallel-work-guard.yml'
+      - '.github/workflows/github-safety-contract-qa.yml'
+      - 'tests/github-safety-contract.test.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  github-safety-contract:
+    name: github-safety-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.4.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Validate governance JSON and workflow syntax surface
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('ACTIVE_MASTER_CONTROL.json','utf8')); console.log('ACTIVE_MASTER_JSON_PASS')"
+          node --check tests/github-safety-contract.test.mjs
+      - name: Run deterministic GitHub safety contract tests
+        run: pnpm exec vitest run tests/github-safety-contract.test.mjs
+      - name: Summary
+        if: always()
+        run: |
+          echo '### GOV-SAFE-001 QA' >> "$GITHUB_STEP_SUMMARY"
+          echo '- canonical repo/branch contract tested' >> "$GITHUB_STEP_SUMMARY"
+          echo '- exact-head and expected-head merge policy tested' >> "$GITHUB_STEP_SUMMARY"
+          echo '- current-main ancestry guard tested' >> "$GITHUB_STEP_SUMMARY"
+          echo '- server-side ruleset remains a separate manually verified acceptance gate' >> "$GITHUB_STEP_SUMMARY"
