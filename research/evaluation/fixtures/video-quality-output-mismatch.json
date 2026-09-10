@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1.0.0",
+  "specId": "SAI-VIDEO-QUALITY",
+  "generationRequest": {
+    "path": "research/generative-media/fixtures/video-generation-request-pass.json",
+    "requestId": "VGEN-CI-PASS-001",
+    "gitBlobSha": "028d209511546796466a4358f8b371d4f281aaaf"
+  },
+  "sourcePromptOrStoryboard": "Synthetic CI fixture only: intentionally nonconforming output that must fail despite perfect quality scores.",
+  "providerOrLocalAdapterId": null,
+  "modelIdIfKnown": null,
+  "generationSettingsIfKnown": null,
+  "output": {
+    "filename": "ci-output-mismatch.mp4",
+    "durationSeconds": 10,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "hasAudio": true
+  },
+  "reviewer": {
+    "type": "HUMAN",
+    "reviewTimestamp": "2026-09-09T00:00:00Z",
+    "tamilQualityHumanReviewed": false
+  },
+  "dimensionScores": {
+    "VQ-CONTENT-01": 5,
+    "VQ-TEMPORAL-01": 5,
+    "VQ-IDENTITY-01": 5,
+    "VQ-VISUAL-01": 5,
+    "VQ-CAMERA-01": 5,
+    "VQ-AUDIO-01": 5,
+    "VQ-TEXT-01": 5,
+    "VQ-DELIVERY-01": 5
+  },
+  "criticalDefects": [],
+  "notes": ["CI negative fixture: duration is deliberately 10 seconds while the governed request requires 12 seconds."],
+  "decision": "PUBLISH_CANDIDATE"
+}
