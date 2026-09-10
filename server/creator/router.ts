@@ -2,6 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
+import { creatorAudioRouter } from "./audioRouter";
 import {
   cancelCreatorGeneration,
   pollCreatorGeneration,
@@ -41,10 +42,12 @@ function creatorError(error: unknown): never {
 }
 
 export const creatorRouter = router({
+  audio: creatorAudioRouter,
+
   status: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
     return {
-      stage: "P0_PROVIDER_NEUTRAL_GENERATION_RUNTIME" as const,
+      stage: "P0_AUDIO_MASTER_AND_CAPTION_RUNTIME" as const,
       productionApproved: false,
       providers: listCreatorProviderStatuses(),
       guarantees: {
@@ -54,13 +57,16 @@ export const creatorRouter = router({
         checksumAndProvenanceOnPersist: true,
         retryReusesExistingProviderJob: true,
         cancellationRequiresRemoteProviderAcknowledgement: true,
+        immutableApprovedAudioMaster: true,
+        captionBoundsDerivedFromAudioMaster: true,
+        humanTamilReviewRequired: true,
         automaticPublish: false,
       },
       nextRequired: [
         "apply Creator database migration to an approved runtime",
         "configure approved provider credential and S3-compatible storage outside Git",
         "run one real Murugan image generation and one real Murugan video generation",
-        "connect audio-master timeline, Tamil caption cues, deterministic render and quality review",
+        "build deterministic FFmpeg render/export and connect quality review",
       ],
     };
   }),
