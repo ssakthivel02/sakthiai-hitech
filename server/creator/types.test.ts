@@ -12,16 +12,19 @@ describe("SakthiAI Creator durable job state contract", () => {
     expect(canTransitionCreatorJob("RUNNING", "SUCCEEDED")).toBe(true);
   });
 
-  it("supports retry without allowing a terminal success to reopen", () => {
+  it("supports bounded artifact persistence recovery without reopening execution", () => {
     expect(canTransitionCreatorJob("RUNNING", "RETRYABLE")).toBe(true);
+    expect(canTransitionCreatorJob("SUCCEEDED", "RETRYABLE")).toBe(true);
+    expect(canTransitionCreatorJob("RETRYABLE", "SUCCEEDED")).toBe(true);
     expect(canTransitionCreatorJob("RETRYABLE", "QUEUED")).toBe(true);
     expect(canTransitionCreatorJob("SUCCEEDED", "QUEUED")).toBe(false);
+    expect(canTransitionCreatorJob("SUCCEEDED", "RUNNING")).toBe(false);
     expect(() => assertCreatorJobTransition("SUCCEEDED", "RUNNING")).toThrow(
       "CREATOR_INVALID_JOB_TRANSITION_SUCCEEDED_TO_RUNNING",
     );
   });
 
-  it("treats success, failure and cancellation as terminal", () => {
+  it("treats success, failure and cancellation as terminal for externally visible execution", () => {
     expect(isCreatorTerminalState("SUCCEEDED")).toBe(true);
     expect(isCreatorTerminalState("FAILED")).toBe(true);
     expect(isCreatorTerminalState("CANCELLED")).toBe(true);
