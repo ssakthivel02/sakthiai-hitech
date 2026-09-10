@@ -31,7 +31,23 @@ async function requireWorkspace(userId: number, workspaceId: number) {
   return workspace;
 }
 
+function requirePaidGenerationReady() {
+  const preflight = buildCreatorRuntimePreflight();
+  if (preflight.readyForPaidGeneration) return preflight;
+
+  const failed = preflight.checks
+    .filter(check => check.required && !check.pass)
+    .map(check => check.id)
+    .join(",");
+
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: `CREATOR_RUNTIME_PREFLIGHT_BLOCKED:${failed || "UNKNOWN"}`,
+  });
+}
+
 function creatorError(error: unknown): never {
+  if (error instanceof TRPCError) throw error;
   const message = error instanceof Error ? error.message : "CREATOR_RUNTIME_ERROR";
   if (
     message.includes("NOT_CONFIGURED") ||
@@ -112,6 +128,7 @@ export const creatorRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await requireWorkspace(ctx.user.id, input.workspaceId);
+      requirePaidGenerationReady();
       try {
         return await submitCreatorGeneration({
           workspaceId: input.workspaceId,
@@ -154,6 +171,7 @@ export const creatorRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await requireWorkspace(ctx.user.id, input.workspaceId);
+      requirePaidGenerationReady();
       try {
         return await submitCreatorGeneration({
           workspaceId: input.workspaceId,
