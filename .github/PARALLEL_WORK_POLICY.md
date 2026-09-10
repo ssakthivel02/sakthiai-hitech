@@ -1,7 +1,7 @@
 # SakthiAI Parallel Work and Main-Branch Safety Policy
 
-Status: mandatory for all human and AI contributors  
-Canonical repository: `ssakthivel02/sakthiai-hitech`  
+Status: mandatory for all human and AI contributors
+Canonical repository: `ssakthivel02/sakthiai-hitech`
 Integration branch: `main`
 
 ## Purpose
