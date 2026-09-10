@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { creatorAudioRouter } from "./audioRouter";
+import { creatorReferenceRouter } from "./referenceRouter";
 import { creatorReviewRouter } from "./reviewRouter";
 import { creatorTimelineRouter } from "./timelineRouter";
 import { creatorWorkspaceRouter } from "./workspaceRouter";
@@ -47,6 +48,7 @@ function creatorError(error: unknown): never {
 
 export const creatorRouter = router({
   workspace: creatorWorkspaceRouter,
+  references: creatorReferenceRouter,
   audio: creatorAudioRouter,
   timeline: creatorTimelineRouter,
   review: creatorReviewRouter,
@@ -64,6 +66,8 @@ export const creatorRouter = router({
         checksumAndProvenanceOnPersist: true,
         retryReusesExistingProviderJob: true,
         cancellationRequiresRemoteProviderAcknowledgement: true,
+        immutableApprovedReferences: true,
+        boundedShotTimingMutation: true,
         immutableApprovedAudioMaster: true,
         captionBoundsDerivedFromAudioMaster: true,
         approvedVisualTimelineCoverageRequired: true,
