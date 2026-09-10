@@ -7,6 +7,8 @@ on:
       - 'ACTIVE_MASTER_CONTROL.json'
       - 'ACTIVE_MASTER_CONTROL.md'
       - 'GOV_SAFE_001_GITHUB_SAFETY.md'
+      - 'release/GITHUB_PROTECTION_REQUIRED.md'
+      - 'release/GOV_SAFE_001_STATUS.json'
       - '.github/PARALLEL_WORK_POLICY.md'
       - '.github/CODEOWNERS'
       - '.github/pull_request_template.md'
@@ -14,6 +16,7 @@ on:
       - '.github/workflows/parallel-work-guard.yml'
       - '.github/workflows/github-safety-contract-qa.yml'
       - 'tests/github-safety-contract.test.mjs'
+      - 'tests/github-protection-hold.test.mjs'
   workflow_dispatch:
 
 permissions:
@@ -34,12 +37,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Validate governance JSON and workflow syntax surface
+      - name: Validate governance JSON and test syntax
         run: |
-          node -e "JSON.parse(require('fs').readFileSync('ACTIVE_MASTER_CONTROL.json','utf8')); console.log('ACTIVE_MASTER_JSON_PASS')"
+          node -e "JSON.parse(require('fs').readFileSync('ACTIVE_MASTER_CONTROL.json','utf8')); JSON.parse(require('fs').readFileSync('release/GOV_SAFE_001_STATUS.json','utf8')); console.log('GOVERNANCE_JSON_PASS')"
           node --check tests/github-safety-contract.test.mjs
+          node --check tests/github-protection-hold.test.mjs
       - name: Run deterministic GitHub safety contract tests
-        run: pnpm exec vitest run tests/github-safety-contract.test.mjs
+        run: pnpm exec vitest run tests/github-safety-contract.test.mjs tests/github-protection-hold.test.mjs
       - name: Summary
         if: always()
         run: |
@@ -47,4 +51,4 @@ jobs:
           echo '- canonical repo/branch contract tested' >> "$GITHUB_STEP_SUMMARY"
           echo '- exact-head and expected-head merge policy tested' >> "$GITHUB_STEP_SUMMARY"
           echo '- current-main ancestry guard tested' >> "$GITHUB_STEP_SUMMARY"
-          echo '- server-side ruleset remains a separate manually verified acceptance gate' >> "$GITHUB_STEP_SUMMARY"
+          echo '- release remains HOLD until real server-side GitHub protection is verified' >> "$GITHUB_STEP_SUMMARY"
