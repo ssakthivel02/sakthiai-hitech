@@ -2,7 +2,12 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
-import { pollCreatorGeneration, submitCreatorGeneration } from "./orchestrator";
+import {
+  cancelCreatorGeneration,
+  pollCreatorGeneration,
+  retryCreatorGeneration,
+  submitCreatorGeneration,
+} from "./orchestrator";
 import { listCreatorProviderStatuses } from "./providerRegistry";
 
 const imageInput = z.object({
@@ -47,6 +52,8 @@ export const creatorRouter = router({
         providerNeutralControlHandle: true,
         artifactRequiredBeforeSuccess: true,
         checksumAndProvenanceOnPersist: true,
+        retryReusesExistingProviderJob: true,
+        cancellationRequiresRemoteProviderAcknowledgement: true,
         automaticPublish: false,
       },
       nextRequired: [
@@ -141,6 +148,24 @@ export const creatorRouter = router({
     await requireWorkspace(ctx.user.id, input.workspaceId);
     try {
       return await pollCreatorGeneration(input);
+    } catch (error) {
+      creatorError(error);
+    }
+  }),
+
+  retryGeneration: protectedProcedure.input(generationInput).mutation(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    try {
+      return await retryCreatorGeneration(input);
+    } catch (error) {
+      creatorError(error);
+    }
+  }),
+
+  cancelGeneration: protectedProcedure.input(generationInput).mutation(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    try {
+      return await cancelCreatorGeneration(input);
     } catch (error) {
       creatorError(error);
     }
