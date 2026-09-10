@@ -3,10 +3,17 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   creatorAssets,
+  creatorCaptionCues,
+  creatorExports,
   creatorGenerations,
   creatorProjects,
+  creatorProviderJobs,
+  creatorReferences,
+  creatorReviews,
   creatorScenes,
   creatorShots,
+  creatorTimelineItems,
+  creatorTimelines,
 } from "../../drizzle/schema";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb, getWorkspaceForUser } from "../db";
@@ -60,13 +67,22 @@ export const creatorWorkspaceRouter = router({
 
   getProject: protectedProcedure.input(projectInput).query(async ({ ctx, input }) => {
     const { db, project } = await requireProject(ctx.user.id, input.workspaceId, input.creatorProjectId);
-    const [scenes, shots, assets, generations] = await Promise.all([
+    const scope = and(eq(creatorProjects.workspaceId, input.workspaceId), eq(creatorProjects.id, input.creatorProjectId));
+    void scope;
+    const [scenes, shots, assets, references, generations, providerJobs, timelines, timelineItems, captionCues, reviews, exports] = await Promise.all([
       db.select().from(creatorScenes).where(and(eq(creatorScenes.workspaceId, input.workspaceId), eq(creatorScenes.creatorProjectId, input.creatorProjectId))).orderBy(asc(creatorScenes.sceneIndex)),
       db.select().from(creatorShots).where(and(eq(creatorShots.workspaceId, input.workspaceId), eq(creatorShots.creatorProjectId, input.creatorProjectId))).orderBy(asc(creatorShots.sceneId), asc(creatorShots.shotIndex)),
       db.select().from(creatorAssets).where(and(eq(creatorAssets.workspaceId, input.workspaceId), eq(creatorAssets.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorAssets.createdAt)),
+      db.select().from(creatorReferences).where(and(eq(creatorReferences.workspaceId, input.workspaceId), eq(creatorReferences.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorReferences.createdAt)),
       db.select().from(creatorGenerations).where(and(eq(creatorGenerations.workspaceId, input.workspaceId), eq(creatorGenerations.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorGenerations.createdAt)),
+      db.select().from(creatorProviderJobs).where(and(eq(creatorProviderJobs.workspaceId, input.workspaceId), eq(creatorProviderJobs.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorProviderJobs.updatedAt)),
+      db.select().from(creatorTimelines).where(and(eq(creatorTimelines.workspaceId, input.workspaceId), eq(creatorTimelines.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorTimelines.updatedAt)),
+      db.select().from(creatorTimelineItems).where(and(eq(creatorTimelineItems.workspaceId, input.workspaceId), eq(creatorTimelineItems.creatorProjectId, input.creatorProjectId))).orderBy(asc(creatorTimelineItems.timelineId), asc(creatorTimelineItems.sortOrder)),
+      db.select().from(creatorCaptionCues).where(and(eq(creatorCaptionCues.workspaceId, input.workspaceId), eq(creatorCaptionCues.creatorProjectId, input.creatorProjectId))).orderBy(asc(creatorCaptionCues.timelineId), asc(creatorCaptionCues.startMs)),
+      db.select().from(creatorReviews).where(and(eq(creatorReviews.workspaceId, input.workspaceId), eq(creatorReviews.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorReviews.createdAt)),
+      db.select().from(creatorExports).where(and(eq(creatorExports.workspaceId, input.workspaceId), eq(creatorExports.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorExports.createdAt)),
     ]);
-    return { project, scenes, shots, assets, generations };
+    return { project, scenes, shots, assets, references, generations, providerJobs, timelines, timelineItems, captionCues, reviews, exports };
   }),
 
   createScene: protectedProcedure
