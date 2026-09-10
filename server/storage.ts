@@ -63,6 +63,14 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
   return { key, url: `/api/storage/${key}` };
 }
 
+export async function storageRead(relKey: string): Promise<Uint8Array> {
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!result.Body) throw new Error("Storage object body missing");
+  return result.Body.transformToByteArray();
+}
+
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
   const { client: s3, bucket } = getStorageConfig();
   const key = normalizeKey(relKey);
