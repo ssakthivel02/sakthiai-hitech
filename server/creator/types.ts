@@ -35,6 +35,11 @@ export interface CreatorImageRequest {
   aspectRatio?: string;
   imageSize?: string;
   references?: CreatorInlineImage[];
+  resolution?: never;
+  durationSeconds?: never;
+  firstFrame?: never;
+  lastFrame?: never;
+  sourceVideoAssetId?: never;
 }
 
 export interface CreatorVideoRequest {
