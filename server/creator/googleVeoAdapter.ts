@@ -12,6 +12,7 @@ const SUPPORTED_MODELS = new Set([
   "veo-3.1-fast-generate-preview",
   "veo-3.1-lite-generate-preview",
 ]);
+const MAX_VIDEO_BYTES = 512 * 1024 * 1024;
 
 function errorText(error: unknown): string {
   if (error instanceof Error) {
@@ -45,6 +46,36 @@ export function extractGoogleVeoArtifacts(snapshot: VeoOperationSnapshot): Creat
     const uri = sample.video?.uri;
     return uri ? [{ mimeType: sample.video?.mimeType || "video/mp4", uri }] : [];
   });
+}
+
+export function validateGoogleVeoDownloadUri(uri: string): URL {
+  const parsed = new URL(uri);
+  if (parsed.protocol !== "https:") throw new Error("CREATOR_VEO_ARTIFACT_URI_INVALID");
+  if (parsed.hostname !== "generativelanguage.googleapis.com" && !parsed.hostname.endsWith(".googleapis.com")) {
+    throw new Error("CREATOR_VEO_ARTIFACT_HOST_INVALID");
+  }
+  return parsed;
+}
+
+export async function fetchGoogleVeoArtifact(artifact: CreatorProviderArtifact) {
+  if (!artifact.uri) throw new Error("CREATOR_VEO_ARTIFACT_URI_MISSING");
+  const apiKey = process.env.GEMINI_API_KEY ?? "";
+  if (!apiKey) throw new Error("GOOGLE_VEO_NOT_CONFIGURED");
+  const uri = validateGoogleVeoDownloadUri(artifact.uri);
+  const response = await fetch(uri, {
+    headers: { "x-goog-api-key": apiKey },
+    redirect: "follow",
+  });
+  if (!response.ok) throw new Error(`GOOGLE_VEO_ARTIFACT_DOWNLOAD_FAILED_${response.status}`);
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (contentLength > MAX_VIDEO_BYTES) throw new Error("CREATOR_VEO_ARTIFACT_TOO_LARGE");
+  const data = new Uint8Array(await response.arrayBuffer());
+  if (!data.byteLength) throw new Error("CREATOR_VEO_ARTIFACT_EMPTY");
+  if (data.byteLength > MAX_VIDEO_BYTES) throw new Error("CREATOR_VEO_ARTIFACT_TOO_LARGE");
+  return {
+    mimeType: response.headers.get("content-type") || artifact.mimeType || "video/mp4",
+    data,
+  };
 }
 
 function toVeoRequest(request: Parameters<CreatorMediaProvider["supports"]>[0]): CreatorVeoRequest {
@@ -127,6 +158,10 @@ export const googleVeoProvider: CreatorMediaProvider = {
       };
     }
     return { providerJobId, state: "SUCCEEDED", raw: operation, artifacts };
+  },
+
+  async fetchArtifact(artifact) {
+    return fetchGoogleVeoArtifact(artifact);
   },
 
   classifyFailure: classifyGoogleVeoFailure,

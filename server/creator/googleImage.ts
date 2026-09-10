@@ -96,6 +96,12 @@ export function extractGoogleImageArtifacts(payload: unknown): CreatorProviderAr
   return artifacts;
 }
 
+export function decodeGoogleImageArtifact(artifact: CreatorProviderArtifact) {
+  if (!artifact.dataBase64) throw new Error("CREATOR_IMAGE_ARTIFACT_DATA_MISSING");
+  const data = validateInlineImage(artifact.dataBase64);
+  return { mimeType: artifact.mimeType || "image/png", data: new Uint8Array(Buffer.from(data, "base64")) };
+}
+
 function mapInteraction(payload: Interaction, providerJobId: string): CreatorProviderPoll {
   const artifacts = extractGoogleImageArtifacts(payload);
   if (payload.status === "cancelled") return { providerJobId, state: "CANCELLED", raw: payload, artifacts };
@@ -191,6 +197,10 @@ export const googleImageProvider: CreatorMediaProvider = {
       headers: { "x-goog-api-key": config.apiKey },
     });
     return mapInteraction(payload, providerJobId);
+  },
+
+  async fetchArtifact(artifact) {
+    return decodeGoogleImageArtifact(artifact);
   },
 
   classifyFailure: classifyGoogleImageFailure,
