@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0.0",
+  "specId": "SAI-VIDEO-RELEASE-READINESS",
+  "qualityReview": {
+    "path": "research/evaluation/fixtures/video-quality-publish-pass.json",
+    "gitBlobSha": "ba526ce979cfbf0e5b6df2193284a21f134e139e"
+  },
+  "rightsReview": {
+    "sourceAssetsRightsCleared": false,
+    "musicRightsCleared": true,
+    "voiceRightsCleared": true,
+    "identityConsentSatisfied": true
+  },
+  "platformPolicyReviewed": true,
+  "languageReview": {
+    "tamilContentPresent": false,
+    "tamilHumanReviewSatisfied": false
+  },
+  "ownerPublishApproved": false,
+  "productionApproved": false,
+  "paidProviderApproved": false,
+  "decision": "HOLD",
+  "notes": [
+    "Synthetic negative CI fixture: source asset rights are deliberately uncleared and must fail readiness validation."
+  ]
+}
