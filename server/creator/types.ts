@@ -121,7 +121,7 @@ const ALLOWED_TRANSITIONS: Record<CreatorJobState, readonly CreatorJobState[]> =
   SUCCEEDED: [],
   FAILED: [],
   CANCELLED: [],
-  RETRYABLE: ["QUEUED", "RUNNING", "FAILED", "CANCELLED"],
+  RETRYABLE: ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"],
 };
 
 export function canTransitionCreatorJob(from: CreatorJobState, to: CreatorJobState): boolean {
