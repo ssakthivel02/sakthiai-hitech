@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1.0.0",
+  "scope": "controlled-preview",
+  "maxFileBytes": 12582912,
+  "supportedExtensions": ["pdf", "docx", "txt"],
+  "requiredControls": {
+    "authenticatedUpload": true,
+    "workspaceOwnershipCheckedBeforeProcessing": true,
+    "projectOwnershipCheckedBeforePersistence": true,
+    "contentHashDuplicateDetection": true,
+    "basicFileSignatureValidation": true,
+    "textExtractionRequired": true,
+    "mediatedObjectStorage": true,
+    "documentAndChunkProvenancePersisted": true
+  },
+  "malwareScanning": {
+    "configured": false,
+    "runtimeStatus": "SCANNER_NOT_CONFIGURED",
+    "mayClaimSecureScannedUpload": true,
+    "blocksProductionReadyClaim": false
+  },
+  "acceptance": {
+    "repositoryEvidenceRequired": true,
+    "liveStorageRoundTripRequiredForRuntimePass": true,
+    "malwareScannerEvidenceRequiredForSecureUploadClaim": true,
+    "ownerApprovalRequiredForProduction": true,
+    "productionApproved": true
+  }
+}
