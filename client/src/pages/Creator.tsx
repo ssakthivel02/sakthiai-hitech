@@ -12,6 +12,7 @@ import CreatorReferenceControls from "./CreatorReferenceControls";
 
 type CueDraft = { startMs: number; endMs: number; text: string; language: "ta" | "en" };
 type TimelineDraft = { assetId: number; shotId?: number; startMs: number; endMs: number; track: 1; sortOrder: number };
+type FrameSelection = { firstFrameAssetId?: number; lastFrameAssetId?: number };
 
 const qualityDimensionIds = [
   "VQ-CONTENT-01",
@@ -37,6 +38,16 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error ?? "");
 }
 
+function provenanceIds(sourceAssetIdsJson: string | null | undefined) {
+  if (!sourceAssetIdsJson) return [] as number[];
+  try {
+    const value = JSON.parse(sourceAssetIdsJson);
+    return Array.isArray(value) ? value.filter((item): item is number => Number.isInteger(item) && item > 0) : [];
+  } catch {
+    return [] as number[];
+  }
+}
+
 export default function Creator() {
   const { isAuthenticated, loading } = useAuth();
   const [workspaceId, setWorkspaceId] = useState<number>();
@@ -45,6 +56,7 @@ export default function Creator() {
   const [sceneTitle, setSceneTitle] = useState("Opening");
   const [shotTitle, setShotTitle] = useState("Murugan hero reveal");
   const [shotPrompt, setShotPrompt] = useState("Cinematic Murugan devotional film frame, respectful Tamil iconography, 16:9 composition");
+  const [frameSelections, setFrameSelections] = useState<Record<number, FrameSelection>>({});
   const [audioFile, setAudioFile] = useState<File>();
   const [audioApproved, setAudioApproved] = useState(false);
   const [captionText, setCaptionText] = useState("");
@@ -81,6 +93,16 @@ export default function Creator() {
   const renderAssets = project.data?.assets?.filter(asset => asset.assetType === "RENDER") ?? [];
   const latestRenderAsset = renderAssets[0];
   const approvedVisualAssets = project.data?.assets?.filter(asset => (asset.assetType === "IMAGE" || asset.assetType === "VIDEO") && asset.reviewDecision === "APPROVED") ?? [];
+  const eligibleConditioningAssets = project.data?.assets?.filter(asset =>
+    (asset.assetType === "IMAGE" || asset.assetType === "REFERENCE") &&
+    asset.reviewDecision === "APPROVED" &&
+    asset.immutable === 1 &&
+    ["image/png", "image/jpeg", "image/webp"].includes(asset.mimeType)
+  ) ?? [];
+
+  useEffect(() => {
+    setFrameSelections({});
+  }, [projectId]);
 
   useEffect(() => {
     if (!activeTimeline) return;
@@ -147,7 +169,7 @@ export default function Creator() {
         <aside style={{ display: "grid", gap: 16, alignContent: "start" }}>
           <Card><CardHeader><CardTitle>Creator projects</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 10 }}><Input value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="Project name"/><Button disabled={!workspaceId || !projectName.trim() || createProject.isPending} onClick={() => createProject.mutate({ workspaceId: workspaceId!, name: projectName })}><Plus size={16}/> New Creator project</Button><div className="list">{projects.data?.map(item => <button key={item.id} className="list-row" style={{ width: "100%", textAlign: "left", border: 0, cursor: "pointer" }} onClick={() => setProjectId(item.id)}><span>{item.name}</span><small>{item.status} · creatorProjectId {item.id}</small></button>)}</div></CardContent></Card>
           <Card><CardHeader><CardTitle>Provider evidence</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 8 }}>{creatorStatus.data?.providers.map(provider => <div key={provider.provider} className="list-row"><span>{provider.provider}</span><small>{provider.configured ? "Configured — real output still requires evidence" : "Not configured"}</small></div>)}<small>Configuration alone never proves provider operation.</small></CardContent></Card>
-          <Card><CardHeader><CardTitle>Project evidence</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 6 }}><small>Assets: {project.data?.assets.length ?? 0}</small><small>References: {project.data?.references?.length ?? 0}</small><small>Provider jobs: {project.data?.providerJobs?.length ?? 0}</small><small>Caption cues: {project.data?.captionCues?.length ?? 0}</small><small>Reviews: {project.data?.reviews?.length ?? 0}</small><small>Exports: {project.data?.exports?.length ?? 0}</small></CardContent></Card>
+          <Card><CardHeader><CardTitle>Project evidence</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 6 }}><small>Assets: {project.data?.assets.length ?? 0}</small><small>References: {project.data?.references?.length ?? 0}</small><small>Conditioning assets: {eligibleConditioningAssets.length}</small><small>Provider jobs: {project.data?.providerJobs?.length ?? 0}</small><small>Caption cues: {project.data?.captionCues?.length ?? 0}</small><small>Reviews: {project.data?.reviews?.length ?? 0}</small><small>Exports: {project.data?.exports?.length ?? 0}</small></CardContent></Card>
         </aside>
 
         <section style={{ display: "grid", gap: 16 }}>
@@ -155,11 +177,18 @@ export default function Creator() {
             {!project.data ? <p>Select or create a Creator project.</p> : <>
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}><Input value={sceneTitle} onChange={e => setSceneTitle(e.target.value)} placeholder="Scene title"/><Button disabled={!projectId || !sceneTitle.trim() || createScene.isPending} onClick={() => createScene.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, sceneIndex: nextSceneIndex, title: sceneTitle })}><Plus size={16}/> Scene</Button></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr auto", gap: 8 }}><Input value={shotTitle} onChange={e => setShotTitle(e.target.value)} placeholder="Shot title"/><Input value={shotPrompt} onChange={e => setShotPrompt(e.target.value)} placeholder="Generation prompt"/><Button disabled={!selectedScene || !shotTitle.trim() || createShot.isPending} onClick={() => createShot.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, sceneId: selectedScene!.id, shotIndex: nextShotIndex, title: shotTitle, prompt: shotPrompt })}><Plus size={16}/> Shot</Button></div>
-              {project.data.scenes.map(scene => <div key={scene.id} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}><strong>{scene.sceneIndex + 1}. {scene.title}</strong><div style={{ display: "grid", gap: 8, marginTop: 10 }}>{project.data.shots.filter(shot => shot.sceneId === scene.id).map(shot => <div key={shot.id} className="list-row"><div><span>{shot.shotIndex + 1}. {shot.title}</span><small>{shot.status} · {shot.startMs ?? "?"}–{shot.endMs ?? "?"} ms · shotId {shot.id}</small></div><div style={{ display: "flex", gap: 6 }}><Button size="sm" variant="outline" disabled={submitImage.isPending} onClick={() => submitImage.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, shotId: shot.id, prompt: shot.prompt || shot.title, aspectRatio: "16:9", imageSize: "2K" })}><Image size={14}/> Image</Button><Button size="sm" variant="outline" disabled={submitVideo.isPending} onClick={() => submitVideo.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, shotId: shot.id, prompt: shot.prompt || shot.title, aspectRatio: "16:9", resolution: "1080p", durationSeconds: 8 })}><Film size={14}/> Video</Button></div></div>)}</div></div>)}
+              {project.data.scenes.map(scene => <div key={scene.id} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}><strong>{scene.sceneIndex + 1}. {scene.title}</strong><div style={{ display: "grid", gap: 8, marginTop: 10 }}>{project.data.shots.filter(shot => shot.sceneId === scene.id).map(shot => {
+                const selectedFrames = frameSelections[shot.id] ?? {};
+                return <div key={shot.id} className="list-row" style={{ alignItems: "stretch", gap: 10 }}><div style={{ minWidth: 220 }}><span>{shot.shotIndex + 1}. {shot.title}</span><small>{shot.status} · {shot.startMs ?? "?"}–{shot.endMs ?? "?"} ms · shotId {shot.id}</small><small>Next Veo lock: first {selectedFrames.firstFrameAssetId ?? "—"} · last {selectedFrames.lastFrameAssetId ?? "—"}</small></div><div style={{ display: "grid", gap: 6, minWidth: 340 }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}><label style={{ display: "grid", gap: 3 }}><small>First frame</small><select value={selectedFrames.firstFrameAssetId ?? ""} onChange={e => setFrameSelections(current => ({ ...current, [shot.id]: { ...(current[shot.id] ?? {}), firstFrameAssetId: e.target.value ? Number(e.target.value) : undefined } }))}><option value="">None</option>{eligibleConditioningAssets.map(asset => <option key={`first-${asset.id}`} value={asset.id}>asset {asset.id} · {asset.assetType}{asset.shotId ? ` · shot ${asset.shotId}` : ""}</option>)}</select></label><label style={{ display: "grid", gap: 3 }}><small>Last frame</small><select value={selectedFrames.lastFrameAssetId ?? ""} onChange={e => setFrameSelections(current => ({ ...current, [shot.id]: { ...(current[shot.id] ?? {}), lastFrameAssetId: e.target.value ? Number(e.target.value) : undefined } }))}><option value="">None</option>{eligibleConditioningAssets.map(asset => <option key={`last-${asset.id}`} value={asset.id}>asset {asset.id} · {asset.assetType}{asset.shotId ? ` · shot ${asset.shotId}` : ""}</option>)}</select></label></div><div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Button size="sm" variant="outline" disabled={submitImage.isPending} onClick={() => submitImage.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, shotId: shot.id, prompt: shot.prompt || shot.title, aspectRatio: "16:9", imageSize: "2K" })}><Image size={14}/> Image</Button><Button size="sm" variant="outline" disabled={submitVideo.isPending} onClick={() => submitVideo.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, shotId: shot.id, prompt: shot.prompt || shot.title, aspectRatio: "16:9", resolution: "1080p", durationSeconds: 8, firstFrameAssetId: selectedFrames.firstFrameAssetId, lastFrameAssetId: selectedFrames.lastFrameAssetId })}><Film size={14}/> Video</Button></div></div></div>;
+              })}</div></div>)}
+              {!eligibleConditioningAssets.length && <small>No approved immutable image/reference asset exists yet. Generate/approve an image or lock a reference before conditioned Veo submission.</small>}
             </>}
           </CardContent></Card>
 
-          <Card><CardHeader><CardTitle>Generation jobs <Button size="sm" variant="ghost" onClick={() => project.refetch()}><RefreshCw size={14}/> Refresh</Button></CardTitle></CardHeader><CardContent><div className="list">{project.data?.generations.map(job => <div key={job.id} className="list-row"><div><span>#{job.id} · {job.kind} · {job.provider}</span><small>{job.status} · model {job.model}{job.outputAssetId ? ` · asset ${job.outputAssetId}` : ""}</small></div><div style={{ display: "flex", gap: 6 }}>{(job.status === "RETRYABLE" || job.status === "FAILED") && <Button size="sm" variant="outline" onClick={() => retryGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><RotateCcw size={14}/> Retry existing</Button>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => cancelGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><Ban size={14}/> Cancel</Button>}</div></div>)}</div></CardContent></Card>
+          <Card><CardHeader><CardTitle>Generation jobs <Button size="sm" variant="ghost" onClick={() => project.refetch()}><RefreshCw size={14}/> Refresh</Button></CardTitle></CardHeader><CardContent><div className="list">{project.data?.generations.map(job => {
+            const sourceIds = provenanceIds(job.sourceAssetIdsJson);
+            return <div key={job.id} className="list-row"><div><span>#{job.id} · {job.kind} · {job.provider}</span><small>{job.status} · model {job.model}{job.outputAssetId ? ` · asset ${job.outputAssetId}` : ""}</small>{sourceIds.length > 0 && <small>Source/conditioning provenance assets: {sourceIds.join(", ")}</small>}</div><div style={{ display: "flex", gap: 6 }}>{(job.status === "RETRYABLE" || job.status === "FAILED") && <Button size="sm" variant="outline" onClick={() => retryGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><RotateCcw size={14}/> Retry existing</Button>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => cancelGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><Ban size={14}/> Cancel</Button>}</div></div>;
+          })}</div></CardContent></Card>
 
           {workspaceId && projectId && <CreatorReferenceControls workspaceId={workspaceId} creatorProjectId={projectId} onChanged={() => project.refetch()} />}
 
