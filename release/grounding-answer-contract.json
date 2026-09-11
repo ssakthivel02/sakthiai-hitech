@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "scope": "controlled-preview",
+  "sourceOfTruth": "server/routers.ts",
+  "requirements": {
+    "retrievalBeforeGeneration": true,
+    "noEvidenceAnswer": "INSUFFICIENT_EVIDENCE",
+    "noEvidenceCitationsMustBeEmpty": true,
+    "noEvidenceMustSkipLlm": true,
+    "evidenceOnlySystemInstructionRequired": true,
+    "inventedCitationsForbidden": true
+  },
+  "claims": {
+    "repositoryFailClosedGroundingGuard": true,
+    "liveRagAcceptance": false,
+    "hallucinationFree": false,
+    "productionReady": false
+  }
+}
