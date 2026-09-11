@@ -12,6 +12,7 @@ import { serveStatic, setupVite } from "./vite";
 import { getDb } from "../db";
 import { embeddingStatus } from "../embeddings";
 import { ENV } from "./env";
+import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -53,7 +54,7 @@ async function startServer() {
   const server = createServer(app);
 
   app.use((req, res, next) => {
-    const requestId = req.header("x-request-id") || randomUUID();
+    const requestId = sanitizeRequestId(req.header("x-request-id"), randomUUID());
     res.setHeader("x-request-id", requestId);
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -77,14 +78,15 @@ async function startServer() {
     const started = Date.now();
     res.on("finish", () =>
       console.log(
-        JSON.stringify({
-          event: "http_request",
-          requestId,
-          method: req.method,
-          path: req.path,
-          status: res.statusCode,
-          latencyMs: Date.now() - started,
-        }),
+        JSON.stringify(
+          buildHttpRequestLog({
+            requestId,
+            method: req.method,
+            path: req.path,
+            status: res.statusCode,
+            latencyMs: Date.now() - started,
+          }),
+        ),
       ),
     );
     next();

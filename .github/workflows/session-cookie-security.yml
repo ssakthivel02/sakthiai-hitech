@@ -1,0 +1,26 @@
+name: SakthiAI Session Cookie Security
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  session-cookie-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify session cookie policy
+        run: pnpm exec vitest run server/_core/cookies.test.ts
