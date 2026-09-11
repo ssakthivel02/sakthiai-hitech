@@ -21,7 +21,12 @@ export function scoreRetrievalCandidate(input: {
     0,
   );
   const lexicalScore = input.terms.length ? lexicalHits / input.terms.length : 0;
-  const hasSemantic = Boolean(input.queryVector && input.candidateVector);
+  const hasSemantic = Boolean(
+    input.queryVector &&
+      input.candidateVector &&
+      input.queryVector.length > 0 &&
+      input.queryVector.length === input.candidateVector.length,
+  );
   const semanticScore = hasSemantic
     ? Math.max(0, cosineSimilarity(input.queryVector!, input.candidateVector!))
     : 0;
