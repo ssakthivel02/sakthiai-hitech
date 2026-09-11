@@ -1,0 +1,31 @@
+name: SakthiAI DB Recovery Readiness
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "release/db-recovery-contract.json"
+      - "release/fixtures/db-recovery-contract-fail.json"
+      - "scripts/validate-db-recovery-contract.mjs"
+      - "docs/DATABASE_RECOVERY_READINESS.md"
+      - ".github/workflows/db-recovery-readiness.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  db-recovery-readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate controlled-preview database recovery contract
+        run: node scripts/validate-db-recovery-contract.mjs release/db-recovery-contract.json
+      - name: Reject deliberately unsafe recovery fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node scripts/validate-db-recovery-contract.mjs release/fixtures/db-recovery-contract-fail.json; then
+            echo "Unsafe database recovery fixture unexpectedly passed."
+            exit 1
+          fi
+          echo "Unsafe database recovery fixture correctly rejected."
