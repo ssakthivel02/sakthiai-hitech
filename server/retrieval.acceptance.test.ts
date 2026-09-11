@@ -45,16 +45,17 @@ describe("Gate A retrieval fusion acceptance", () => {
     expect(result.score).toBe(1);
   });
 
-  it("does not convert incompatible vectors into semantic evidence", () => {
+  it("falls back to lexical evidence when vector dimensions are incompatible", () => {
     const result = scoreRetrievalCandidate({
       content: "Murugan",
       terms: ["murugan"],
       queryVector: [1],
       candidateVector: [1, 0],
     });
-    expect(result.retrievalMethod).toBe("hybrid");
+    expect(result.retrievalMethod).toBe("lexical");
+    expect(result.lexicalScore).toBe(1);
     expect(result.semanticScore).toBe(0);
-    expect(result.score).toBeCloseTo(0.35, 8);
+    expect(result.score).toBe(1);
   });
 
   it("returns zero evidence when neither lexical nor semantic signal exists", () => {
