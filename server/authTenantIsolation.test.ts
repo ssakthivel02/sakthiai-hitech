@@ -32,11 +32,18 @@ vi.mock("./_core/llm", () => ({ invokeLLM: vi.fn() }));
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
+function responseStub(): TrpcContext["res"] {
+  return {
+    headersSent: false,
+    setHeader: vi.fn(),
+  } as unknown as TrpcContext["res"];
+}
+
 function userContext(id = 101): TrpcContext {
   const now = new Date();
   return {
     req: {} as TrpcContext["req"],
-    res: {} as TrpcContext["res"],
+    res: responseStub(),
     requestId: "tenant-isolation-test",
     user: {
       id,
@@ -55,7 +62,7 @@ function userContext(id = 101): TrpcContext {
 function anonymousContext(): TrpcContext {
   return {
     req: {} as TrpcContext["req"],
-    res: {} as TrpcContext["res"],
+    res: responseStub(),
     requestId: "anonymous-test",
     user: null,
   };
