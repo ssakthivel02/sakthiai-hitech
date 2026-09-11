@@ -3,10 +3,11 @@ import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, User, users, workspaces, workspaceMembers, projects, documents, documentChunks, conversations, messages } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { createVerifiedMysqlPool } from "./_core/mysql";
-import { cosineSimilarity, parseEmbedding, tryEmbed } from "./embeddings";
+import { parseEmbedding, tryEmbed } from "./embeddings";
+import { normalizeRetrievalTerms, scoreRetrievalCandidate, type RetrievalMethod } from "./retrieval";
 
 export type { Citation } from "../drizzle/schema";
-export type RetrievalMethod = "lexical" | "semantic" | "hybrid";
+export type { RetrievalMethod } from "./retrieval";
 export type SearchResult = typeof documentChunks.$inferSelect & { filename: string; mimeType: string; score: number; retrievalMethod: RetrievalMethod };
 let _db: ReturnType<typeof drizzle> | null = null;
 export async function getDb() {
@@ -38,16 +39,17 @@ export async function getConversationMessages(workspaceId: number, conversationI
 export async function searchChunks(workspaceId: number, query: string): Promise<SearchResult[]> {
   const db = await getDb(); if (!db) return [];
   const rows = await db.select({ chunk: documentChunks, document: documents }).from(documentChunks).innerJoin(documents, eq(documentChunks.documentId, documents.id)).where(and(eq(documentChunks.workspaceId, workspaceId), eq(documents.workspaceId, workspaceId))).limit(500);
-  const terms = query.toLowerCase().split(/\s+/).map(term => term.replace(/[^a-z0-9_-]/g, "")).filter(term => term.length > 2);
+  const terms = normalizeRetrievalTerms(query);
   const semantic = await tryEmbed(query);
   const scored = rows.map(({ chunk, document }) => {
-    const lexicalHits = terms.reduce((count, term) => count + (chunk.content.toLowerCase().includes(term) ? 1 : 0), 0);
-    const lexicalScore = terms.length ? lexicalHits / terms.length : 0;
-    const vector = semantic ? parseEmbedding(chunk.embeddingJson) : null;
-    const semanticScore = semantic && vector ? Math.max(0, cosineSimilarity(semantic.vector, vector)) : 0;
-    const hasSemantic = Boolean(semantic && vector);
-    const score = hasSemantic ? lexicalScore * 0.35 + semanticScore * 0.65 : lexicalScore;
-    return { ...chunk, filename: document.filename, mimeType: document.mimeType, score, retrievalMethod: hasSemantic && lexicalHits > 0 ? "hybrid" as const : hasSemantic ? "semantic" as const : "lexical" as const };
+    const candidateVector = semantic ? parseEmbedding(chunk.embeddingJson) : null;
+    const scoredCandidate = scoreRetrievalCandidate({
+      content: chunk.content,
+      terms,
+      queryVector: semantic?.vector ?? null,
+      candidateVector,
+    });
+    return { ...chunk, filename: document.filename, mimeType: document.mimeType, score: scoredCandidate.score, retrievalMethod: scoredCandidate.retrievalMethod };
   }).filter(row => row.score > 0).sort((a, b) => b.score - a.score).slice(0, 8);
   return scored;
 }
