@@ -16,6 +16,7 @@ import {
   submitCreatorGeneration,
 } from "./orchestrator";
 import { listCreatorProviderStatuses } from "./providerRegistry";
+import { verifyCreatorRuntimeAcceptance } from "./runtimeAcceptance";
 import { buildCreatorRuntimePreflight } from "./runtimePreflight";
 
 const imageInput = z.object({
@@ -33,18 +34,18 @@ async function requireWorkspace(userId: number, workspaceId: number) {
   return workspace;
 }
 
-function requirePaidGenerationReady() {
-  const preflight = buildCreatorRuntimePreflight();
-  if (preflight.readyForPaidGeneration) return preflight;
+async function requirePaidGenerationReady() {
+  const acceptance = await verifyCreatorRuntimeAcceptance();
+  if (acceptance.readyForPaidGeneration) return acceptance;
 
-  const failed = preflight.checks
+  const failed = acceptance.checks
     .filter(check => check.required && !check.pass)
     .map(check => check.id)
     .join(",");
 
   throw new TRPCError({
     code: "PRECONDITION_FAILED",
-    message: `CREATOR_RUNTIME_PREFLIGHT_BLOCKED:${failed || "UNKNOWN"}`,
+    message: `CREATOR_RUNTIME_ACCEPTANCE_BLOCKED:${failed || "UNKNOWN"}`,
   });
 }
 
@@ -119,7 +120,7 @@ export const creatorRouter = router({
       nextRequired: [
         "apply Creator database migration to an approved runtime",
         "configure approved provider credential and S3-compatible storage outside Git",
-        "verify Creator runtime preflight before any paid generation",
+        "verify Creator runtime acceptance before any paid generation",
         "run one real Murugan image generation and one real Murugan video generation",
         "run the complete Murugan 16:9 acceptance sequence with real output and human Tamil/visual evidence",
       ],
@@ -129,6 +130,11 @@ export const creatorRouter = router({
   preflight: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
     return buildCreatorRuntimePreflight();
+  }),
+
+  verifyRuntime: protectedProcedure.input(workspaceInput).mutation(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    return verifyCreatorRuntimeAcceptance();
   }),
 
   submitImage: protectedProcedure
@@ -146,7 +152,7 @@ export const creatorRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await requireWorkspace(ctx.user.id, input.workspaceId);
-      requirePaidGenerationReady();
+      await requirePaidGenerationReady();
       try {
         const references = await lockedReferencesOrFallback({
           workspaceId: input.workspaceId,
@@ -197,7 +203,7 @@ export const creatorRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       await requireWorkspace(ctx.user.id, input.workspaceId);
-      requirePaidGenerationReady();
+      await requirePaidGenerationReady();
       try {
         const references = await lockedReferencesOrFallback({
           workspaceId: input.workspaceId,
