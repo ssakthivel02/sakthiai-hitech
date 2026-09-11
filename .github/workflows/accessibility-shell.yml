@@ -1,0 +1,39 @@
+name: SakthiAI Accessibility Shell
+
+on:
+  pull_request:
+    paths:
+      - "client/index.html"
+      - "scripts/validate-accessibility-shell.mjs"
+      - "release/fixtures/accessibility-shell-fail.html"
+      - ".github/workflows/accessibility-shell.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  accessibility-shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate accessible application shell
+        run: node scripts/validate-accessibility-shell.mjs client/index.html
+
+      - name: Prove zoom-restricting shell is rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node scripts/validate-accessibility-shell.mjs release/fixtures/accessibility-shell-fail.html; then
+            echo "Deliberately inaccessible viewport fixture unexpectedly passed"
+            exit 1
+          fi
+          echo "Zoom-restricting viewport correctly rejected"
