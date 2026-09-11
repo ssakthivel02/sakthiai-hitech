@@ -1,0 +1,19 @@
+name: SakthiAI Grounding Answer Acceptance
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  grounding-answer-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate fail-closed grounding contract
+        run: node scripts/validate-grounding-answer-contract.mjs

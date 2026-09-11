@@ -1,0 +1,64 @@
+name: SakthiAI Rollback Readiness
+
+on:
+  pull_request:
+    paths:
+      - "release/rollback-contract.json"
+      - "release/fixtures/rollback-contract-fail.json"
+      - "scripts/validate-rollback-contract.mjs"
+      - "docs/PREVIEW_ROLLBACK_RUNBOOK.md"
+      - ".github/workflows/rollback-readiness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rollback-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate rollback contract
+        run: node scripts/validate-rollback-contract.mjs release/rollback-contract.json
+
+      - name: Prove unsafe rollback contract is rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node scripts/validate-rollback-contract.mjs release/fixtures/rollback-contract-fail.json; then
+            echo "Unsafe rollback fixture unexpectedly passed."
+            exit 1
+          fi
+          echo "Unsafe rollback fixture correctly rejected."
+
+      - name: Verify runtime evidence endpoints remain implemented
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'app.get("/healthz"' server/_core/index.ts
+          grep -F 'app.get("/releasez"' server/_core/index.ts
+          grep -F 'app.get("/readyz"' server/_core/index.ts
+          grep -F 'exactCommitKnown' server/_core/index.ts
+
+      - name: Verify preview release contract remains exact-commit scoped
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const release = JSON.parse(fs.readFileSync('release/preview-contract.json', 'utf8'));
+          const rollback = JSON.parse(fs.readFileSync('release/rollback-contract.json', 'utf8'));
+          if (release.canonicalRepository !== rollback.canonicalRepository) throw new Error('Release/rollback repository mismatch');
+          if (release.database?.expectedDatabase !== rollback.database?.expectedDatabase) throw new Error('Release/rollback database mismatch');
+          if (release.deployment?.sourcePolicy !== rollback.sourcePolicy) throw new Error('Release/rollback exact-commit policy mismatch');
+          if (release.production?.approved !== false || rollback.release?.productionApproved !== false) throw new Error('Preview controls cannot approve production');
+          console.log('ROLLBACK_RELEASE_CONTRACT_ALIGNMENT_PASS');
+          NODE

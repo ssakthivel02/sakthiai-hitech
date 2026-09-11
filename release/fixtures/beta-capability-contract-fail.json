@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0.0",
+  "productionApproved": false,
+  "capabilities": [
+    {
+      "id": "unsafe-runtime",
+      "name": "Unsafe runtime claim",
+      "status": "available",
+      "publicLabel": "Available",
+      "reason": "This deliberately unsafe fixture claims availability without runtime evidence or owner approval.",
+      "repositoryEvidence": ["server/routers.ts"],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    }
+  ]
+}

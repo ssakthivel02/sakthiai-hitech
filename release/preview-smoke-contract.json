@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "environment": "controlled-preview",
+  "service": "sakthiai-hitech-preview",
+  "requiredEndpoints": ["/healthz", "/readyz", "/releasez"],
+  "health": {
+    "expectedStatus": 200,
+    "expectedBodyStatus": "alive"
+  },
+  "readiness": {
+    "readyStatus": 200,
+    "notReadyStatus": 503,
+    "requiredDependencies": ["database", "authentication", "llm", "storage"],
+    "scannerMayRemainUnconfigured": true
+  },
+  "release": {
+    "expectedStatus": 200,
+    "exactCommitRequiredForAcceptance": true,
+    "repository": "ssakthivel02/sakthiai-hitech"
+  },
+  "deployment": {
+    "healthCheckPath": "/readyz",
+    "autoDeployMustBeDisabled": true,
+    "productionApproval": false
+  },
+  "claimBoundary": {
+    "repositoryValidationIsDeploymentProof": false,
+    "livePreviewPassRequiresCapturedEndpointEvidence": true,
+    "ownerApprovalRequiredForProduction": true
+  }
+}

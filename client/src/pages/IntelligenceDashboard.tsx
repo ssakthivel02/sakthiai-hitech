@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import dashboardData from "@/generated/intelligence-dashboard-data.json";
+import betaCapabilities from "../../../release/beta-capability-contract.json";
 import { ArrowLeft, BrainCircuit, CheckCircle2, Database, FileSearch, Gauge, LockKeyhole, Mic2, Network, ShieldCheck, Sparkles } from "lucide-react";
 import { Link } from "wouter";
 
@@ -55,6 +56,26 @@ export default function IntelligenceDashboard() {
           </CardContent>
         </Card>
 
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Controlled-beta capability boundary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-4 text-sm leading-6 text-muted-foreground">These labels describe user-facing availability. Research lifecycle labels below are separate and must never be interpreted as a live-product claim.</p>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {betaCapabilities.capabilities.map(capability => (
+                <div key={capability.id} className="rounded-lg border p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <strong className="text-sm">{capability.name}</strong>
+                    <Badge variant="outline">{capability.publicLabel}</Badge>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">{capability.reason}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
         <div className="mb-8 grid gap-4 md:grid-cols-3">
           <Card><CardHeader className="pb-2"><CardTitle className="text-base">Document & RAG</CardTitle></CardHeader><CardContent><div className="text-3xl font-bold">{metrics.documentRag.normalizedRecords}</div><p className="mt-1 text-sm text-muted-foreground">normalized architecture patterns from the {metrics.documentRag.sourceCheckpoint}-record source checkpoint</p></CardContent></Card>
           <Card><CardHeader className="pb-2"><CardTitle className="text-base">Evaluation</CardTitle></CardHeader><CardContent><div className="text-3xl font-bold">{metrics.evaluation.ownedSpecifications}</div><p className="mt-1 text-sm text-muted-foreground">SakthiAI-owned benchmark specifications across {metrics.evaluation.evaluationDimensions} evaluation dimensions</p></CardContent></Card>
@@ -68,7 +89,7 @@ export default function IntelligenceDashboard() {
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex gap-3"><div className="rounded-xl border p-2.5"><Icon size={20} /></div><div><div className="text-xs font-semibold tracking-wider text-muted-foreground">{domain.id}</div><CardTitle className="mt-1 text-xl">{domain.name}</CardTitle></div></div>
-                  <Badge variant="outline">{humanizeStatus(domain.status)}</Badge>
+                  <div className="text-right"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Research lifecycle</div><Badge variant="outline">{humanizeStatus(domain.status)}</Badge></div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
