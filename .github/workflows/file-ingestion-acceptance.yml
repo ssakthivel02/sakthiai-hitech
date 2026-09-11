@@ -1,0 +1,39 @@
+name: SakthiAI File Ingestion Acceptance
+
+on:
+  pull_request:
+    paths:
+      - 'release/file-ingestion-contract.json'
+      - 'release/fixtures/file-ingestion-contract-fail.json'
+      - 'scripts/validate-file-ingestion-contract.mjs'
+      - 'server/fileIngestion.acceptance.test.ts'
+      - 'server/provenance.ts'
+      - '.github/workflows/file-ingestion-acceptance.yml'
+      - 'docs/FILE_INGESTION_ACCEPTANCE.md'
+
+permissions:
+  contents: read
+
+jobs:
+  file-ingestion-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - name: Validate truthful ingestion contract
+        run: node scripts/validate-file-ingestion-contract.mjs release/file-ingestion-contract.json
+      - name: Reject unsafe scanned-upload claim
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node scripts/validate-file-ingestion-contract.mjs release/fixtures/file-ingestion-contract-fail.json; then
+            echo 'Unsafe ingestion fixture unexpectedly passed.'
+            exit 1
+          fi
+          echo 'Unsafe ingestion fixture correctly rejected.'
+      - name: File extraction acceptance tests
+        run: pnpm exec vitest run server/fileIngestion.acceptance.test.ts
