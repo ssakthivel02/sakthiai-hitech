@@ -1,0 +1,31 @@
+name: SakthiAI Beta Capability Truth
+
+on:
+  pull_request:
+    paths:
+      - 'release/beta-capability-contract.json'
+      - 'release/fixtures/beta-capability-contract-fail.json'
+      - 'scripts/validate-beta-capability-contract.mjs'
+      - 'client/src/pages/IntelligenceDashboard.tsx'
+      - '.github/workflows/beta-capability-truth.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  beta-capability-truth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate canonical capability boundary
+        run: node scripts/validate-beta-capability-contract.mjs release/beta-capability-contract.json
+      - name: Reject unsupported Available claims
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node scripts/validate-beta-capability-contract.mjs release/fixtures/beta-capability-contract-fail.json; then
+            echo "Unsafe capability fixture unexpectedly passed."
+            exit 1
+          fi
+          echo "Unsupported Available claim correctly rejected."

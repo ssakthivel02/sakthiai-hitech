@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "1.0.0",
+  "productionApproved": false,
+  "allowedStatuses": ["available", "preview", "coming-soon"],
+  "policy": {
+    "availableRequiresRuntimeEvidence": true,
+    "availableRequiresOwnerApproval": true,
+    "researchStatusIsNotAvailability": true,
+    "unmergedFeaturesCannotBeAvailable": true
+  },
+  "capabilities": [
+    {
+      "id": "workspace-core",
+      "name": "Workspace, projects and files",
+      "status": "preview",
+      "publicLabel": "Preview",
+      "reason": "Repository implementation exists, but controlled-preview runtime and browser acceptance are not yet proven on an exact deployed commit.",
+      "repositoryEvidence": ["client/src/pages/Home.tsx", "server/routers.ts"],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    },
+    {
+      "id": "grounded-rag",
+      "name": "Grounded chat and document RAG",
+      "status": "preview",
+      "publicLabel": "Preview",
+      "reason": "Lexical/semantic retrieval, citations and insufficient-evidence behavior exist in source; live upload-to-grounded-answer acceptance remains required.",
+      "repositoryEvidence": ["server/db.ts", "server/routers.ts", "server/functional.core.test.ts"],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    },
+    {
+      "id": "intelligence-control-plane",
+      "name": "Intelligence control plane",
+      "status": "preview",
+      "publicLabel": "Preview",
+      "reason": "Research manifests and dashboard are repository-backed, but research lifecycle status must not be confused with production capability availability.",
+      "repositoryEvidence": ["client/src/pages/IntelligenceDashboard.tsx", "client/src/generated/intelligence-dashboard-data.json"],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    },
+    {
+      "id": "creator",
+      "name": "Creator / generative media workflow",
+      "status": "coming-soon",
+      "publicLabel": "Coming Soon",
+      "reason": "Creator work is not part of canonical main and still requires real runtime, paid-provider and human acceptance evidence before release.",
+      "repositoryEvidence": [],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    },
+    {
+      "id": "voice",
+      "name": "Conversational voice",
+      "status": "coming-soon",
+      "publicLabel": "Coming Soon",
+      "reason": "Current material is research architecture rather than a verified user-facing runtime capability.",
+      "repositoryEvidence": ["research/voice"],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    },
+    {
+      "id": "local-offline-ai",
+      "name": "Local and offline AI",
+      "status": "coming-soon",
+      "publicLabel": "Coming Soon",
+      "reason": "Research completion does not establish a shipped local/offline runtime.",
+      "repositoryEvidence": ["research/local-models"],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    },
+    {
+      "id": "edge-runtime",
+      "name": "Cloudflare edge runtime",
+      "status": "coming-soon",
+      "publicLabel": "Coming Soon",
+      "reason": "Edge architecture remains research evidence and deployment changes are not approved.",
+      "repositoryEvidence": ["research/cloudflare"],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    }
+  ]
+}
