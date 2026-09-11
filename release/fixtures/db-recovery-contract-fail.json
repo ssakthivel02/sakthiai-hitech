@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1.0.0",
+  "scope": "controlled-preview",
+  "databaseEngine": "mysql",
+  "expectedDatabaseName": "",
+  "requirements": {
+    "exactDatabaseIdentityRequired": false,
+    "verifiedTlsRequired": false,
+    "preMigrationBackupRequired": false,
+    "backupIntegrityEvidenceRequired": false,
+    "migrationPlanRequired": false,
+    "destructiveMigrationRequiresExplicitApproval": false,
+    "restoreProcedureRequired": false,
+    "restoreVerificationRequired": false,
+    "postRestoreReadinessCheckRequired": false,
+    "productionAutomaticRestoreAllowed": true,
+    "ownerApprovalRequired": false
+  },
+  "requiredEvidence": [],
+  "forbiddenClaimsWithoutRuntimeEvidence": []
+}

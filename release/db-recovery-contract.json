@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "1.0.0",
+  "scope": "controlled-preview",
+  "databaseEngine": "mysql",
+  "expectedDatabaseName": "sakthiai_preview",
+  "requirements": {
+    "exactDatabaseIdentityRequired": true,
+    "verifiedTlsRequired": true,
+    "preMigrationBackupRequired": true,
+    "backupIntegrityEvidenceRequired": true,
+    "migrationPlanRequired": true,
+    "destructiveMigrationRequiresExplicitApproval": true,
+    "restoreProcedureRequired": true,
+    "restoreVerificationRequired": true,
+    "postRestoreReadinessCheckRequired": true,
+    "productionAutomaticRestoreAllowed": false,
+    "ownerApprovalRequired": true
+  },
+  "requiredEvidence": [
+    "exact database name",
+    "TLS CA verification",
+    "backup identifier and creation time",
+    "backup integrity verification",
+    "migration command and exact candidate commit",
+    "migration compatibility assessment",
+    "restore target and restore procedure",
+    "post-restore database identity verification",
+    "post-restore application readiness verification",
+    "explicit owner approval"
+  ],
+  "forbiddenClaimsWithoutRuntimeEvidence": [
+    "migration complete",
+    "backup verified",
+    "restore verified",
+    "preview database ready",
+    "production database ready"
+  ]
+}
