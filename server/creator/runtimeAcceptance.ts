@@ -1,4 +1,17 @@
-import { creatorAssets, creatorProjects } from "../../drizzle/schema";
+import {
+  creatorAssets,
+  creatorCaptionCues,
+  creatorExports,
+  creatorGenerations,
+  creatorProjects,
+  creatorProviderJobs,
+  creatorReferences,
+  creatorReviews,
+  creatorScenes,
+  creatorShots,
+  creatorTimelineItems,
+  creatorTimelines,
+} from "../../drizzle/schema";
 import { getDb } from "../db";
 import { storageRoundTripProbe } from "../storage";
 import { buildCreatorRuntimePreflight, type CreatorPreflightCheck } from "./runtimePreflight";
@@ -20,14 +33,31 @@ async function probeCreatorDatabase(): Promise<{ pass: boolean; detail: string }
     const db = await getDb();
     if (!db) return { pass: false, detail: "Creator database connection is unavailable." };
 
-    // Read-only schema probes: both tables are required by the first paid generation path.
-    await db.select({ id: creatorProjects.id }).from(creatorProjects).limit(1);
-    await db.select({ id: creatorAssets.id }).from(creatorAssets).limit(1);
-    return { pass: true, detail: "Creator database connection and required project/asset tables are queryable." };
+    // Fail closed on the complete P0 Creator schema. A partial migration must never
+    // unlock paid generation just because project/asset tables happen to exist.
+    await Promise.all([
+      db.select({ id: creatorProjects.id }).from(creatorProjects).limit(1),
+      db.select({ id: creatorScenes.id }).from(creatorScenes).limit(1),
+      db.select({ id: creatorShots.id }).from(creatorShots).limit(1),
+      db.select({ id: creatorAssets.id }).from(creatorAssets).limit(1),
+      db.select({ id: creatorReferences.id }).from(creatorReferences).limit(1),
+      db.select({ id: creatorGenerations.id }).from(creatorGenerations).limit(1),
+      db.select({ id: creatorProviderJobs.id }).from(creatorProviderJobs).limit(1),
+      db.select({ id: creatorTimelines.id }).from(creatorTimelines).limit(1),
+      db.select({ id: creatorTimelineItems.id }).from(creatorTimelineItems).limit(1),
+      db.select({ id: creatorCaptionCues.id }).from(creatorCaptionCues).limit(1),
+      db.select({ id: creatorReviews.id }).from(creatorReviews).limit(1),
+      db.select({ id: creatorExports.id }).from(creatorExports).limit(1),
+    ]);
+
+    return {
+      pass: true,
+      detail: "Creator database connection and complete P0 project/scene/shot/asset/reference/generation/job/timeline/caption/review/export schema are queryable.",
+    };
   } catch {
     return {
       pass: false,
-      detail: "Creator database probe failed; verify the approved Creator migration has been applied.",
+      detail: "Creator database probe failed; verify the complete approved Creator migration has been applied.",
     };
   }
 }
