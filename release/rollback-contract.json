@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "application": "sakthiai-hitech",
+  "environment": "preview",
+  "canonicalRepository": "ssakthivel02/sakthiai-hitech",
+  "sourcePolicy": "exact-commit-only-after-green-gates",
+  "rollback": {
+    "strategy": "redeploy-previous-known-good-commit",
+    "operatorApprovalRequired": true,
+    "automaticProductionRollback": false,
+    "requirePreviousCommitSha": true,
+    "requireImmutableBuildEvidence": true,
+    "requireReleaseIdentityMatch": true,
+    "requireDatabaseBackupEvidence": true,
+    "requireMigrationCompatibilityOrRestorePlan": true,
+    "requirePostRollbackHealth": true,
+    "requirePostRollbackReadiness": true,
+    "requirePostRollbackReleaseIdentity": true
+  },
+  "verificationEndpoints": [
+    "/healthz",
+    "/readyz",
+    "/releasez"
+  ],
+  "database": {
+    "expectedDatabase": "sakthiai_preview",
+    "restoreRequiredForDestructiveOrIncompatibleMigration": true,
+    "allowSchemaGuessing": false
+  },
+  "release": {
+    "productionApproved": false,
+    "paidProviderActivationApproved": false,
+    "dnsChangeApproved": false
+  }
+}

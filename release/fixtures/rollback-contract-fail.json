@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "application": "sakthiai-hitech",
+  "environment": "preview",
+  "canonicalRepository": "ssakthivel02/sakthiai-hitech",
+  "sourcePolicy": "latest-main",
+  "rollback": {
+    "strategy": "redeploy-previous-known-good-commit",
+    "operatorApprovalRequired": false,
+    "automaticProductionRollback": true,
+    "requirePreviousCommitSha": false,
+    "requireImmutableBuildEvidence": false,
+    "requireReleaseIdentityMatch": false,
+    "requireDatabaseBackupEvidence": false,
+    "requireMigrationCompatibilityOrRestorePlan": false,
+    "requirePostRollbackHealth": true,
+    "requirePostRollbackReadiness": false,
+    "requirePostRollbackReleaseIdentity": false
+  },
+  "verificationEndpoints": ["/healthz"],
+  "database": {
+    "expectedDatabase": "production",
+    "restoreRequiredForDestructiveOrIncompatibleMigration": false,
+    "allowSchemaGuessing": true
+  },
+  "release": {
+    "productionApproved": true,
+    "paidProviderActivationApproved": true,
+    "dnsChangeApproved": true
+  }
+}
