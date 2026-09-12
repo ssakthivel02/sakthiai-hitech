@@ -43,7 +43,7 @@ export function buildCreatorRuntimePreflight(input?: {
   ffmpegProbe?: { pass: boolean; detail: string };
 }): CreatorRuntimePreflight {
   const providerStatuses = listCreatorProviderStatuses();
-  const imageProvider = providerStatuses.find(provider => provider.provider === "google-image");
+  const imageProvider = providerStatuses.find(provider => provider.provider === "google-gemini-image");
   const videoProvider = providerStatuses.find(provider => provider.provider === "google-veo");
   const ffmpeg = input?.ffmpegProbe ?? probeFfmpeg();
 
