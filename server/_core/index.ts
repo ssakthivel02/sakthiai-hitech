@@ -29,6 +29,14 @@ async function findAvailablePort(startPort = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+function parsePort(value: string | undefined, fallback: number): number {
+  const port = Number.parseInt(value || String(fallback), 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid PORT value: ${value ?? "<unset>"}`);
+  }
+  return port;
+}
+
 function configured(...values: Array<string | undefined>) {
   return values.every(value => typeof value === "string" && value.trim().length > 0);
 }
@@ -144,8 +152,8 @@ async function startServer() {
   if (process.env.NODE_ENV === "development") await setupVite(app, server);
   else serveStatic(app);
 
-  const preferredPort = parseInt(process.env.PORT || "3000", 10);
-  const port = await findAvailablePort(preferredPort);
+  const preferredPort = parsePort(process.env.PORT, 3000);
+  const port = process.env.NODE_ENV === "production" ? preferredPort : await findAvailablePort(preferredPort);
   if (port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
