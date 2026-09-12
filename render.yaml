@@ -56,6 +56,10 @@ services:
         sync: false
       - key: EMBEDDING_MODEL
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_VEO_API_BASE
+        value: https://generativelanguage.googleapis.com/v1beta
       - key: STORAGE_ENDPOINT
         sync: false
       - key: STORAGE_REGION
