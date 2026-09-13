@@ -8,46 +8,64 @@ Use only a PR #7 candidate whose exact head SHA is unchanged and whose Quality G
 
 Do not proceed if another ChatGPT/Codex task is modifying `feature/creator-mvp`.
 
+Before every runtime or infrastructure write, re-check the exact PR head, current `main`, open PRs, recent coordination comments, CI, and the existing preview runtime. Stop and reconcile if another task has advanced the same lane.
+
 ## Runtime dependencies
 
-The Creator preflight must validate all required dependencies before any paid generation request is allowed:
+The Creator runtime must have all required dependencies configured before any paid generation request is allowed:
 
-- `DATABASE_URL`
-- `STORAGE_BUCKET`
-- S3-compatible storage endpoint/region where required
-- storage credentials or approved ambient credentials
-- `GEMINI_API_KEY`
-- Google Veo API/model configuration
-- FFmpeg available to the render worker
+- `JWT_SECRET`;
+- `DATABASE_URL` targeting only `sakthiai_preview`;
+- `DATABASE_EXPECTED_NAME=sakthiai_preview`;
+- `DATABASE_CA_CERT_B64` for verified Aiven TLS;
+- provider-neutral OIDC frontend/backend values required by `/readyz`;
+- provider-neutral LLM URL/model required by `/readyz`;
+- `STORAGE_BUCKET`;
+- S3-compatible storage endpoint/region where required;
+- storage credentials or approved ambient credentials;
+- `GEMINI_API_KEY`;
+- `GOOGLE_VEO_API_BASE` / approved Google Veo API configuration;
+- FFmpeg available to the render worker.
 
 Configure secrets only in the approved runtime/deployment secret manager. Never commit live values to Git, `.env`, PR comments, issues, workflow logs, screenshots, or ChatGPT messages.
 
+The existing Render Blueprint is the approved preview path. Keep automatic deployment OFF. Inspect and reuse the existing `sakthiai-hitech-preview` service rather than creating a parallel runtime.
+
 ## Activation sequence
 
-1. Deploy or run the exact PR #7 candidate SHA.
-2. Apply the Creator database migration in that runtime.
-3. Configure the database and storage environment.
-4. Configure the authorised Google/Veo credential and model settings.
-5. Confirm FFmpeg is present in the render runtime.
-6. Authenticate to a SakthiAI workspace.
-7. Open `/creator/runtime`.
-8. Refresh preflight.
-9. Require PASS for database, storage, image provider, video provider, and FFmpeg.
-10. Require `readyForPaidGeneration=true`.
-11. Keep `productionApproved=false`; runtime readiness is not release approval.
+1. Fresh-check PR #7, current `main`, open PRs, recent coordination comments, exact-head CI, Aiven state, and existing Render state.
+2. Inspect the existing `sakthiai-hitech-preview` Render service and verify the required runtime environment listed above without exposing secret values.
+3. Confirm Render automatic deployment remains OFF.
+4. Deploy only the exact approved PR #7 candidate SHA using Render's exact-commit deployment path.
+5. Request `/releasez` and require it to report that exact deployed SHA. If the SHA is unknown or different, STOP.
+6. Request `/readyz` and require HTTP 200 / `status: ready`. This gate proves the deployed application can establish its basic database/authentication/LLM/storage runtime configuration. If `/readyz` is 503, fix configuration before migration; do not weaken the gate.
+7. Confirm the database connection targets only `sakthiai_preview` and uses the Aiven CA with verified TLS.
+8. Run `pnpm db:push`. This command is apply-only (`drizzle-kit migrate`) and must apply the reviewed migration set; do not generate migration artifacts on the preview host.
+9. Run `pnpm creator:runtime:acceptance` and require every required check PASS. This performs the Creator schema probe plus a tiny SakthiAI-owned storage write/read canary with best-effort cleanup; it does not call Gemini or Veo.
+10. Authenticate to an authorised SakthiAI workspace and open the `/creator/runtime` browser route.
+11. Refresh the structural preflight and require PASS for database, storage, image provider, video provider, and FFmpeg.
+12. Select **Verify data plane** and require the authenticated view to show **VERIFIED** / `readyForPaidGeneration=true`.
+13. Keep `productionApproved=false`; runtime readiness is not production, publishing, or spend approval.
+14. STOP before any paid image/video generation unless explicit owner approval for a bounded provider-spend test is present.
 
 If any required check fails, stop before paid provider submission.
+
+### Important route semantics
+
+`/releasez` and `/readyz` are public operational JSON endpoints used for deployment identity and readiness checks.
+
+`/creator/runtime` is an authenticated browser UI route, not a public JSON health endpoint. Its structural and live verification data come from protected tRPC procedures (`creator.preflight` and `creator.verifyRuntime`) scoped to an authorised SakthiAI workspace.
 
 ## Storage acceptance before paid generation
 
 Before spending provider credits, verify the deployed runtime can:
 
 - connect to the configured bucket;
-- write an acceptance object;
+- write a SakthiAI-owned acceptance canary;
 - read it back;
-- verify the bytes/hash match;
-- delete the acceptance object if policy permits;
-- persist Creator artifact metadata in the configured database.
+- verify the returned bytes match;
+- delete the acceptance object on a best-effort basis;
+- query the complete approved Creator P0 schema in `sakthiai_preview`.
 
 Do not use a real generated asset as the first storage connectivity test.
 
@@ -108,18 +126,22 @@ Use only the approved immutable audio master. Verify every Tamil caption against
 
 A real Creator acceptance sequence requires all of the following evidence:
 
-1. runtime preflight PASS;
-2. real provider request completes;
-3. output is persisted and can be reloaded;
-4. provenance/checksum exists;
-5. approved visual assets cover the required timeline;
-6. Tamil captions are locked to the approved audio;
-7. deterministic 16:9 candidate render completes;
-8. SakthiAI quality review passes;
-9. cross-shot seam review passes;
-10. genuine human Tamil PASS;
-11. genuine human visual PASS;
-12. exact-head CI remains green after any remediation.
+1. exact deployed SHA proven by `/releasez`;
+2. `/readyz` PASS;
+3. reviewed Creator migration applied only to `sakthiai_preview`;
+4. CLI Creator runtime acceptance PASS;
+5. authenticated `/creator/runtime` live data-plane verification PASS;
+6. real provider request completes;
+7. output is persisted and can be reloaded;
+8. provenance/checksum exists;
+9. approved visual assets cover the required timeline;
+10. Tamil captions are locked to the approved audio;
+11. deterministic 16:9 candidate render completes;
+12. SakthiAI quality review passes;
+13. cross-shot seam review passes;
+14. genuine human Tamil PASS;
+15. genuine human visual PASS;
+16. exact-head CI remains green after any remediation.
 
 Only then may the candidate be promoted to an approved final master. This still does not by itself authorize production release or automated publication.
 
@@ -130,9 +152,13 @@ Stop immediately if:
 - PR #7 head changes during the acceptance run;
 - another agent starts modifying the same Creator lane;
 - exact-head CI fails;
+- `/releasez` does not identify the approved exact SHA;
+- `/readyz` does not pass;
 - a secret appears in source, logs, screenshots, or chat;
 - provider spend cannot be bounded;
-- database/storage write-read acceptance fails;
+- database/schema or storage write-read acceptance fails;
+- the database target is not exactly `sakthiai_preview`;
+- verified Aiven TLS is not in use;
 - persisted artifact provenance is absent;
 - the approved audio identity is uncertain;
 - human review has not actually inspected the final output.
