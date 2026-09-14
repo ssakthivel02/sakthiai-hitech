@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ENV } from "./_core/env";
 
@@ -61,6 +61,49 @@ export async function storagePut(
 export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
   return { key, url: `/api/storage/${key}` };
+}
+
+export async function storageRead(relKey: string): Promise<Uint8Array> {
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!result.Body) throw new Error("Storage object body missing");
+  return result.Body.transformToByteArray();
+}
+
+export async function storageDelete(relKey: string): Promise<void> {
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+export async function storageRoundTripProbe(): Promise<{ pass: boolean; detail: string }> {
+  const payload = Buffer.from(`sakthiai-creator-storage-probe:${crypto.randomUUID()}`, "utf-8");
+  let key: string | undefined;
+
+  try {
+    const stored = await storagePut(
+      "creator/runtime-probes/storage-canary.txt",
+      payload,
+      "text/plain; charset=utf-8",
+    );
+    key = stored.key;
+    const loaded = Buffer.from(await storageRead(stored.key));
+    if (!loaded.equals(payload)) {
+      return { pass: false, detail: "Storage write/read round-trip returned different bytes." };
+    }
+    return { pass: true, detail: "Storage write/read round-trip succeeded and canary bytes matched." };
+  } catch {
+    return { pass: false, detail: "Storage write/read round-trip failed." };
+  } finally {
+    if (key) {
+      try {
+        await storageDelete(key);
+      } catch {
+        // Probe cleanup is best effort and never changes the pass result of the verified write/read round-trip.
+      }
+    }
+  }
 }
 
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
