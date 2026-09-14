@@ -36,17 +36,18 @@ The existing Render Blueprint is the approved preview path. Keep automatic deplo
 1. Fresh-check PR #7, current `main`, open PRs, recent coordination comments, exact-head CI, Aiven state, and existing Render state.
 2. Inspect the existing `sakthiai-hitech-preview` Render service and verify the required runtime environment listed above without exposing secret values.
 3. Confirm Render automatic deployment remains OFF.
-4. Deploy only the exact approved PR #7 candidate SHA using Render's exact-commit deployment path.
-5. Request `/releasez` and require it to report that exact deployed SHA. If the SHA is unknown or different, STOP.
-6. Request `/readyz` and require HTTP 200 / `status: ready`. This gate proves the deployed application can establish its basic database/authentication/LLM/storage runtime configuration. If `/readyz` is 503, fix configuration before migration; do not weaken the gate.
-7. Confirm the database connection targets only `sakthiai_preview` and uses the Aiven CA with verified TLS.
-8. Run `pnpm db:push`. This command is apply-only (`drizzle-kit migrate`) and must apply the reviewed migration set; do not generate migration artifacts on the preview host.
-9. Run `pnpm creator:runtime:acceptance` and require every required check PASS. This performs the Creator schema probe plus a tiny SakthiAI-owned storage write/read canary with best-effort cleanup; it does not call Gemini or Veo.
-10. Authenticate to an authorised SakthiAI workspace and open the `/creator/runtime` browser route.
-11. Refresh the structural preflight and require PASS for database, storage, image provider, video provider, and FFmpeg.
-12. Select **Verify data plane** and require the authenticated view to show **VERIFIED** / `readyForPaidGeneration=true`.
-13. Keep `productionApproved=false`; runtime readiness is not production, publishing, or spend approval.
-14. STOP before any paid image/video generation unless explicit owner approval for a bounded provider-spend test is present.
+4. Immediately before runtime qualification, power on the existing Aiven `hitech-preview-mysql` service. Require state `RUNNING`, reconfirm that `sakthiai_preview` exists, and do not change the current IP filter blindly before approved Render egress is known.
+5. Deploy only the exact approved PR #7 candidate SHA using Render's exact-commit deployment path.
+6. Request `/releasez` and require it to report that exact deployed SHA. If the SHA is unknown or different, STOP.
+7. Request `/readyz` and require HTTP 200 / `status: ready`. This gate proves the deployed application can establish its basic database/authentication/LLM/storage runtime configuration. If `/readyz` is 503, fix configuration before migration; do not weaken the gate.
+8. Confirm the database connection targets only `sakthiai_preview` and uses the Aiven CA with verified TLS.
+9. Run `pnpm db:push`. This command is apply-only (`drizzle-kit migrate`) and must apply the reviewed migration set; do not generate migration artifacts on the preview host.
+10. Run `pnpm creator:runtime:acceptance` and require every required check PASS. This performs the Creator schema probe plus a tiny SakthiAI-owned storage write/read canary with best-effort cleanup; it does not call Gemini or Veo.
+11. Authenticate to an authorised SakthiAI workspace and open the `/creator/runtime` browser route.
+12. Refresh the structural preflight and require PASS for database, storage, image provider, video provider, and FFmpeg.
+13. Select **Verify data plane** and require the authenticated view to show **VERIFIED** / `readyForPaidGeneration=true`.
+14. Keep `productionApproved=false`; runtime readiness is not production, publishing, or spend approval.
+15. STOP before any paid image/video generation unless explicit owner approval for a bounded provider-spend test is present.
 
 If any required check fails, stop before paid provider submission.
 
