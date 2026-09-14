@@ -64,7 +64,11 @@ export async function fetchGoogleVeoArtifact(artifact: CreatorProviderArtifact) 
   const uri = validateGoogleVeoDownloadUri(artifact.uri);
   const response = await fetch(uri, {
     headers: { "x-goog-api-key": apiKey },
-    redirect: "follow",
+    // Fail closed if the provider attempts to redirect the artifact request.
+    // The initial URI is allowlisted above; automatically following a redirect
+    // would bypass that host boundary and could send the runtime to an
+    // unvalidated destination.
+    redirect: "error",
   });
   if (!response.ok) throw new Error(`GOOGLE_VEO_ARTIFACT_DOWNLOAD_FAILED_${response.status}`);
   const contentLength = Number(response.headers.get("content-length") || 0);
