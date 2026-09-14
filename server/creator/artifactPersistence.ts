@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { creatorAssets, creatorGenerations, creatorShots } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { storagePut } from "../storage";
-import { assertCreatorJobTransition, type CreatorJobState, type CreatorMediaProvider, type CreatorProviderArtifact } from "./types";
+import {
+  assertCreatorJobTransition,
+  canTransitionCreatorJob,
+  type CreatorJobState,
+  type CreatorMediaProvider,
+  type CreatorProviderArtifact,
+} from "./types";
 
 function safeJson(value: string | null) {
   if (!value) return null;
@@ -25,6 +31,13 @@ export function extensionForCreatorMimeType(mimeType: string): string {
   const extension = extensions[normalized];
   if (!extension) throw new Error("CREATOR_ARTIFACT_MIME_UNSUPPORTED");
   return extension;
+}
+
+export function shouldMarkCreatorArtifactRetryable(input: {
+  status: CreatorJobState;
+  outputAssetId: number | null;
+}): boolean {
+  return input.outputAssetId === null && canTransitionCreatorJob(input.status, "RETRYABLE");
 }
 
 function assetTypeForGeneration(kind: string): "IMAGE" | "VIDEO" {
@@ -163,10 +176,21 @@ export async function markCreatorArtifactRetryable(input: {
     .where(and(eq(creatorGenerations.id, input.generationId), eq(creatorGenerations.workspaceId, input.workspaceId)))
     .limit(1);
   if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
-  assertCreatorJobTransition(generation.status as CreatorJobState, "RETRYABLE");
+
+  const status = generation.status as CreatorJobState;
+  if (!shouldMarkCreatorArtifactRetryable({ status, outputAssetId: generation.outputAssetId })) return;
+  assertCreatorJobTransition(status, "RETRYABLE");
+
   const message = input.error instanceof Error ? input.error.message : "CREATOR_ARTIFACT_PERSISTENCE_FAILED";
   await db
     .update(creatorGenerations)
     .set({ status: "RETRYABLE", failureClass: "ARTIFACT", errorMessage: message.slice(0, 2000), completedAt: null })
-    .where(and(eq(creatorGenerations.id, generation.id), eq(creatorGenerations.workspaceId, input.workspaceId)));
+    .where(
+      and(
+        eq(creatorGenerations.id, generation.id),
+        eq(creatorGenerations.workspaceId, input.workspaceId),
+        eq(creatorGenerations.status, status),
+        isNull(creatorGenerations.outputAssetId),
+      ),
+    );
 }
