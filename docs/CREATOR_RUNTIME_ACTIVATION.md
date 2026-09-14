@@ -41,13 +41,14 @@ The existing Render Blueprint is the approved preview path. Keep automatic deplo
 6. Request `/releasez` and require it to report that exact deployed SHA. If the SHA is unknown or different, STOP.
 7. Request `/readyz` and require HTTP 200 / `status: ready`. This gate proves the deployed application can establish its basic database/authentication/LLM/storage runtime configuration. If `/readyz` is 503, fix configuration before migration; do not weaken the gate.
 8. Confirm the database connection targets only `sakthiai_preview` and uses the Aiven CA with verified TLS.
-9. Run `pnpm db:push`. This command is apply-only (`drizzle-kit migrate`) and must apply the reviewed migration set; do not generate migration artifacts on the preview host.
-10. Run `pnpm creator:runtime:acceptance` and require every required check PASS. This performs the Creator schema probe plus a tiny SakthiAI-owned storage write/read canary with best-effort cleanup; it does not call Gemini or Veo.
-11. Authenticate to an authorised SakthiAI workspace and open the `/creator/runtime` browser route.
-12. Refresh the structural preflight and require PASS for database, storage, image provider, video provider, and FFmpeg.
-13. Select **Verify data plane** and require the authenticated view to show **VERIFIED** / `readyForPaidGeneration=true`.
-14. Keep `productionApproved=false`; runtime readiness is not production, publishing, or spend approval.
-15. STOP before any paid image/video generation unless explicit owner approval for a bounded provider-spend test is present.
+9. Before changing schema state, record fresh non-secret recovery evidence for `hitech-preview-mysql`: current service state, presence of `sakthiai_preview`, and the latest available Aiven backup timestamp/identifier. If no usable recovery point is available or database identity is uncertain, STOP before migration. This checkpoint is recovery evidence only; it does not imply that Drizzle migrations are automatically reversible.
+10. Run `pnpm db:push`. This command is apply-only (`drizzle-kit migrate`) and must apply the reviewed migration set; do not generate migration artifacts on the preview host.
+11. Run `pnpm creator:runtime:acceptance` and require every required check PASS. This performs the Creator schema probe plus a tiny SakthiAI-owned storage write/read canary with best-effort cleanup; it does not call Gemini or Veo.
+12. Authenticate to an authorised SakthiAI workspace and open the `/creator/runtime` browser route.
+13. Refresh the structural preflight and require PASS for database, storage, image provider, video provider, and FFmpeg.
+14. Select **Verify data plane** and require the authenticated view to show **VERIFIED** / `readyForPaidGeneration=true`.
+15. Keep `productionApproved=false`; runtime readiness is not production, publishing, or spend approval.
+16. STOP before any paid image/video generation unless explicit owner approval for a bounded provider-spend test is present.
 
 If any required check fails, stop before paid provider submission.
 
@@ -129,20 +130,21 @@ A real Creator acceptance sequence requires all of the following evidence:
 
 1. exact deployed SHA proven by `/releasez`;
 2. `/readyz` PASS;
-3. reviewed Creator migration applied only to `sakthiai_preview`;
-4. CLI Creator runtime acceptance PASS;
-5. authenticated `/creator/runtime` live data-plane verification PASS;
-6. real provider request completes;
-7. output is persisted and can be reloaded;
-8. provenance/checksum exists;
-9. approved visual assets cover the required timeline;
-10. Tamil captions are locked to the approved audio;
-11. deterministic 16:9 candidate render completes;
-12. SakthiAI quality review passes;
-13. cross-shot seam review passes;
-14. genuine human Tamil PASS;
-15. genuine human visual PASS;
-16. exact-head CI remains green after any remediation.
+3. fresh pre-migration Aiven recovery evidence captured for `sakthiai_preview`;
+4. reviewed Creator migration applied only to `sakthiai_preview`;
+5. CLI Creator runtime acceptance PASS;
+6. authenticated `/creator/runtime` live data-plane verification PASS;
+7. real provider request completes;
+8. output is persisted and can be reloaded;
+9. provenance/checksum exists;
+10. approved visual assets cover the required timeline;
+11. Tamil captions are locked to the approved audio;
+12. deterministic 16:9 candidate render completes;
+13. SakthiAI quality review passes;
+14. cross-shot seam review passes;
+15. genuine human Tamil PASS;
+16. genuine human visual PASS;
+17. exact-head CI remains green after any remediation.
 
 Only then may the candidate be promoted to an approved final master. This still does not by itself authorize production release or automated publication.
 
@@ -157,6 +159,7 @@ Stop immediately if:
 - `/readyz` does not pass;
 - a secret appears in source, logs, screenshots, or chat;
 - provider spend cannot be bounded;
+- a usable pre-migration recovery checkpoint cannot be established;
 - database/schema or storage write-read acceptance fails;
 - the database target is not exactly `sakthiai_preview`;
 - verified Aiven TLS is not in use;
