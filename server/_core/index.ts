@@ -9,10 +9,10 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { getDb } from "../db";
 import { embeddingStatus } from "../embeddings";
 import { ENV } from "./env";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
+import { probeDatabaseReadiness } from "./readiness";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -114,8 +114,7 @@ async function startServer() {
   app.get("/releasez", (_req, res) => res.status(200).json(releaseIdentity()));
 
   app.get("/readyz", async (_req, res) => {
-    const db = await getDb();
-    const databaseReady = Boolean(db);
+    const databaseReady = await probeDatabaseReadiness();
     const authReady = configured(
       ENV.cookieSecret,
       ENV.oidcAuthorizationUrl,
