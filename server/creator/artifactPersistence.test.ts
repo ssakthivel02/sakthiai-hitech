@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extensionForCreatorMimeType } from "./artifactPersistence";
+import { extensionForCreatorMimeType, shouldMarkCreatorArtifactRetryable } from "./artifactPersistence";
 import { canTransitionCreatorJob } from "./types";
 
 describe("Creator artifact persistence contract", () => {
@@ -13,5 +13,10 @@ describe("Creator artifact persistence contract", () => {
   it("allows an artifact retry to resume without buying another provider generation", () => {
     expect(canTransitionCreatorJob("RUNNING", "RETRYABLE")).toBe(true);
     expect(canTransitionCreatorJob("RETRYABLE", "RUNNING")).toBe(true);
+  });
+
+  it("never reopens a generation after another poller has persisted its output asset", () => {
+    expect(shouldMarkCreatorArtifactRetryable({ status: "RUNNING", outputAssetId: null })).toBe(true);
+    expect(shouldMarkCreatorArtifactRetryable({ status: "SUCCEEDED", outputAssetId: 42 })).toBe(false);
   });
 });
