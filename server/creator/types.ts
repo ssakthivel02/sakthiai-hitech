@@ -1,5 +1,6 @@
 export const CREATOR_JOB_STATES = [
   "QUEUED",
+  "SUBMISSION_UNKNOWN",
   "SUBMITTED",
   "RUNNING",
   "SUCCEEDED",
@@ -120,7 +121,8 @@ export interface CreatorMediaProvider {
 }
 
 const ALLOWED_TRANSITIONS: Record<CreatorJobState, readonly CreatorJobState[]> = {
-  QUEUED: ["SUBMITTED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"],
+  QUEUED: ["SUBMISSION_UNKNOWN", "SUBMITTED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"],
+  SUBMISSION_UNKNOWN: ["SUBMITTED", "RUNNING", "FAILED", "CANCELLED"],
   SUBMITTED: ["RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "RETRYABLE"],
   RUNNING: ["SUCCEEDED", "FAILED", "CANCELLED", "RETRYABLE"],
   // Provider completion can precede SakthiAI-controlled artifact persistence. A

@@ -1,9 +1,11 @@
 import { markCreatorArtifactRetryable, persistCreatorGenerationArtifact } from "./artifactPersistence";
 import { requireCreatorRemoteCancel, resolveCreatorRetryMode } from "./jobControl";
 import {
+  beginProviderSubmission,
   createQueuedGeneration,
   getGenerationExecutionContext,
   markGenerationFailed,
+  markGenerationSubmissionUnknown,
   recordProviderPoll,
   recordProviderSubmission,
 } from "./persistence";
@@ -18,6 +20,13 @@ const RETRYABLE_FAILURES = new Set<CreatorFailureClass>([
   "TIMEOUT",
   "NETWORK",
   "ARTIFACT",
+]);
+
+const AMBIGUOUS_SUBMISSION_FAILURES = new Set<CreatorFailureClass>([
+  "NETWORK",
+  "TIMEOUT",
+  "PROVIDER_UNAVAILABLE",
+  "UNKNOWN",
 ]);
 
 function sourceAssetIds(request: CreatorMediaRequest): number[] {
@@ -60,20 +69,44 @@ export async function submitCreatorGeneration(input: {
   workspaceId: number;
   creatorProjectId: number;
   shotId: number;
+  idempotencyKey: string;
   request: CreatorMediaRequest;
 }) {
   const provider = selectCreatorProvider(input.request);
   const providerStatus = provider.status();
   const model = input.request.model ?? providerStatus.defaultModel;
-  const generationId = await createQueuedGeneration({
+  const queued = await createQueuedGeneration({
     workspaceId: input.workspaceId,
     creatorProjectId: input.creatorProjectId,
     shotId: input.shotId,
+    idempotencyKey: input.idempotencyKey,
     kind: input.request.kind,
     provider: provider.id,
     model,
     parameters: creatorRequestProvenance(input.request),
     sourceAssetIds: sourceAssetIds(input.request),
+  });
+  const generationId = queued.generationId;
+
+  if (!queued.created) {
+    const { generation, providerJob } = await getGenerationExecutionContext(input.workspaceId, generationId);
+    return {
+      generationId,
+      provider: generation.provider,
+      providerState: providerJob?.status ?? generation.status,
+      state: generation.status,
+      outputAssetId: generation.outputAssetId ?? null,
+      failureClass: generation.failureClass ?? null,
+      errorMessage: generation.errorMessage ?? null,
+      reused: true as const,
+      productionApproved: false,
+    };
+  }
+
+  await beginProviderSubmission({
+    workspaceId: input.workspaceId,
+    creatorProjectId: input.creatorProjectId,
+    generationId,
   });
 
   try {
@@ -90,17 +123,28 @@ export async function submitCreatorGeneration(input: {
       providerState: submission.state,
       state: generationStateAfterProviderState(submission.state),
       outputAssetId: null,
+      reused: false as const,
       productionApproved: false,
     };
   } catch (error) {
     const failureClass = provider.classifyFailure(error);
-    await markGenerationFailed({
-      workspaceId: input.workspaceId,
-      creatorProjectId: input.creatorProjectId,
-      generationId,
-      failureClass,
-      errorMessage: errorMessage(error),
-    }).catch(() => undefined);
+    if (AMBIGUOUS_SUBMISSION_FAILURES.has(failureClass)) {
+      await markGenerationSubmissionUnknown({
+        workspaceId: input.workspaceId,
+        creatorProjectId: input.creatorProjectId,
+        generationId,
+        failureClass,
+        errorMessage: errorMessage(error),
+      }).catch(() => undefined);
+    } else {
+      await markGenerationFailed({
+        workspaceId: input.workspaceId,
+        creatorProjectId: input.creatorProjectId,
+        generationId,
+        failureClass,
+        errorMessage: errorMessage(error),
+      }).catch(() => undefined);
+    }
     throw error;
   }
 }
@@ -132,7 +176,10 @@ export async function pollCreatorGeneration(input: { workspaceId: number; genera
       productionApproved: false,
     };
   }
-  if (!providerJob) throw new Error("CREATOR_PROVIDER_JOB_NOT_FOUND");
+  if (!providerJob) {
+    if (generation.status === "SUBMISSION_UNKNOWN") throw new Error("CREATOR_SUBMISSION_RECONCILIATION_REQUIRED");
+    throw new Error("CREATOR_PROVIDER_JOB_NOT_FOUND");
+  }
 
   const provider = getCreatorProvider(generation.provider);
   if (!provider) throw new Error("CREATOR_PROVIDER_NOT_REGISTERED");

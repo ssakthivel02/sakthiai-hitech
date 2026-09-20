@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -162,12 +162,13 @@ export const creatorGenerations = mysqlTable("creatorGenerations", {
   creatorProjectId: int("creatorProjectId").notNull(),
   sceneId: int("sceneId"),
   shotId: int("shotId"),
+  idempotencyKey: varchar("idempotencyKey", { length: 64 }),
   kind: mysqlEnum("kind", ["IMAGE", "IMAGE_EDIT", "VIDEO", "VIDEO_EXTENSION"]).notNull(),
   provider: varchar("provider", { length: 80 }).notNull(),
   model: varchar("model", { length: 160 }).notNull(),
   parametersJson: text("parametersJson").notNull(),
   sourceAssetIdsJson: text("sourceAssetIdsJson"),
-  status: mysqlEnum("status", ["QUEUED", "SUBMITTED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "RETRYABLE"]).default("QUEUED").notNull(),
+  status: mysqlEnum("status", ["QUEUED", "SUBMISSION_UNKNOWN", "SUBMITTED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "RETRYABLE"]).default("QUEUED").notNull(),
   outputAssetId: int("outputAssetId"),
   attempt: int("attempt").default(1).notNull(),
   failureClass: varchar("failureClass", { length: 80 }),
@@ -178,7 +179,9 @@ export const creatorGenerations = mysqlTable("creatorGenerations", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   completedAt: timestamp("completedAt"),
-});
+}, table => [
+  uniqueIndex("creatorGenerations_workspaceId_idempotencyKey_unique").on(table.workspaceId, table.idempotencyKey),
+]);
 
 export const creatorProviderJobs = mysqlTable("creatorProviderJobs", {
   id: int("id").autoincrement().primaryKey(),

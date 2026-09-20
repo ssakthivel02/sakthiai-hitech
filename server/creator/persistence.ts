@@ -7,6 +7,7 @@ import {
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { generationStateAfterProviderState } from "./lifecycle";
+import { assertSameGenerationIntent } from "./idempotency";
 import {
   assertCreatorJobTransition,
   type CreatorFailureClass,
@@ -46,10 +47,18 @@ async function requireProjectAndShot(input: { workspaceId: number; creatorProjec
   return db;
 }
 
+function isDuplicateEntry(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; errno?: unknown; cause?: unknown };
+  if (candidate.code === "ER_DUP_ENTRY" || candidate.errno === 1062) return true;
+  return candidate.cause ? isDuplicateEntry(candidate.cause) : false;
+}
+
 export async function createQueuedGeneration(input: {
   workspaceId: number;
   creatorProjectId: number;
   shotId: number;
+  idempotencyKey: string;
   kind: CreatorMediaKind;
   provider: string;
   model: string;
@@ -57,33 +66,108 @@ export async function createQueuedGeneration(input: {
   sourceAssetIds?: number[];
 }) {
   const db = await requireProjectAndShot(input);
-  const result = await db.insert(creatorGenerations).values({
-    workspaceId: input.workspaceId,
+  const idempotencyKey = input.idempotencyKey.trim();
+  if (!idempotencyKey) throw new Error("CREATOR_IDEMPOTENCY_KEY_REQUIRED");
+
+  const parametersJson = JSON.stringify(input.parameters);
+  const sourceAssetIdsJson = JSON.stringify(input.sourceAssetIds ?? []);
+  const intent = {
     creatorProjectId: input.creatorProjectId,
     shotId: input.shotId,
     kind: input.kind,
     provider: input.provider,
     model: input.model,
-    parametersJson: JSON.stringify(input.parameters),
-    sourceAssetIdsJson: JSON.stringify(input.sourceAssetIds ?? []),
-    status: "QUEUED",
-    attempt: 1,
-  });
-  const generationId = Number(result[0].insertId);
-  if (!generationId) throw new Error("CREATOR_GENERATION_CREATE_FAILED");
-  return generationId;
+    parametersJson,
+    sourceAssetIdsJson,
+  };
+
+  try {
+    const result = await db.insert(creatorGenerations).values({
+      workspaceId: input.workspaceId,
+      creatorProjectId: input.creatorProjectId,
+      shotId: input.shotId,
+      idempotencyKey,
+      kind: input.kind,
+      provider: input.provider,
+      model: input.model,
+      parametersJson,
+      sourceAssetIdsJson,
+      status: "QUEUED",
+      attempt: 1,
+    });
+    const generationId = Number(result[0].insertId);
+    if (!generationId) throw new Error("CREATOR_GENERATION_CREATE_FAILED");
+    return { generationId, created: true as const };
+  } catch (error) {
+    if (!isDuplicateEntry(error)) throw error;
+    const [existing] = await db
+      .select()
+      .from(creatorGenerations)
+      .where(and(eq(creatorGenerations.workspaceId, input.workspaceId), eq(creatorGenerations.idempotencyKey, idempotencyKey)))
+      .limit(1);
+    if (!existing) throw error;
+    assertSameGenerationIntent(existing, intent);
+    return { generationId: existing.id, created: false as const };
+  }
 }
 
 export async function createQueuedVideoGeneration(input: {
   workspaceId: number;
   creatorProjectId: number;
   shotId: number;
+  idempotencyKey: string;
   provider: string;
   model: string;
   parameters: unknown;
   sourceAssetIds?: number[];
 }) {
   return createQueuedGeneration({ ...input, kind: "VIDEO" });
+}
+
+export async function beginProviderSubmission(input: {
+  workspaceId: number;
+  creatorProjectId: number;
+  generationId: number;
+}) {
+  const db = await requireDb();
+  const result = await db
+    .update(creatorGenerations)
+    .set({ status: "SUBMISSION_UNKNOWN", failureClass: null, errorMessage: null })
+    .where(
+      and(
+        eq(creatorGenerations.id, input.generationId),
+        eq(creatorGenerations.workspaceId, input.workspaceId),
+        eq(creatorGenerations.creatorProjectId, input.creatorProjectId),
+        eq(creatorGenerations.status, "QUEUED"),
+      ),
+    );
+  const affectedRows = Number((result[0] as { affectedRows?: number } | undefined)?.affectedRows ?? 0);
+  if (affectedRows !== 1) throw new Error("CREATOR_SUBMISSION_STATE_CONFLICT");
+}
+
+export async function markGenerationSubmissionUnknown(input: {
+  workspaceId: number;
+  creatorProjectId: number;
+  generationId: number;
+  failureClass: CreatorFailureClass;
+  errorMessage: string;
+}) {
+  const db = await requireDb();
+  await db
+    .update(creatorGenerations)
+    .set({
+      status: "SUBMISSION_UNKNOWN",
+      failureClass: input.failureClass,
+      errorMessage: input.errorMessage,
+      completedAt: null,
+    })
+    .where(
+      and(
+        eq(creatorGenerations.id, input.generationId),
+        eq(creatorGenerations.workspaceId, input.workspaceId),
+        eq(creatorGenerations.creatorProjectId, input.creatorProjectId),
+      ),
+    );
 }
 
 export async function recordProviderSubmission(input: {
@@ -93,44 +177,46 @@ export async function recordProviderSubmission(input: {
   submission: CreatorProviderSubmission;
 }) {
   const db = await requireDb();
-  const [generation] = await db
-    .select()
-    .from(creatorGenerations)
-    .where(
-      and(
-        eq(creatorGenerations.id, input.generationId),
-        eq(creatorGenerations.workspaceId, input.workspaceId),
-        eq(creatorGenerations.creatorProjectId, input.creatorProjectId),
-      ),
-    )
-    .limit(1);
-  if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
+  await db.transaction(async tx => {
+    const [generation] = await tx
+      .select()
+      .from(creatorGenerations)
+      .where(
+        and(
+          eq(creatorGenerations.id, input.generationId),
+          eq(creatorGenerations.workspaceId, input.workspaceId),
+          eq(creatorGenerations.creatorProjectId, input.creatorProjectId),
+        ),
+      )
+      .limit(1);
+    if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
 
-  const generationState = generationStateAfterProviderState(input.submission.state);
-  assertCreatorJobTransition(generation.status as CreatorJobState, generationState);
-  const providerCompletedAt = input.submission.state === "SUCCEEDED" ? new Date() : null;
+    const generationState = generationStateAfterProviderState(input.submission.state);
+    assertCreatorJobTransition(generation.status as CreatorJobState, generationState);
+    const providerCompletedAt = input.submission.state === "SUCCEEDED" ? new Date() : null;
 
-  await db.insert(creatorProviderJobs).values({
-    workspaceId: input.workspaceId,
-    creatorProjectId: input.creatorProjectId,
-    generationId: input.generationId,
-    provider: input.submission.provider,
-    providerJobId: input.submission.providerJobId,
-    status: input.submission.state,
-    snapshotJson: JSON.stringify(input.submission.raw),
-    costMicros: input.submission.costMicros ?? null,
-    currency: input.submission.currency ?? null,
-    completedAt: providerCompletedAt,
-  });
-  await db
-    .update(creatorGenerations)
-    .set({
-      status: generationState,
+    await tx.insert(creatorProviderJobs).values({
+      workspaceId: input.workspaceId,
+      creatorProjectId: input.creatorProjectId,
+      generationId: input.generationId,
+      provider: input.submission.provider,
+      providerJobId: input.submission.providerJobId,
+      status: input.submission.state,
+      snapshotJson: JSON.stringify(input.submission.raw),
       costMicros: input.submission.costMicros ?? null,
       currency: input.submission.currency ?? null,
-      completedAt: null,
-    })
-    .where(eq(creatorGenerations.id, input.generationId));
+      completedAt: providerCompletedAt,
+    });
+    await tx
+      .update(creatorGenerations)
+      .set({
+        status: generationState,
+        costMicros: input.submission.costMicros ?? null,
+        currency: input.submission.currency ?? null,
+        completedAt: null,
+      })
+      .where(eq(creatorGenerations.id, input.generationId));
+  });
 }
 
 export async function recordProviderPoll(input: {

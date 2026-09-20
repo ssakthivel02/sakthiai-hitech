@@ -142,6 +142,7 @@ export const creatorRouter = router({
       workspaceInput.extend({
         creatorProjectId: z.number().int().positive(),
         shotId: z.number().int().positive(),
+        idempotencyKey: z.string().uuid(),
         kind: z.enum(["IMAGE", "IMAGE_EDIT"]).default("IMAGE"),
         prompt: z.string().trim().min(1).max(8000),
         model: z.literal("gemini-3.1-flash-image").optional(),
@@ -164,6 +165,7 @@ export const creatorRouter = router({
           workspaceId: input.workspaceId,
           creatorProjectId: input.creatorProjectId,
           shotId: input.shotId,
+          idempotencyKey: input.idempotencyKey,
           request: {
             kind: input.kind,
             prompt: input.prompt,
@@ -183,6 +185,7 @@ export const creatorRouter = router({
       workspaceInput.extend({
         creatorProjectId: z.number().int().positive(),
         shotId: z.number().int().positive(),
+        idempotencyKey: z.string().uuid(),
         prompt: z.string().trim().min(1).max(8000),
         model: z
           .enum([
@@ -229,6 +232,7 @@ export const creatorRouter = router({
           workspaceId: input.workspaceId,
           creatorProjectId: input.creatorProjectId,
           shotId: input.shotId,
+          idempotencyKey: input.idempotencyKey,
           request: {
             kind: "VIDEO",
             prompt: input.prompt,
