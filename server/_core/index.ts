@@ -9,10 +9,10 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { getDb } from "../db";
 import { embeddingStatus } from "../embeddings";
 import { ENV } from "./env";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
+import { probeDatabaseReadiness } from "./readiness";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -27,6 +27,14 @@ async function findAvailablePort(startPort = 3000): Promise<number> {
     if (await isPortAvailable(port)) return port;
   }
   throw new Error(`No available port found starting from ${startPort}`);
+}
+
+function parsePort(value: string | undefined, fallback: number): number {
+  const port = Number.parseInt(value || String(fallback), 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid PORT value: ${value ?? "<unset>"}`);
+  }
+  return port;
 }
 
 function configured(...values: Array<string | undefined>) {
@@ -106,8 +114,7 @@ async function startServer() {
   app.get("/releasez", (_req, res) => res.status(200).json(releaseIdentity()));
 
   app.get("/readyz", async (_req, res) => {
-    const db = await getDb();
-    const databaseReady = Boolean(db);
+    const databaseReady = await probeDatabaseReadiness();
     const authReady = configured(
       ENV.cookieSecret,
       ENV.oidcAuthorizationUrl,
@@ -144,8 +151,8 @@ async function startServer() {
   if (process.env.NODE_ENV === "development") await setupVite(app, server);
   else serveStatic(app);
 
-  const preferredPort = parseInt(process.env.PORT || "3000", 10);
-  const port = await findAvailablePort(preferredPort);
+  const preferredPort = parsePort(process.env.PORT, 3000);
+  const port = process.env.NODE_ENV === "production" ? preferredPort : await findAvailablePort(preferredPort);
   if (port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
