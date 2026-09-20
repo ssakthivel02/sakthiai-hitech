@@ -77,33 +77,49 @@ export async function storageDelete(relKey: string): Promise<void> {
   await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 
-export async function storageRoundTripProbe(): Promise<{ pass: boolean; detail: string }> {
+type StorageProbeDependencies = {
+  put?: typeof storagePut;
+  read?: typeof storageRead;
+  delete?: typeof storageDelete;
+};
+
+export async function storageRoundTripProbe(
+  deps: StorageProbeDependencies = {},
+): Promise<{ pass: boolean; detail: string }> {
   const payload = Buffer.from(`sakthiai-creator-storage-probe:${crypto.randomUUID()}`, "utf-8");
+  const put = deps.put ?? storagePut;
+  const read = deps.read ?? storageRead;
+  const remove = deps.delete ?? storageDelete;
   let key: string | undefined;
+  let primaryFailure: { pass: false; detail: string } | null = null;
 
   try {
-    const stored = await storagePut(
+    const stored = await put(
       "creator/runtime-probes/storage-canary.txt",
       payload,
       "text/plain; charset=utf-8",
     );
     key = stored.key;
-    const loaded = Buffer.from(await storageRead(stored.key));
+    const loaded = Buffer.from(await read(stored.key));
     if (!loaded.equals(payload)) {
-      return { pass: false, detail: "Storage write/read round-trip returned different bytes." };
+      primaryFailure = { pass: false, detail: "Storage write/read round-trip returned different bytes." };
     }
-    return { pass: true, detail: "Storage write/read round-trip succeeded and canary bytes matched." };
   } catch {
-    return { pass: false, detail: "Storage write/read round-trip failed." };
-  } finally {
-    if (key) {
-      try {
-        await storageDelete(key);
-      } catch {
-        // Probe cleanup is best effort and never changes the pass result of the verified write/read round-trip.
+    primaryFailure = { pass: false, detail: "Storage write/read round-trip failed." };
+  }
+
+  if (key) {
+    try {
+      await remove(key);
+    } catch {
+      if (!primaryFailure) {
+        return { pass: false, detail: "Storage delete verification failed." };
       }
     }
   }
+
+  if (primaryFailure) return primaryFailure;
+  return { pass: true, detail: "Storage write/read/delete round-trip succeeded and canary bytes matched." };
 }
 
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
