@@ -59,6 +59,10 @@ const input = {
 describe("Creator paid submission spend control", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.beginProviderSubmission.mockResolvedValue(undefined);
+    mocks.markGenerationFailed.mockResolvedValue(undefined);
+    mocks.markGenerationSubmissionUnknown.mockResolvedValue(undefined);
+    mocks.recordProviderSubmission.mockResolvedValue(undefined);
     mocks.classifyFailure.mockReturnValue("UNKNOWN");
     mocks.selectCreatorProvider.mockReturnValue({
       id: "google-veo",
