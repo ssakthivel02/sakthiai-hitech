@@ -19,7 +19,7 @@
     "repository": "ssakthivel02/sakthiai-hitech"
   },
   "deployment": {
-    "healthCheckPath": "/readyz",
+    "healthCheckPath": "/healthz",
     "autoDeployMustBeDisabled": true,
     "productionApproval": false
   },
