@@ -5,7 +5,7 @@ export type CreatorGenerationIntent = {
   provider: string;
   model: string;
   parametersJson: string;
-  sourceAssetIdsJson: string;
+  sourceAssetIdsJson: string | null;
 };
 
 export function assertSameGenerationIntent(
