@@ -182,5 +182,5 @@ export const COMPLETE_SAKTHIAI_CAPABILITY_COUNT = COMPLETE_SAKTHIAI_CAPABILITIES
 export function validateCompleteCapabilityRegistry(): string[] {
   const ids = COMPLETE_SAKTHIAI_CAPABILITIES.map(capability => capability.id);
   const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
-  return [...new Set(duplicates)];
+  return Array.from(new Set(duplicates));
 }
