@@ -203,39 +203,25 @@ export async function getConversationMessages(workspaceId: number, conversationI
 export async function searchChunks(workspaceId: number, query: string): Promise<SearchResult[]> {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db
-    .select({ chunk: documentChunks, document: documents })
-    .from(documentChunks)
-    .innerJoin(documents, eq(documentChunks.documentId, documents.id))
-    .where(
-      and(
-        eq(documentChunks.workspaceId, workspaceId),
-        eq(documents.workspaceId, workspaceId),
-      ),
-    )
-    .limit(500);
+  const rows = await db.select({ chunk: documentChunks, document: documents }).from(documentChunks).innerJoin(documents, eq(documentChunks.documentId, documents.id)).where(and(eq(documentChunks.workspaceId, workspaceId), eq(documents.workspaceId, workspaceId))).limit(500);
   const terms = normalizeRetrievalTerms(query);
   const semantic = await tryEmbed(query);
-  const scored = rows
-    .map(({ chunk, document }) => {
-      const candidateVector = semantic ? parseEmbedding(chunk.embeddingJson) : null;
-      const scoredCandidate = scoreRetrievalCandidate({
-        content: chunk.content,
-        terms,
-        queryVector: semantic?.vector ?? null,
-        candidateVector,
-      });
-      return {
-        ...chunk,
-        filename: document.filename,
-        mimeType: document.mimeType,
-        score: scoredCandidate.score,
-        retrievalMethod: scoredCandidate.retrievalMethod,
-      };
-    })
-    .filter(row => row.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 8);
+  const scored = rows.map(({ chunk, document }) => {
+    const candidateVector = semantic ? parseEmbedding(chunk.embeddingJson) : null;
+    const scoredCandidate = scoreRetrievalCandidate({
+      content: chunk.content,
+      terms,
+      queryVector: semantic?.vector ?? null,
+      candidateVector,
+    });
+    return {
+      ...chunk,
+      filename: document.filename,
+      mimeType: document.mimeType,
+      score: scoredCandidate.score,
+      retrievalMethod: scoredCandidate.retrievalMethod,
+    };
+  }).filter(row => row.score > 0).sort((a, b) => b.score - a.score).slice(0, 8);
   return scored;
 }
 
