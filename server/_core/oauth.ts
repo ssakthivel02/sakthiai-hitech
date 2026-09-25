@@ -70,17 +70,22 @@ export function registerOAuthRoutes(app: Express) {
   });
 
   app.post("/api/auth/revoke-all", async (req: Request, res: Response) => {
+    const cookieOptions = getSessionCookieOptions(req);
     let user;
     try {
       user = await sdk.authenticateRequest(req);
     } catch {
+      // An expired/revoked token is already unusable server-side. Clear the
+      // stale browser credential as well so logout remains idempotent.
+      res.clearCookie(COOKIE_NAME, cookieOptions);
+      res.setHeader("Cache-Control", "no-store, max-age=0");
       res.status(401).json({ error: "Valid session required" });
       return;
     }
 
     try {
       await sdk.revokeAllSessions(user.openId);
-      res.clearCookie(COOKIE_NAME, getSessionCookieOptions(req));
+      res.clearCookie(COOKIE_NAME, cookieOptions);
       res.setHeader("Cache-Control", "no-store, max-age=0");
       res.status(204).end();
     } catch (error) {
