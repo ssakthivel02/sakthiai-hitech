@@ -10,6 +10,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { embeddingStatus } from "../embeddings";
+import { malwareScannerConfigurationStatus } from "../security/malwareScanner";
 import { ENV } from "./env";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
 import { probeDatabaseReadiness } from "./readiness";
@@ -139,7 +140,12 @@ async function startServer() {
         llm: llmReady ? "configured" : "missing_configuration",
         storage: storageReady ? "configured" : "missing_configuration",
         embeddings: embeddingStatus(),
-        scanner: "SCANNER_NOT_CONFIGURED",
+        scanner: {
+          configuration: malwareScannerConfigurationStatus(),
+          liveProbe: "not_checked",
+          requiredForCurrentReadiness: false,
+          fileIngestion: "coming_soon",
+        },
       },
     });
   });
