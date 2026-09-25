@@ -12,6 +12,7 @@ import { storagePut } from "./storage";
 import { extractDocument } from "./provenance";
 import { embeddingStatus, tryEmbed, serializeEmbedding } from "./embeddings";
 import { creatorRouter } from "./creator/router";
+import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
 
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -32,7 +33,7 @@ export const appRouter = router({
   system: systemRouter,
   creator: creatorRouter,
   auth: router({ me: publicProcedure.query(opts => opts.ctx.user), logout: publicProcedure.mutation(({ ctx }) => { const options = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...options, maxAge: -1 }); return { success: true } as const; }) }),
-  runtime: router({ status: publicProcedure.query(() => ({ health: "alive" as const, readiness: process.env.DATABASE_URL ? "configured" as const : "degraded" as const, embeddings: embeddingStatus(), scanner: "SCANNER_NOT_CONFIGURED" as const })) }),
+  runtime: router({ status: publicProcedure.query(() => ({ health: "alive" as const, readiness: process.env.DATABASE_URL ? "configured" as const : "degraded" as const, embeddings: embeddingStatus(), scanner: { configuration: malwareScannerConfigurationStatus(), liveProbe: "not_checked" as const, requiredForCurrentReadiness: false as const, fileIngestion: "coming_soon" as const } })) }),
   workspace: router({ list: protectedProcedure.query(({ ctx }) => listUserWorkspaces(ctx.user.id)), ensure: protectedProcedure.mutation(({ ctx }) => ensureWorkspace(ctx.user)) }),
   projects: router({
     list: protectedProcedure.input(workspaceInput).query(({ ctx, input }) => requireWorkspace(ctx.user.id, input.workspaceId).then(() => listProjects(input.workspaceId))),
@@ -62,7 +63,7 @@ export const appRouter = router({
       const chunks = [];
       for (let index = 0; index < extracted.segments.length; index += 1) { const segment = extracted.segments[index]; const embedded = await tryEmbed(segment.content); chunks.push({ ...segment, chunkIndex: index, documentId: document.id, workspaceId: input.workspaceId, embeddingJson: embedded ? serializeEmbedding(embedded.vector) : null, embeddingModel: embedded?.adapter.model ?? null }); }
       if (chunks.length) await db.insert(documentChunks).values(chunks);
-      return { id: document.id, filename: document.filename, pageCount: document.pageCount, extractedCharacters: extracted.text.length, embedding: adapter, scanner: "SCANNER_NOT_CONFIGURED" as const };
+      return { id: document.id, filename: document.filename, pageCount: document.pageCount, extractedCharacters: extracted.text.length, embedding: adapter, scanner: "clean" as const };
     }),
   }),
   chat: router({
