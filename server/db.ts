@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -14,7 +14,6 @@ import {
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { createVerifiedMysqlPool } from "./_core/mysql";
-import { nextSessionGenerationDate } from "./_core/sessionRevocation";
 import { parseEmbedding, tryEmbed } from "./embeddings";
 import {
   normalizeRetrievalTerms,
@@ -86,9 +85,10 @@ export async function getUserByOpenId(openId: string) {
 }
 
 /**
- * Advances the persisted authentication generation without adding a competing
- * schema/migration. Existing `lastSignedIn` becomes the authoritative
+ * Atomically advances the persisted authentication generation without adding a
+ * competing schema/migration. Existing `lastSignedIn` is the authoritative
  * server-side generation boundary: tokens from earlier generations are invalid.
+ * GREATEST prevents a stale concurrent writer from moving the generation back.
  */
 export async function advanceUserSessionGeneration(
   openId: string,
@@ -97,13 +97,18 @@ export async function advanceUserSessionGeneration(
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
 
-  const existing = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-  const user = existing[0];
-  if (!user) throw new Error("User not found");
+  const currentSecond = new Date(Math.floor(now.getTime() / 1_000) * 1_000);
+  await db
+    .update(users)
+    .set({
+      lastSignedIn: sql`GREATEST(DATE_ADD(${users.lastSignedIn}, INTERVAL 1 SECOND), ${currentSecond})`,
+    })
+    .where(eq(users.openId, openId));
 
-  const nextGeneration = nextSessionGenerationDate(user.lastSignedIn, now.getTime());
-  await db.update(users).set({ lastSignedIn: nextGeneration }).where(eq(users.openId, openId));
-  return nextGeneration;
+  const updated = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  const user = updated[0];
+  if (!user) throw new Error("User not found");
+  return user.lastSignedIn;
 }
 
 export function assertWorkspaceAccess(
