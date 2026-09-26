@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.1.0",
   "productionApproved": false,
   "allowedStatuses": ["available", "preview", "coming-soon"],
   "policy": {
@@ -11,7 +11,7 @@
   "capabilities": [
     {
       "id": "workspace-core",
-      "name": "Workspace, projects and files",
+      "name": "Workspace and projects",
       "status": "preview",
       "publicLabel": "Preview",
       "reason": "Repository implementation exists, but controlled-preview runtime and browser acceptance are not yet proven on an exact deployed commit.",
@@ -20,11 +20,27 @@
       "ownerApproved": false
     },
     {
+      "id": "file-ingestion",
+      "name": "File upload and document ingestion",
+      "status": "coming-soon",
+      "publicLabel": "Coming Soon",
+      "reason": "The source path now fails closed behind malware scanning, but no approved live scanner runtime has completed clean, EICAR and unavailable-scanner acceptance; external-beta uploads must remain disabled until that evidence exists.",
+      "repositoryEvidence": [
+        "client/src/pages/Home.tsx",
+        "server/provenance.ts",
+        "server/security/malwareScanner.ts",
+        "server/fileIngestion.acceptance.test.ts",
+        "docs/FILE_MALWARE_GATE.md"
+      ],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    },
+    {
       "id": "grounded-rag",
       "name": "Grounded chat and document RAG",
       "status": "preview",
       "publicLabel": "Preview",
-      "reason": "Lexical/semantic retrieval, citations and insufficient-evidence behavior exist in source; live upload-to-grounded-answer acceptance remains required.",
+      "reason": "Lexical/semantic retrieval, citations and insufficient-evidence behavior exist in source, but new document ingestion remains separately gated until malware scanning is runtime-qualified and live grounded-answer acceptance is complete.",
       "repositoryEvidence": ["server/db.ts", "server/routers.ts", "server/functional.core.test.ts"],
       "runtimeEvidence": false,
       "ownerApproved": false

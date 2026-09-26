@@ -37,7 +37,7 @@ jobs:
           if (contract.database.expectedDatabase !== 'sakthiai_preview') fail('Wrong expected preview database');
           if (!contract.database.verifiedTlsRequired) fail('Verified TLS must remain mandatory');
           if (contract.production.approved !== false) fail('Production approval cannot be enabled by preview contract');
-          for (const required of ['sakthiai-hitech-preview', 'autoDeployTrigger: off', 'healthCheckPath: /readyz', 'value: sakthiai_preview', 'DATABASE_CA_CERT_B64']) {
+          for (const required of ['sakthiai-hitech-preview', 'autoDeployTrigger: off', 'healthCheckPath: /healthz', 'value: sakthiai_preview', 'DATABASE_CA_CERT_B64']) {
             if (!render.includes(required)) fail(`render.yaml missing required value: ${required}`);
           }
           for (const forbidden of contract.database.forbiddenDatabases) {
