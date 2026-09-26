@@ -4,6 +4,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { sdk } from "./_core/sdk";
 import { systemRouter } from "./_core/systemRouter";
 import { invokeLLM } from "./_core/llm";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
@@ -32,7 +33,7 @@ function validateFile(buffer: Buffer, mimeType: string, filename: string) {
 export const appRouter = router({
   system: systemRouter,
   creator: creatorRouter,
-  auth: router({ me: publicProcedure.query(opts => opts.ctx.user), logout: publicProcedure.mutation(({ ctx }) => { const options = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...options, maxAge: -1 }); return { success: true } as const; }) }),
+  auth: router({ me: publicProcedure.query(opts => opts.ctx.user), logout: protectedProcedure.mutation(async ({ ctx }) => { await sdk.revokeAllSessions(ctx.user.openId); const options = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...options, maxAge: -1 }); return { success: true } as const; }) }),
   runtime: router({ status: publicProcedure.query(() => ({ health: "alive" as const, readiness: process.env.DATABASE_URL ? "configured" as const : "degraded" as const, embeddings: embeddingStatus(), scanner: { configuration: malwareScannerConfigurationStatus(), liveProbe: "not_checked" as const, requiredForCurrentReadiness: false as const, fileIngestion: "coming_soon" as const } })) }),
   workspace: router({ list: protectedProcedure.query(({ ctx }) => listUserWorkspaces(ctx.user.id)), ensure: protectedProcedure.mutation(({ ctx }) => ensureWorkspace(ctx.user)) }),
   projects: router({
