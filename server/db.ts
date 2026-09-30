@@ -11,6 +11,7 @@ import {
   documentChunks,
   conversations,
   messages,
+  creatorAssets,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { createVerifiedMysqlPool } from "./_core/mysql";
@@ -166,6 +167,32 @@ export async function getWorkspaceForUser(userId: number, workspaceId: number) {
     .where(and(eq(workspaceMembers.userId, userId), eq(workspaces.id, workspaceId)))
     .limit(1);
   return rows[0]?.workspace;
+}
+
+/**
+ * Returns the persisted rows that reference a storage key, with the workspace
+ * that owns each. This is the authoritative source for object authorization.
+ * Fails closed (throws) when the database is unavailable.
+ */
+export async function findStorageObjectOwners(
+  key: string,
+): Promise<Array<{ workspaceId: number; storageKey: string | null }>> {
+  const db = await getDb();
+  if (!db) throw new Error("Database unavailable");
+
+  const [documentRows, assetRows] = await Promise.all([
+    db
+      .select({ workspaceId: documents.workspaceId, storageKey: documents.storageKey })
+      .from(documents)
+      .where(eq(documents.storageKey, key))
+      .limit(5),
+    db
+      .select({ workspaceId: creatorAssets.workspaceId, storageKey: creatorAssets.storageKey })
+      .from(creatorAssets)
+      .where(eq(creatorAssets.storageKey, key))
+      .limit(5),
+  ]);
+  return [...documentRows, ...assetRows];
 }
 
 export async function listProjects(workspaceId: number) {
