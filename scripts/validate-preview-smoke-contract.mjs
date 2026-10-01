@@ -13,7 +13,7 @@ requireText(server, 'res.status(ready ? 200 : 503)', 'readyz must fail closed wi
 for (const dependency of contract.readiness.requiredDependencies ?? []) requireText(server, `${dependency}:`, `readyz missing dependency ${dependency}`);
 requireText(server, 'exactCommitKnown: commit !== "unknown"', 'releasez must expose exact-commit truth');
 requireText(server, 'repository: process.env.RENDER_GIT_REPO_SLUG?.trim() || "ssakthivel02/sakthiai-hitech"', 'releasez repository identity missing');
-requireText(render, 'healthCheckPath: /readyz', 'Render health check must target /readyz');
+requireText(render, 'healthCheckPath: /healthz', 'Render platform health check must target /healthz; /readyz remains the explicit dependency-qualification endpoint');
 requireText(render, 'autoDeployTrigger: off', 'Preview auto-deploy must remain disabled');
 if (contract.deployment.productionApproval !== false) fail('Repository contract must not imply production approval');
 if (contract.claimBoundary.repositoryValidationIsDeploymentProof !== false) fail('Repository validation must not be deployment proof');

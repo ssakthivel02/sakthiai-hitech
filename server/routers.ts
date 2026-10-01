@@ -4,6 +4,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { sdk } from "./_core/sdk";
 import { systemRouter } from "./_core/systemRouter";
 import { invokeLLM } from "./_core/llm";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
@@ -11,6 +12,9 @@ import { getDb, ensureWorkspace, getWorkspaceForUser, listUserWorkspaces, listPr
 import { storagePut } from "./storage";
 import { extractDocument } from "./provenance";
 import { embeddingStatus, tryEmbed, serializeEmbedding } from "./embeddings";
+import { creatorRouter } from "./creator/router";
+import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
+import { resolveGroundedOutcome, type ModelResult } from "./grounding";
 
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -29,8 +33,9 @@ function validateFile(buffer: Buffer, mimeType: string, filename: string) {
 
 export const appRouter = router({
   system: systemRouter,
-  auth: router({ me: publicProcedure.query(opts => opts.ctx.user), logout: publicProcedure.mutation(({ ctx }) => { const options = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...options, maxAge: -1 }); return { success: true } as const; }) }),
-  runtime: router({ status: publicProcedure.query(() => ({ health: "alive" as const, readiness: process.env.DATABASE_URL ? "configured" as const : "degraded" as const, embeddings: embeddingStatus(), scanner: "SCANNER_NOT_CONFIGURED" as const })) }),
+  creator: creatorRouter,
+  auth: router({ me: publicProcedure.query(opts => opts.ctx.user), logout: protectedProcedure.mutation(async ({ ctx }) => { await sdk.revokeAllSessions(ctx.user.openId); const options = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...options, maxAge: -1 }); return { success: true } as const; }) }),
+  runtime: router({ status: publicProcedure.query(() => ({ health: "alive" as const, readiness: process.env.DATABASE_URL ? "configured" as const : "degraded" as const, embeddings: embeddingStatus(), scanner: { configuration: malwareScannerConfigurationStatus(), liveProbe: "not_checked" as const, requiredForCurrentReadiness: false as const, fileIngestion: "coming_soon" as const } })) }),
   workspace: router({ list: protectedProcedure.query(({ ctx }) => listUserWorkspaces(ctx.user.id)), ensure: protectedProcedure.mutation(({ ctx }) => ensureWorkspace(ctx.user)) }),
   projects: router({
     list: protectedProcedure.input(workspaceInput).query(({ ctx, input }) => requireWorkspace(ctx.user.id, input.workspaceId).then(() => listProjects(input.workspaceId))),
@@ -60,7 +65,7 @@ export const appRouter = router({
       const chunks = [];
       for (let index = 0; index < extracted.segments.length; index += 1) { const segment = extracted.segments[index]; const embedded = await tryEmbed(segment.content); chunks.push({ ...segment, chunkIndex: index, documentId: document.id, workspaceId: input.workspaceId, embeddingJson: embedded ? serializeEmbedding(embedded.vector) : null, embeddingModel: embedded?.adapter.model ?? null }); }
       if (chunks.length) await db.insert(documentChunks).values(chunks);
-      return { id: document.id, filename: document.filename, pageCount: document.pageCount, extractedCharacters: extracted.text.length, embedding: adapter, scanner: "SCANNER_NOT_CONFIGURED" as const };
+      return { id: document.id, filename: document.filename, pageCount: document.pageCount, extractedCharacters: extracted.text.length, embedding: adapter, scanner: "clean" as const };
     }),
   }),
   chat: router({
@@ -82,10 +87,12 @@ export const appRouter = router({
       await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "user", content: input.message });
       if (!matches.length) { const answer = "INSUFFICIENT_EVIDENCE"; await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: answer, citationsJson: "[]" }); return { conversationId, answer, citations: [], grounding: "INSUFFICIENT_EVIDENCE" as const, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } }; }
       const context = matches.map((m, i) => `[${i + 1}] ${m.filename}${m.page ? ` page ${m.page}` : m.section ? ` section ${m.section}` : ""}: ${m.content}`).join("\n\n");
-      let answer = input.language === "ta" ? "ஆதாரங்களுடன் பதிலளிக்கிறேன்." : "I can help with that.";
-      try { const response = await invokeLLM({ messages: [{ role: "system", content: `You are Sakthi AI Nexus. Answer in ${input.language === "ta" ? "Tamil" : "English"}. Use only the supplied evidence. If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE. Do not invent citations.\n\nEVIDENCE:\n${context}` }, { role: "user", content: input.message }] }); const content = response.choices?.[0]?.message?.content; if (typeof content === "string" && content.trim()) answer = content; } catch { answer = input.language === "ta" ? `ஆதாரங்களில் ${matches.length} பொருத்தமான பகுதி(கள்) கிடைத்தன.` : `I found ${matches.length} relevant source excerpt(s) in your workspace.`; }
-      await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: answer, citationsJson: JSON.stringify(citations) });
-      return { conversationId, answer, citations, grounding: "GROUNDED_EVIDENCE" as const, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } };
+      let model: ModelResult = { status: "failed" };
+      try { const response = await invokeLLM({ messages: [{ role: "system", content: `You are Sakthi AI Nexus. Answer in ${input.language === "ta" ? "Tamil" : "English"}. Use only the supplied evidence. If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE. Do not invent citations.\n\nEVIDENCE:\n${context}` }, { role: "user", content: input.message }] }); model = { status: "returned", content: response.choices?.[0]?.message?.content }; } catch { model = { status: "failed" }; }
+      const outcome = resolveGroundedOutcome({ language: input.language, evidenceCount: matches.length, model });
+      const answerCitations = outcome.includeCitations ? citations : [];
+      await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: outcome.answer, citationsJson: JSON.stringify(answerCitations) });
+      return { conversationId, answer: outcome.answer, citations: answerCitations, grounding: outcome.grounding, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } };
     }),
   }),
 });

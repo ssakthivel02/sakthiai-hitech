@@ -6,10 +6,12 @@ services:
     autoDeployTrigger: off
     buildCommand: corepack enable && corepack prepare pnpm@10.4.1 --activate && pnpm install --frozen-lockfile && pnpm build
     startCommand: pnpm start
-    healthCheckPath: /readyz
+    healthCheckPath: /healthz
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: "22"
       - key: VITE_APP_ID
         value: sakthiai
       - key: JWT_SECRET
@@ -56,6 +58,10 @@ services:
         sync: false
       - key: EMBEDDING_MODEL
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_VEO_API_BASE
+        value: https://generativelanguage.googleapis.com/v1beta
       - key: STORAGE_ENDPOINT
         sync: false
       - key: STORAGE_REGION

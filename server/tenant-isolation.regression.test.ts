@@ -8,7 +8,7 @@ describe("P0 tenant isolation regression guards", () => {
   it("filters retrieval by workspace before scoring and fusion", () => {
     expect(db).toContain("eq(documentChunks.workspaceId, workspaceId)");
     expect(db).toContain("eq(documents.workspaceId, workspaceId)");
-    expect(db.indexOf("where(and(eq(documentChunks.workspaceId, workspaceId)")).toBeLessThan(db.indexOf("const scored = rows.map"));
+    expect(db.indexOf("where(and(eq(documentChunks.workspaceId, workspaceId)")).toBeLessThan(db.indexOf("rankChunkCandidates(rows, query"));
   });
 
   it("requires uploaded project to belong to the selected workspace", () => {

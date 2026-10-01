@@ -10,7 +10,7 @@ The web and future Android clients use the same tRPC contracts; no client-specif
 | `files.list` | `workspaceId` | Metadata only; private storage remains server-side |
 | `files.upload` | `workspaceId`, optional `projectId`, filename, MIME, base64 | Document ID, page count, extracted character count, embedding status, scanner status |
 | `chat.history` | `workspaceId`, `conversationId` | Durable messages and canonical citations |
-| `chat.send` | `workspaceId`, optional `conversationId`, message, `language` (`en`/`ta`) | Answer, citations, `GROUNDED_EVIDENCE` or `INSUFFICIENT_EVIDENCE`, latency/request ID |
+| `chat.send` | `workspaceId`, optional `conversationId`, message, `language` (`en`/`ta`) | Answer, citations, `grounding` = `GROUNDED_EVIDENCE` (evidence + model answer), `INSUFFICIENT_EVIDENCE` (no usable evidence) or `MODEL_UNAVAILABLE` (evidence found but answer generation failed; citations still returned), latency/request ID |
 | `runtime.status` | None | Health/readiness-related dependency status |
 
 Canonical citation fields are `documentId`, `filename`, `mimeType`, `page` when genuinely available, `section`, `paragraph`, `chunkId`, `excerpt`, `sourceStart`, `sourceEnd`, `retrievalMethod`, and `retrievalScore`. DOCX citations do not contain invented page numbers.
