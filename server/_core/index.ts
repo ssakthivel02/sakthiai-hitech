@@ -4,7 +4,9 @@ import { createServer } from "http";
 import net from "net";
 import { randomUUID } from "node:crypto";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { registerEdgeBodyParsers } from "./bodyLimits";
 import { registerOAuthRoutes } from "./oauth";
+import { sdk } from "./sdk";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -101,8 +103,7 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  registerEdgeBodyParsers(app, { authenticate: req => sdk.authenticateRequest(req) });
 
   app.get("/healthz", (_req, res) =>
     res.status(200).json({
@@ -152,7 +153,7 @@ async function startServer() {
 
   registerStorageProxy(app);
   registerOAuthRoutes(app);
-  app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
+  app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext, maxBodySize: 50 * 1024 * 1024 }));
 
   if (process.env.NODE_ENV === "development") await setupVite(app, server);
   else serveStatic(app);

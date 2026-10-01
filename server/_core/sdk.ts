@@ -1,4 +1,4 @@
-import { COOKIE_NAME, ONE_YEAR_MS, decodeOAuthState } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { ForbiddenError } from "@shared/_core/errors";
 import { randomUUID } from "node:crypto";
 import { parse as parseCookieHeader } from "cookie";
@@ -40,16 +40,20 @@ class OidcService {
     }
   }
 
-  async exchangeCodeForToken(code: string, state: string): Promise<AuthTokenResponse> {
+  /** `redirectUri` and `codeVerifier` must already be validated by the callback (server-controlled values). */
+  async exchangeCodeForToken(
+    code: string,
+    exchange: { redirectUri: string; codeVerifier: string },
+  ): Promise<AuthTokenResponse> {
     this.assertConfigured();
-    const { redirectUri } = decodeOAuthState(state);
-    if (!redirectUri) throw new Error("OAuth state is missing redirectUri");
+    if (!exchange.redirectUri) throw new Error("OAuth redirectUri is required");
 
     const body = new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: redirectUri,
+      redirect_uri: exchange.redirectUri,
       client_id: ENV.oidcClientId,
+      code_verifier: exchange.codeVerifier,
     });
     if (ENV.oidcClientSecret) body.set("client_secret", ENV.oidcClientSecret);
 
@@ -101,8 +105,11 @@ class OidcService {
 class SDKServer {
   private readonly oidc = new OidcService();
 
-  async exchangeCodeForToken(code: string, state: string): Promise<AuthTokenResponse> {
-    return this.oidc.exchangeCodeForToken(code, state);
+  async exchangeCodeForToken(
+    code: string,
+    exchange: { redirectUri: string; codeVerifier: string },
+  ): Promise<AuthTokenResponse> {
+    return this.oidc.exchangeCodeForToken(code, exchange);
   }
 
   async getUserInfo(accessToken: string): Promise<AuthUserInfo> {

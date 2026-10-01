@@ -16,8 +16,8 @@
     "creator:runtime:acceptance": "tsx scripts/creator-runtime-acceptance.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.693.0",
-    "@aws-sdk/s3-request-presigner": "^3.693.0",
+    "@aws-sdk/client-s3": "^3.1144.0",
+    "@aws-sdk/s3-request-presigner": "^3.1144.0",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -46,26 +46,26 @@
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tanstack/react-query": "^5.90.2",
-    "@trpc/client": "^11.6.0",
-    "@trpc/react-query": "^11.6.0",
-    "@trpc/server": "^11.6.0",
-    "axios": "^1.12.0",
+    "@trpc/client": "^11.19.0",
+    "@trpc/react-query": "^11.19.0",
+    "@trpc/server": "^11.19.0",
+    "axios": "^1.20.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "cookie": "^1.0.2",
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.2",
-    "drizzle-orm": "^0.44.5",
+    "drizzle-orm": "^0.45.3",
     "embla-carousel-react": "^8.6.0",
-    "express": "^4.21.2",
+    "express": "^4.22.3",
     "framer-motion": "^12.23.22",
     "input-otp": "^1.4.2",
     "jose": "6.1.0",
     "lucide-react": "^0.453.0",
     "mammoth": "^1.12.2",
-    "mysql2": "^3.15.0",
-    "nanoid": "^5.1.5",
+    "mysql2": "^3.24.5",
+    "nanoid": "^5.1.16",
     "next-themes": "^0.4.6",
     "pdf-parse": "^2.4.5",
     "react": "^19.2.1",
@@ -113,7 +113,9 @@
       "wouter@3.7.1": "patches/wouter@3.7.1.patch"
     },
     "overrides": {
-      "tailwindcss>nanoid": "3.3.7"
+      "tailwindcss>nanoid": "3.3.7",
+      "lodash": "^4.18.1",
+      "lodash-es": "^4.18.1"
     }
   }
 }
