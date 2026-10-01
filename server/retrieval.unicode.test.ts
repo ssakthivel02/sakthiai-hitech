@@ -99,7 +99,7 @@ describe("unicode-aware lexical terms", () => {
     expect(normalizeRetrievalTerms("中国 东京")).toEqual(["中国", "东京"]);
     expect(normalizeRetrievalTerms("भारत की राजधानी")).toEqual(["भारत", "की", "राजधानी"]);
     expect(normalizeRetrievalTerms("Привет, мир! مرحبا")).toEqual(["привет", "мир", "مرحبا"]);
-    expect(normalizeRetrievalTerms("தமிழ்நாடு தமிழ்-பாடு")).toEqual(["தமிழ்நாடு", "தமிழ்-நாடு"]);
+    expect(normalizeRetrievalTerms("தமிழ்நாடு தமிழ்-நாடு")).toEqual(["தமிழ்நாடு", "தமிழ்-நாடு"]);
   });
 });
 
