@@ -15,12 +15,8 @@ import {
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { createVerifiedMysqlPool } from "./_core/mysql";
-import { parseEmbedding, tryEmbed } from "./embeddings";
-import {
-  normalizeRetrievalTerms,
-  scoreRetrievalCandidate,
-  type RetrievalMethod,
-} from "./retrieval";
+import { tryEmbed } from "./embeddings";
+import { rankChunkCandidates, type RetrievalMethod } from "./retrieval";
 
 export type { Citation } from "../drizzle/schema";
 export type { RetrievalMethod } from "./retrieval";
@@ -236,25 +232,8 @@ export async function searchChunks(workspaceId: number, query: string): Promise<
   const db = await getDb();
   if (!db) return [];
   const rows = await db.select({ chunk: documentChunks, document: documents }).from(documentChunks).innerJoin(documents, eq(documentChunks.documentId, documents.id)).where(and(eq(documentChunks.workspaceId, workspaceId), eq(documents.workspaceId, workspaceId))).limit(500);
-  const terms = normalizeRetrievalTerms(query);
   const semantic = await tryEmbed(query);
-  const scored = rows.map(({ chunk, document }) => {
-    const candidateVector = semantic ? parseEmbedding(chunk.embeddingJson) : null;
-    const scoredCandidate = scoreRetrievalCandidate({
-      content: chunk.content,
-      terms,
-      queryVector: semantic?.vector ?? null,
-      candidateVector,
-    });
-    return {
-      ...chunk,
-      filename: document.filename,
-      mimeType: document.mimeType,
-      score: scoredCandidate.score,
-      retrievalMethod: scoredCandidate.retrievalMethod,
-    };
-  }).filter(row => row.score > 0).sort((a, b) => b.score - a.score).slice(0, 8);
-  return scored;
+  return rankChunkCandidates(rows, query, semantic?.vector ?? null);
 }
 
 export {

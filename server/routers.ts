@@ -14,6 +14,7 @@ import { extractDocument } from "./provenance";
 import { embeddingStatus, tryEmbed, serializeEmbedding } from "./embeddings";
 import { creatorRouter } from "./creator/router";
 import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
+import { resolveGroundedOutcome, type ModelResult } from "./grounding";
 
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -86,10 +87,12 @@ export const appRouter = router({
       await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "user", content: input.message });
       if (!matches.length) { const answer = "INSUFFICIENT_EVIDENCE"; await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: answer, citationsJson: "[]" }); return { conversationId, answer, citations: [], grounding: "INSUFFICIENT_EVIDENCE" as const, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } }; }
       const context = matches.map((m, i) => `[${i + 1}] ${m.filename}${m.page ? ` page ${m.page}` : m.section ? ` section ${m.section}` : ""}: ${m.content}`).join("\n\n");
-      let answer = input.language === "ta" ? "ஆதாரங்களுடன் பதிலளிக்கிறேன்." : "I can help with that.";
-      try { const response = await invokeLLM({ messages: [{ role: "system", content: `You are Sakthi AI Nexus. Answer in ${input.language === "ta" ? "Tamil" : "English"}. Use only the supplied evidence. If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE. Do not invent citations.\n\nEVIDENCE:\n${context}` }, { role: "user", content: input.message }] }); const content = response.choices?.[0]?.message?.content; if (typeof content === "string" && content.trim()) answer = content; } catch { answer = input.language === "ta" ? `ஆதாரங்களில் ${matches.length} பொருத்தமான பகுதி(கள்) கிடைத்தன.` : `I found ${matches.length} relevant source excerpt(s) in your workspace.`; }
-      await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: answer, citationsJson: JSON.stringify(citations) });
-      return { conversationId, answer, citations, grounding: "GROUNDED_EVIDENCE" as const, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } };
+      let model: ModelResult = { status: "failed" };
+      try { const response = await invokeLLM({ messages: [{ role: "system", content: `You are Sakthi AI Nexus. Answer in ${input.language === "ta" ? "Tamil" : "English"}. Use only the supplied evidence. If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE. Do not invent citations.\n\nEVIDENCE:\n${context}` }, { role: "user", content: input.message }] }); model = { status: "returned", content: response.choices?.[0]?.message?.content }; } catch { model = { status: "failed" }; }
+      const outcome = resolveGroundedOutcome({ language: input.language, evidenceCount: matches.length, model });
+      const answerCitations = outcome.includeCitations ? citations : [];
+      await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: outcome.answer, citationsJson: JSON.stringify(answerCitations) });
+      return { conversationId, answer: outcome.answer, citations: answerCitations, grounding: outcome.grounding, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } };
     }),
   }),
 });

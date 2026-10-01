@@ -41,6 +41,21 @@ if (!noEvidenceWindow.includes('grounding: "INSUFFICIENT_EVIDENCE"')) {
   fail("no-evidence response must expose INSUFFICIENT_EVIDENCE grounding state");
 }
 
+// Model-failure truthfulness: a failed/empty model call must never be labelled grounded.
+if (requirements.modelFailureMustNotClaimGrounding !== true) fail("contract must require truthful model-failure state");
+if (requirements.modelFailureState !== "MODEL_UNAVAILABLE") fail("model-failure state must remain MODEL_UNAVAILABLE");
+if (!source.includes("resolveGroundedOutcome({")) fail("chat path must derive grounding from resolveGroundedOutcome");
+if (/grounding:\s*"GROUNDED_EVIDENCE"/.test(source)) {
+  fail("routers.ts must not hard-code grounding: GROUNDED_EVIDENCE (a failed model call would be mislabelled)");
+}
+const groundingPath = process.argv[4] || "server/grounding.ts";
+const groundingSource = fs.readFileSync(groundingPath, "utf8");
+if (!groundingSource.includes('"MODEL_UNAVAILABLE"')) fail("grounding module must define the MODEL_UNAVAILABLE state");
+for (const testFile of requirements.behaviouralTests || []) {
+  if (!fs.existsSync(testFile)) fail(`required behavioural test is missing: ${testFile}`);
+}
+if (!(requirements.behaviouralTests || []).length) fail("contract must list the behavioural regression tests");
+
 if (!source.includes("Use only the supplied evidence")) fail("evidence-only system instruction is required");
 if (!source.includes("If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE")) {
   fail("system instruction must require the exact insufficient-evidence sentinel");
