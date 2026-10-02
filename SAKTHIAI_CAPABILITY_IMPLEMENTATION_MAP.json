@@ -1,0 +1,415 @@
+{
+  "schema": "sakthiai.capability-implementation-map/v1",
+  "purpose": "Product truth artifact. Distinguishes source/test evidence from runtime evidence. Nothing here is RUNTIME_VERIFIED: that requires live-environment evidence that unit/contract tests cannot provide.",
+  "baseCommit": "79fbe21d4289782ceba88c604fc0984a37d5632a",
+  "vocabulary": {
+    "status": [
+      "IMPLEMENTED_SOURCE",
+      "TESTED_LOCAL",
+      "CI_PENDING",
+      "RUNTIME_UNVERIFIED",
+      "RUNTIME_VERIFIED"
+    ],
+    "truthModel": [
+      "IMPLEMENTED",
+      "PARTIAL",
+      "DESIGN_ONLY",
+      "RESEARCHED",
+      "MISSING"
+    ],
+    "rules": [
+      "status=TESTED_LOCAL means automated tests pass locally; it is not runtime evidence.",
+      "ci is CI_PENDING until a GitHub run on the exact commit is observed.",
+      "runtimeQualification is RUNTIME_VERIFIED only with live-environment evidence recorded in the repository."
+    ]
+  },
+  "capabilities": [
+    {
+      "capability": "authentication",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "OIDC auth-code flow with S256 PKCE, single-use state/PKCE cookies, nonce ledger: /api/oauth/*",
+      "sourceFiles": [
+        "server/_core/oauth.ts",
+        "server/_core/oauthSafety.ts",
+        "server/_core/sdk.ts",
+        "client/src/const.ts"
+      ],
+      "tests": [
+        "server/_core/oauth.security.test.ts",
+        "server/auth.logout.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Verified only against an in-process fake OIDC provider; no live identity provider exercised. Nonce ledger is process-local."
+    },
+    {
+      "capability": "session_revocation",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Session generation check in request context (server/_core/context.ts)",
+      "sourceFiles": [
+        "server/_core/sessionRevocation.ts",
+        "server/_core/context.ts"
+      ],
+      "tests": [
+        "server/_core/sessionRevocation.test.ts",
+        "server/_core/sessionRevocation.integration.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/session-cookie-security.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "No live database run; revocation correctness depends on the production DB schema being migrated (not performed here)."
+    },
+    {
+      "capability": "tenant_isolation",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Workspace membership check on every workspace-scoped tRPC procedure + tenant-scoped retrieval",
+      "sourceFiles": [
+        "server/routers.ts",
+        "server/db.ts"
+      ],
+      "tests": [
+        "server/authTenantIsolation.test.ts",
+        "server/tenant-isolation.regression.test.ts",
+        "server/evals/contract.eval.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Proven against mocked persistence; not proven against a real multi-tenant MySQL instance."
+    },
+    {
+      "capability": "storage_authorization",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Authorized storage-proxy key resolution: /api/storage proxy",
+      "sourceFiles": [
+        "server/storageAccess.ts",
+        "server/_core/storageProxy.ts",
+        "server/storage.ts"
+      ],
+      "tests": [
+        "server/storageAccess.test.ts",
+        "server/storageProxy.security.test.ts",
+        "server/storage.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "No real object-storage backend exercised; scoped credentials and bucket policy are unverified."
+    },
+    {
+      "capability": "file_ingestion",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "tRPC files.upload -> extraction -> chunking -> tenant storage",
+      "sourceFiles": [
+        "server/routers.ts",
+        "server/provenance.ts",
+        "server/_core/bodyLimits.ts"
+      ],
+      "tests": [
+        "server/fileIngestion.acceptance.test.ts",
+        "server/_core/bodyLimits.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/file-ingestion-acceptance.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Authenticated 17 MiB ingestion limit proven in-process; no real storage or DB write path executed."
+    },
+    {
+      "capability": "malware_gate",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "INSTREAM scanner client; uploads quarantined unless scanner reports clean",
+      "sourceFiles": [
+        "server/security/malwareScanner.ts"
+      ],
+      "tests": [
+        "server/security/malwareScanner.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "No real scanner daemon (e.g. ClamAV) configured or contacted; deployment status is not_configured by default and fails closed."
+    },
+    {
+      "capability": "english_lexical_retrieval",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "rankChunkCandidates lexical scoring via db.searchChunks",
+      "sourceFiles": [
+        "server/retrieval.ts",
+        "server/db.ts"
+      ],
+      "tests": [
+        "server/retrieval.acceptance.test.ts",
+        "server/evals/contract.eval.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Ranking proven on fixtures; MySQL query path (db.searchChunks) not run against a real database here."
+    },
+    {
+      "capability": "tamil_lexical_retrieval",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Unicode-normalising lexical scoring (Tamil script) in retrieval.ts",
+      "sourceFiles": [
+        "server/retrieval.ts"
+      ],
+      "tests": [
+        "server/retrieval.unicode.test.ts",
+        "server/evals/contract.eval.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Lexical/unicode matching only: no Tamil stemming or morphological analysis; quality on real Tamil corpora unmeasured."
+    },
+    {
+      "capability": "semantic_retrieval",
+      "truthModel": "PARTIAL",
+      "status": "IMPLEMENTED_SOURCE",
+      "runtimePath": "Optional embedding adapter -> cosine hybrid scoring",
+      "sourceFiles": [
+        "server/embeddings.ts",
+        "server/retrieval.ts"
+      ],
+      "tests": [
+        "server/retrieval.acceptance.test.ts",
+        "server/chat.grounding.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "No embedding provider is configured or verified and no vector index exists; default runtime is lexical-only (embeddingStatus=unavailable). Eval harness runs with embeddings off."
+    },
+    {
+      "capability": "grounded_response",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "chat.send -> retrieval -> gateway -> resolveGroundedOutcome (citations persisted)",
+      "sourceFiles": [
+        "server/routers.ts",
+        "server/grounding.ts",
+        "server/retrieval.ts"
+      ],
+      "tests": [
+        "server/chat.grounding.test.ts",
+        "server/evals/contract.eval.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals",
+        ".github/workflows/grounding-answer-acceptance.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Contract behaviour only: no real model has produced an answer through this path; answer quality is NOT_MEASURED."
+    },
+    {
+      "capability": "model_unavailable_truthfulness",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "MODEL_UNAVAILABLE grounding state; evidence preserved, no fabricated answer",
+      "sourceFiles": [
+        "server/grounding.ts",
+        "server/routers.ts"
+      ],
+      "tests": [
+        "server/chat.grounding.test.ts",
+        "server/evals/contract.eval.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Failure injection is simulated via replayed transport responses."
+    },
+    {
+      "capability": "capability_router",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "routeModel(): catalog/capability/compute/billing filters with preferLocal",
+      "sourceFiles": [
+        "server/model-fabric/router.ts",
+        "server/model-fabric/types.ts"
+      ],
+      "tests": [
+        "server/model-fabric/router.test.ts",
+        "server/gateway/gateway.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Routes over a static catalog; no live performance or health feedback into scoring."
+    },
+    {
+      "capability": "provider_gateway",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "getProviderGateway().invoke(): routing, breaker, budget, OpenAI-compatible adapter",
+      "sourceFiles": [
+        "server/gateway/gateway.ts",
+        "server/gateway/openaiCompatible.ts",
+        "server/gateway/circuitBreaker.ts",
+        "server/gateway/config.ts"
+      ],
+      "tests": [
+        "server/gateway/gateway.test.ts",
+        "server/gateway/units.test.ts",
+        "server/gateway/boundary.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "node scripts/validate-grounding-answer-contract.mjs"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "SINGLE_INSTANCE_LIMITATION: breaker/budget state is in-memory; PERSISTENT_MULTI_INSTANCE_ENFORCEMENT_NOT_IMPLEMENTED."
+    },
+    {
+      "capability": "local_self_host_path",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "LOCAL_LLM_API_URL/LOCAL_LLM_MODEL -> local-openai-compatible provider (local-first routing)",
+      "sourceFiles": [
+        "server/gateway/config.ts",
+        "server/gateway/gateway.ts"
+      ],
+      "tests": [
+        "server/gateway/gateway.test.ts",
+        "server/evals/contract.eval.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "SELF_HOST_RUNTIME_NOT_LIVE_QUALIFIED: exercised only against fake loopback/in-process servers; no real self-hosted model server has been run."
+    },
+    {
+      "capability": "external_provider_path",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "LLM_API_URL external provider behind explicit opt-in (GATEWAY_ALLOW_EXTERNAL)",
+      "sourceFiles": [
+        "server/gateway/config.ts",
+        "server/gateway/gateway.ts"
+      ],
+      "tests": [
+        "server/gateway/gateway.test.ts",
+        "server/evals/contract.eval.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Deny-by-default and never called in tests; no real external provider or credential has been exercised (no paid call made)."
+    },
+    {
+      "capability": "budget_controls",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Per-workspace daily request/token/cost budget gate for metered external providers",
+      "sourceFiles": [
+        "server/gateway/budget.ts",
+        "server/gateway/gateway.ts"
+      ],
+      "tests": [
+        "server/gateway/gateway.test.ts",
+        "server/gateway/units.test.ts",
+        "server/evals/contract.eval.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "In-memory budget store only: counters reset on restart and are not shared across instances; cost is computed only from operator-configured rates."
+    },
+    {
+      "capability": "creator_provider_path",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "creator.submitImage/submitVideo -> providerRegistry (Google image/Veo adapters) -> render pipeline",
+      "sourceFiles": [
+        "server/creator/providerRegistry.ts",
+        "server/creator/googleImage.ts",
+        "server/creator/googleVeoAdapter.ts",
+        "server/creator/orchestrator.ts"
+      ],
+      "tests": [
+        "server/creator/googleImage.test.ts",
+        "server/creator/googleVeoAdapter.test.ts",
+        "server/creator/orchestrator.test.ts",
+        "server/creator/runtimeAcceptance.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/generative-media-integrity.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Not routed through the Provider Gateway; no paid generation executed; provider adapters tested with fakes only."
+    },
+    {
+      "capability": "readiness_liveness",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "GET /healthz (liveness) and /readyz (readiness; llm is 'configured', never 'reachable')",
+      "sourceFiles": [
+        "server/_core/index.ts",
+        "server/_core/readiness.ts"
+      ],
+      "tests": [
+        "server/_core/readiness.test.ts",
+        "server/_core/httpTelemetry.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/preview-smoke-contract.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Built-server smoke run locally without DB/auth/storage; no deployed environment probed."
+    }
+  ]
+}

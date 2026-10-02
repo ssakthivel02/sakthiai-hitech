@@ -33,6 +33,17 @@ jobs:
       - name: Governed intelligence integrity
         run: pnpm intelligence:check
 
+      - name: Deterministic capability and intelligence evals (contract harness, no network)
+        run: pnpm evals
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: reports/evals/eval-report.json
+          if-no-files-found: warn
+
       - name: Video pre-generation quality contract
         shell: bash
         run: |
