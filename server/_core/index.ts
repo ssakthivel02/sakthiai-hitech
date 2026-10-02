@@ -124,7 +124,8 @@ async function startServer() {
       ENV.oidcUserInfoUrl,
       ENV.oidcClientId,
     );
-    const llmReady = configured(ENV.llmApiUrl, ENV.llmModel);
+    // "configured" only: a local/self-hosted endpoint counts, but reachability is never claimed here (see gateway runtime states).
+    const llmReady = configured(ENV.llmApiUrl, ENV.llmModel) || configured(process.env.LOCAL_LLM_API_URL, process.env.LOCAL_LLM_MODEL);
     const storageReady = configured(
       ENV.storageBucket,
       ENV.storageAccessKeyId,

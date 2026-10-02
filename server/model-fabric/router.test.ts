@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MODEL_CATALOG } from "./catalog";
 import { routeModel } from "./router";
 import type { ModelProfile } from "./types";
 
@@ -127,5 +128,28 @@ describe("routeModel", () => {
 
     expect(result.selected).toBeUndefined();
     expect(result.rejected[0].reasons).toContain("runtime-disabled");
+  });
+});
+
+describe("preferLocal routing", () => {
+  const external = { ...MODEL_CATALOG.find(m => m.id === "frontier-external-reference")!, runtimeEnabled: true };
+  const local = { ...MODEL_CATALOG.find(m => m.id === "sakthi-local-lite")!, runtimeEnabled: true };
+  const request = { intents: ["conversation"] as const, requiredCapabilities: ["chat"] as const, allowExternalProviders: true, allowMeteredBilling: true };
+
+  it("without preferLocal the higher-quality external model wins (existing behaviour unchanged)", () => {
+    expect(routeModel([local, external], request).selected?.model.id).toBe("frontier-external-reference");
+  });
+
+  it("with preferLocal a lower-quality local model outranks external; external stays as the ordered fallback", () => {
+    const decision = routeModel([external, local], { ...request, preferLocal: true });
+    expect(decision.selected?.model.id).toBe("sakthi-local-lite");
+    expect(decision.alternatives.map(a => a.model.id)).toEqual(["frontier-external-reference"]);
+  });
+
+  it("preferLocal never makes an ineligible external provider eligible", () => {
+    const decision = routeModel([external, local], { ...request, allowExternalProviders: false, preferLocal: true });
+    expect(decision.selected?.model.id).toBe("sakthi-local-lite");
+    expect(decision.alternatives).toEqual([]);
+    expect(decision.rejected.map(r => r.reasons)).toContainEqual(["external-provider-disabled"]);
   });
 });

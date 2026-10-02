@@ -76,6 +76,12 @@ export interface RoutingRequest {
   reasoningEffort?: ReasoningEffort;
   allowExternalProviders?: boolean;
   allowMeteredBilling?: boolean;
+  /**
+   * When true, every eligible local/self-hosted candidate ranks ahead of every external one, whatever the
+   * quality score. Quality still orders candidates within each group. External providers remain subject
+   * to allowExternalProviders / allowMeteredBilling.
+   */
+  preferLocal?: boolean;
   compute?: Partial<ComputeEnvelope>;
 }
 

@@ -18,11 +18,13 @@ if (contract.claims?.productionReady !== false) fail("repository contract must n
 
 const retrievalIndex = source.indexOf("const matches = await searchChunks");
 const noEvidenceIndex = source.indexOf("if (!matches.length)");
-const llmIndex = source.indexOf("await invokeLLM");
+const llmIndex = source.indexOf("await getProviderGateway().invoke(");
 
 if (retrievalIndex < 0) fail("chat path must retrieve evidence before generation");
 if (noEvidenceIndex < 0) fail("chat path must contain an explicit no-evidence branch");
-if (llmIndex < 0) fail("LLM invocation anchor missing");
+if (llmIndex < 0) fail("Provider Gateway invocation anchor missing (chat must call await getProviderGateway().invoke)");
+if (requirements.modelCallsMustUseProviderGateway !== true) fail("contract must require model calls to go through the Provider Gateway");
+if (/from\s+["']\.\/_core\/llm["']/.test(source) || /\binvokeLLM\b/.test(source)) fail("routers.ts must not import or call a provider client directly");
 if (!(retrievalIndex < noEvidenceIndex && noEvidenceIndex < llmIndex)) {
   fail("no-evidence branch must execute after retrieval and before LLM invocation");
 }

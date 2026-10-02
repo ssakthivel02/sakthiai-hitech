@@ -108,7 +108,8 @@ export function routeModel(models: readonly ModelProfile[], request: RoutingRequ
     ranked.push(scoreCandidate(model, request));
   }
 
-  ranked.sort((left, right) => right.score - left.score || left.model.id.localeCompare(right.model.id));
+  const locality = (candidate: RankedCandidate) => (request.preferLocal && candidate.model.providerKind === "external" ? 1 : 0);
+  ranked.sort((left, right) => locality(left) - locality(right) || right.score - left.score || left.model.id.localeCompare(right.model.id));
   rejected.sort((left, right) => left.modelId.localeCompare(right.modelId));
 
   return {

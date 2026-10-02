@@ -1,13 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Request } from "express";
 import type { User } from "../drizzle/schema";
+import { createProviderGateway, loadGatewayConfig, setProviderGatewayForTests } from "./gateway";
+import { normalizeCompletion } from "./gateway/openaiCompatible";
 
 /**
  * Behavioural tests for chat.send grounding. The real tRPC procedure, real
  * retrieval ranking (rankChunkCandidates, embeddings unavailable) and real
- * grounding resolution run. Only the persistence layer (in-memory) and the
- * model provider boundary (invokeLLM) are replaced, so no paid or external
- * model call can occur (a global fetch spy proves it).
+ * grounding resolution run, and chat now goes through the REAL Provider Gateway
+ * (routing, circuit breaker, error classification). Only the persistence layer
+ * (in-memory) and the provider TRANSPORT (a stub adapter standing in for the HTTP
+ * call, backed by llm.invokeLLM) are replaced, so no paid or external model call
+ * can occur (a global fetch spy proves it).
  */
 
 type Row = {
@@ -21,6 +25,8 @@ const state = vi.hoisted(() => ({
   inserted: [] as Array<{ table: string; values: any }>,
 }));
 const llm = vi.hoisted(() => ({ invokeLLM: vi.fn() }));
+let gatewayUnderTest: ReturnType<typeof createProviderGateway>;
+let gatewayInvoke: ReturnType<typeof vi.spyOn>;
 
 vi.mock("./db", async () => {
   const schema = await vi.importActual<typeof import("../drizzle/schema")>("../drizzle/schema");
@@ -60,7 +66,6 @@ vi.mock("./db", async () => {
     messages: schema.messages,
   };
 });
-vi.mock("./_core/llm", () => llm);
 vi.mock("./storage", () => ({ storagePut: vi.fn() }));
 vi.mock("./provenance", () => ({ extractDocument: vi.fn() }));
 vi.mock("./security/malwareScanner", () => ({ malwareScannerConfigurationStatus: () => "not_configured" }));
@@ -86,6 +91,21 @@ function chunk(id: number, content: string, filename: string, workspaceId = 1) {
 }
 
 let nextUserId = 100;
+function installGateway() {
+  // Real gateway, real routing/breaker; only the HTTP transport is stubbed. The stub reuses the
+  // adapter's real response normalisation so malformed/empty replies fail exactly as in production.
+  const config = loadGatewayConfig({ LOCAL_LLM_API_URL: "http://127.0.0.1:9", LOCAL_LLM_MODEL: "test-model" });
+  gatewayUnderTest = createProviderGateway(config, {
+    log: () => undefined,
+    adapterFactory: binding => ({
+      providerId: binding.providerId,
+      complete: async call => ({ ...normalizeCompletion(await llm.invokeLLM({ messages: call.messages })), attempts: 1 }),
+    }),
+  });
+  gatewayInvoke = vi.spyOn(gatewayUnderTest, "invoke");
+  setProviderGatewayForTests(gatewayUnderTest);
+}
+
 function caller() {
   const user = { id: nextUserId++, openId: "u", email: null, name: "u", loginMethod: "test", role: "user", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() } as User;
   const ctx: TrpcContext = {
@@ -111,6 +131,7 @@ describe("chat.send grounding truthfulness", () => {
       chunk(5, "முருகன் கோவில் ரகசிய ஆவணம்", "other-tenant.txt", 2),
     ];
     llm.invokeLLM.mockReset();
+    installGateway();
   });
   afterEach(() => {
     expect(fetchSpy).not.toHaveBeenCalled(); // no external/paid provider reached from tests
@@ -118,6 +139,7 @@ describe("chat.send grounding truthfulness", () => {
 
   it("retrieval empty -> INSUFFICIENT_EVIDENCE, model never called, no citations", async () => {
     const result = await caller().chat.send({ workspaceId: 1, message: "quantum chromodynamics lattice" });
+    expect(gatewayInvoke).not.toHaveBeenCalled(); // no evidence -> the gateway is never reached
     expect(result.grounding).toBe("INSUFFICIENT_EVIDENCE");
     expect(result.answer).toBe("INSUFFICIENT_EVIDENCE");
     expect(result.citations).toEqual([]);
@@ -264,5 +286,46 @@ describe("resolveGroundedOutcome", () => {
   });
   it("a model answer that merely mentions the sentinel is still an answer", () => {
     expect(resolveGroundedOutcome({ ...base, model: { status: "returned", content: "Answer: x. (not INSUFFICIENT_EVIDENCE)" } }).grounding).toBe("GROUNDED_EVIDENCE");
+  });
+});
+
+describe("chat.send -> Provider Gateway boundary", () => {
+  beforeEach(() => {
+    state.inserted = [];
+    state.chunks = [chunk(2, TAMIL_CHUNK, "temples-ta.txt"), chunk(3, ENGLISH_CHUNK, "temples-en.txt")];
+    llm.invokeLLM.mockReset();
+    installGateway();
+  });
+
+  it("evidence path calls the gateway exactly once with the caller's workspace and request id, and surfaces provider metadata", async () => {
+    llm.invokeLLM.mockResolvedValue({ choices: [{ message: { content: "The temple opens at 6am. [1]" } }] });
+    const result = await caller().chat.send({ workspaceId: 1, message: "Murugan temple timing" });
+    expect(gatewayInvoke).toHaveBeenCalledTimes(1);
+    const call = gatewayInvoke.mock.calls[0][0] as { workspaceId: number; requestId: string; intents: string[]; messages: unknown[] };
+    expect(call.workspaceId).toBe(1);
+    expect(call.requestId).toBeTruthy();
+    expect(call.intents).toEqual(["conversation"]);
+    expect(result.grounding).toBe("GROUNDED_EVIDENCE");
+    expect(result.observability.gateway).toMatchObject({ status: "returned", providerId: "local-openai-compatible", attempts: 1 });
+  });
+
+  it.each([
+    ["no provider configured", undefined, "no_eligible_provider"],
+    ["provider failure", new Error("boom"), "network"],
+  ])("gateway failure (%s) -> MODEL_UNAVAILABLE with evidence preserved and the reason exposed", async (_label, error, reason) => {
+    if (!error) setProviderGatewayForTests(createProviderGateway(loadGatewayConfig({}), { log: () => undefined })); // nothing configured
+    else llm.invokeLLM.mockRejectedValue(error);
+    const result = await caller().chat.send({ workspaceId: 1, message: "Murugan temple timing" });
+    expect(result.grounding).toBe("MODEL_UNAVAILABLE");
+    expect(result.citations.length).toBeGreaterThan(0);
+    expect(result.observability.gateway).toMatchObject({ status: "failed", failureReason: reason });
+  });
+
+  it("a gateway that throws unexpectedly still yields MODEL_UNAVAILABLE with evidence, never a grounded answer", async () => {
+    gatewayInvoke.mockRejectedValue(new Error("unexpected"));
+    const result = await caller().chat.send({ workspaceId: 1, message: "Murugan temple timing" });
+    expect(result.grounding).toBe("MODEL_UNAVAILABLE");
+    expect(result.citations.length).toBeGreaterThan(0);
+    expect(result.observability.gateway).toMatchObject({ status: "failed", failureReason: "internal_error" });
   });
 });

@@ -6,7 +6,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { sdk } from "./_core/sdk";
 import { systemRouter } from "./_core/systemRouter";
-import { invokeLLM } from "./_core/llm";
+import { getProviderGateway, type GatewayOutcome } from "./gateway";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { getDb, ensureWorkspace, getWorkspaceForUser, listUserWorkspaces, listProjects, listDocuments, searchChunks, getConversationMessages, projects, documents, documentChunks, conversations, messages, type Citation } from "./db";
 import { storagePut } from "./storage";
@@ -88,11 +88,13 @@ export const appRouter = router({
       if (!matches.length) { const answer = "INSUFFICIENT_EVIDENCE"; await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: answer, citationsJson: "[]" }); return { conversationId, answer, citations: [], grounding: "INSUFFICIENT_EVIDENCE" as const, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } }; }
       const context = matches.map((m, i) => `[${i + 1}] ${m.filename}${m.page ? ` page ${m.page}` : m.section ? ` section ${m.section}` : ""}: ${m.content}`).join("\n\n");
       let model: ModelResult = { status: "failed" };
-      try { const response = await invokeLLM({ messages: [{ role: "system", content: `You are Sakthi AI Nexus. Answer in ${input.language === "ta" ? "Tamil" : "English"}. Use only the supplied evidence. If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE. Do not invent citations.\n\nEVIDENCE:\n${context}` }, { role: "user", content: input.message }] }); model = { status: "returned", content: response.choices?.[0]?.message?.content }; } catch { model = { status: "failed" }; }
+      let gatewayOutcome: GatewayOutcome;
+      try { gatewayOutcome = await getProviderGateway().invoke({ requestId: ctx.requestId, workspaceId: input.workspaceId, messages: [{ role: "system", content: `You are Sakthi AI Nexus. Answer in ${input.language === "ta" ? "Tamil" : "English"}. Use only the supplied evidence. If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE. Do not invent citations.\n\nEVIDENCE:\n${context}` }, { role: "user", content: input.message }], intents: ["conversation"], requiredCapabilities: ["chat"], optionalCapabilities: input.language === "ta" ? ["multilingual"] : [] }); } catch { gatewayOutcome = { status: "failed", reason: "internal_error", attempts: [], latencyMs: 0 }; }
+      if (gatewayOutcome.status === "returned") model = { status: "returned", content: gatewayOutcome.content };
       const outcome = resolveGroundedOutcome({ language: input.language, evidenceCount: matches.length, model });
       const answerCitations = outcome.includeCitations ? citations : [];
       await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: outcome.answer, citationsJson: JSON.stringify(answerCitations) });
-      return { conversationId, answer: outcome.answer, citations: answerCitations, grounding: outcome.grounding, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } };
+      return { conversationId, answer: outcome.answer, citations: answerCitations, grounding: outcome.grounding, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId, gateway: { status: gatewayOutcome.status, providerId: gatewayOutcome.status === "returned" ? gatewayOutcome.providerId : undefined, failureReason: gatewayOutcome.status === "failed" ? gatewayOutcome.reason : undefined, attempts: gatewayOutcome.attempts.length } } };
     }),
   }),
 });
