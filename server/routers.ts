@@ -12,6 +12,7 @@ import { getDb, ensureWorkspace, getWorkspaceForUser, listUserWorkspaces, listPr
 import { storagePut } from "./storage";
 import { extractDocument } from "./provenance";
 import { embeddingStatus, tryEmbed, serializeEmbedding } from "./embeddings";
+import { searchTextFor } from "./retrievalStore";
 import { creatorRouter } from "./creator/router";
 import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
 import { resolveGroundedOutcome, type ModelResult } from "./grounding";
@@ -63,7 +64,7 @@ export const appRouter = router({
       const created = await db.select().from(documents).where(and(eq(documents.workspaceId, input.workspaceId), eq(documents.contentHash, contentHash))).limit(1); const document = created[0]; if (!document) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Document persistence failed" });
       const adapter = embeddingStatus();
       const chunks = [];
-      for (let index = 0; index < extracted.segments.length; index += 1) { const segment = extracted.segments[index]; const embedded = await tryEmbed(segment.content); chunks.push({ ...segment, chunkIndex: index, documentId: document.id, workspaceId: input.workspaceId, embeddingJson: embedded ? serializeEmbedding(embedded.vector) : null, embeddingModel: embedded?.adapter.model ?? null }); }
+      for (let index = 0; index < extracted.segments.length; index += 1) { const segment = extracted.segments[index]; const embedded = await tryEmbed(segment.content); chunks.push({ ...segment, searchText: searchTextFor(segment.content), chunkIndex: index, documentId: document.id, workspaceId: input.workspaceId, embeddingJson: embedded ? serializeEmbedding(embedded.vector) : null, embeddingModel: embedded?.adapter.model ?? null }); }
       if (chunks.length) await db.insert(documentChunks).values(chunks);
       return { id: document.id, filename: document.filename, pageCount: document.pageCount, extractedCharacters: extracted.text.length, embedding: adapter, scanner: "clean" as const };
     }),

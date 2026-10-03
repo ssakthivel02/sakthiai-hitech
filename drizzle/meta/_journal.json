@@ -43,6 +43,13 @@
       "when": 1790035200000,
       "tag": "0005_provider_policy_runtime",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1790121600000,
+      "tag": "0006_retrieval_storage_indexes",
+      "breakpoints": true
     }
   ]
 }

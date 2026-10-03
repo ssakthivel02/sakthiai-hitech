@@ -96,21 +96,23 @@
       "status": "TESTED_LOCAL",
       "runtimePath": "Authorized storage-proxy key resolution: /api/storage proxy",
       "sourceFiles": [
-        "server/storageAccess.ts",
+        "drizzle/0006_retrieval_storage_indexes.sql",
         "server/_core/storageProxy.ts",
-        "server/storage.ts"
+        "server/storage.ts",
+        "server/storageAccess.ts"
       ],
       "tests": [
+        "server/retrievalStore.mysql.test.ts",
+        "server/storage.test.ts",
         "server/storageAccess.test.ts",
-        "server/storageProxy.security.test.ts",
-        "server/storage.test.ts"
+        "server/storageProxy.security.test.ts"
       ],
       "workflowGate": [
         "pnpm test"
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "No real object-storage backend exercised; scoped credentials and bucket policy are unverified."
+      "knownLimitation": "No real object-storage backend exercised; scoped credentials and bucket policy are unverified. storageKey lookups now use prefix indexes (query plans verified on local MariaDB only)."
     },
     {
       "capability": "file_ingestion",
@@ -156,14 +158,18 @@
       "capability": "english_lexical_retrieval",
       "truthModel": "IMPLEMENTED",
       "status": "TESTED_LOCAL",
-      "runtimePath": "rankChunkCandidates lexical scoring via db.searchChunks",
+      "runtimePath": "db.searchChunks -> retrievalStore (SQL workspace-scoped lexical/legacy/semantic candidates over searchText) -> rankChunkCandidates",
       "sourceFiles": [
+        "drizzle/0006_retrieval_storage_indexes.sql",
+        "server/db.ts",
         "server/retrieval.ts",
-        "server/db.ts"
+        "server/retrievalStore.ts"
       ],
       "tests": [
+        "server/evals/contract.eval.test.ts",
         "server/retrieval.acceptance.test.ts",
-        "server/evals/contract.eval.test.ts"
+        "server/retrieval.determinism.test.ts",
+        "server/retrievalStore.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -171,19 +177,23 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Ranking proven on fixtures; MySQL query path (db.searchChunks) not run against a real database here."
+      "knownLimitation": "Verified on real SQL only against local MariaDB 10.11 (1,200+ chunk workspace); MySQL 8 CI job and live Aiven pending. LIKE-based prefilter scans a workspace's rows inside the DB (index narrows by workspace only): fine for tens of thousands of chunks per workspace, not millions (no FULLTEXT/ANN index). Migration 0006 and `pnpm db:backfill-search-text` must be run for pre-existing rows (they stay searchable through a capped legacy path meanwhile). Tamil matching is lexical/Unicode-normalised only."
     },
     {
       "capability": "tamil_lexical_retrieval",
       "truthModel": "IMPLEMENTED",
       "status": "TESTED_LOCAL",
-      "runtimePath": "Unicode-normalising lexical scoring (Tamil script) in retrieval.ts",
+      "runtimePath": "db.searchChunks -> retrievalStore (SQL workspace-scoped lexical/legacy/semantic candidates over searchText) -> rankChunkCandidates",
       "sourceFiles": [
-        "server/retrieval.ts"
+        "drizzle/0006_retrieval_storage_indexes.sql",
+        "server/retrieval.ts",
+        "server/retrievalStore.ts"
       ],
       "tests": [
+        "server/evals/contract.eval.test.ts",
+        "server/retrieval.determinism.test.ts",
         "server/retrieval.unicode.test.ts",
-        "server/evals/contract.eval.test.ts"
+        "server/retrievalStore.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -191,7 +201,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Lexical/unicode matching only: no Tamil stemming or morphological analysis; quality on real Tamil corpora unmeasured."
+      "knownLimitation": "Verified on real SQL only against local MariaDB 10.11 (1,200+ chunk workspace); MySQL 8 CI job and live Aiven pending. LIKE-based prefilter scans a workspace's rows inside the DB (index narrows by workspace only): fine for tens of thousands of chunks per workspace, not millions (no FULLTEXT/ANN index). Migration 0006 and `pnpm db:backfill-search-text` must be run for pre-existing rows (they stay searchable through a capped legacy path meanwhile). Tamil matching is lexical/Unicode-normalised only."
     },
     {
       "capability": "semantic_retrieval",
@@ -199,22 +209,24 @@
       "status": "TESTED_LOCAL",
       "runtimePath": "Embedding gateway (self-hosted OpenAI-compatible /v1/embeddings first, optional opt-in external) -> same-model cosine hybrid scoring; lexical fallback on any failure",
       "sourceFiles": [
+        "server/db.ts",
         "server/embedding/gateway.ts",
         "server/embeddings.ts",
         "server/retrieval.ts",
-        "server/db.ts"
+        "server/retrievalStore.ts"
       ],
       "tests": [
+        "server/chat.grounding.test.ts",
         "server/embedding/gateway.test.ts",
         "server/retrieval.acceptance.test.ts",
-        "server/chat.grounding.test.ts"
+        "server/retrievalStore.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test"
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "No real embedding server (Ollama/vLLM/llama.cpp) has been run: only an in-process fake transport. No vector index; semantic scoring is brute-force over the DB-prefiltered candidate set. Vectors from a different or unrecorded embedding model are ignored (lexical only), so existing rows need re-embedding after a model change. External embeddings require EMBEDDING_ALLOW_EXTERNAL=true."
+      "knownLimitation": "No real embedding server (Ollama/vLLM/llama.cpp) has been run: only an in-process fake transport. No vector index; semantic scoring is brute-force over the DB-prefiltered candidate set. Vectors from a different or unrecorded embedding model are ignored (lexical only), so existing rows need re-embedding after a model change. External embeddings require EMBEDDING_ALLOW_EXTERNAL=true. Semantic candidates are a bounded brute-force window (RETRIEVAL_SEMANTIC_SCAN_LIMIT, default 1000 newest same-model rows per workspace), not an ANN index."
     },
     {
       "capability": "grounded_response",

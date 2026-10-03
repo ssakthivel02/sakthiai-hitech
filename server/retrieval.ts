@@ -133,6 +133,7 @@ export function rankChunkCandidates<
       };
     })
     .filter(row => row.score > 0)
-    .sort((a, b) => b.score - a.score)
+    // Deterministic: ties on score are broken by chunk id so the same data always ranks identically.
+    .sort((a, b) => b.score - a.score || (a as { id?: number }).id! - (b as { id?: number }).id!)
     .slice(0, limit);
 }

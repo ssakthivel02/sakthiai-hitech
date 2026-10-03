@@ -16,7 +16,8 @@ import {
 import { ENV } from "./_core/env";
 import { createVerifiedMysqlPool } from "./_core/mysql";
 import { tryEmbed } from "./embeddings";
-import { rankChunkCandidates, type RetrievalMethod } from "./retrieval";
+import { searchWorkspaceChunks } from "./retrievalStore";
+import type { RetrievalMethod } from "./retrieval";
 
 export type { Citation } from "../drizzle/schema";
 export type { RetrievalMethod } from "./retrieval";
@@ -227,13 +228,15 @@ export async function getConversationMessages(workspaceId: number, conversationI
     : [];
 }
 
-/** Tenant filtering is deliberately performed in the database query before any scoring or fusion. */
+/**
+ * Tenant filtering happens in SQL (chunk and document workspace) before any scoring; see retrievalStore.ts
+ * for the bounded lexical / legacy / semantic candidate strategy. The scorer is unchanged.
+ */
 export async function searchChunks(workspaceId: number, query: string): Promise<SearchResult[]> {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db.select({ chunk: documentChunks, document: documents }).from(documentChunks).innerJoin(documents, eq(documentChunks.documentId, documents.id)).where(and(eq(documentChunks.workspaceId, workspaceId), eq(documents.workspaceId, workspaceId))).limit(500);
   const semantic = await tryEmbed(query);
-  return rankChunkCandidates(rows, query, semantic?.vector ?? null, 8, semantic?.adapter.model ?? null);
+  return searchWorkspaceChunks(db, workspaceId, query, semantic ? { vector: semantic.vector, model: semantic.adapter.model } : null);
 }
 
 export {

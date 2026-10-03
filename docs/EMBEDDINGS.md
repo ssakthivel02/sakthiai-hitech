@@ -10,3 +10,7 @@ Provider-neutral, local-first. Speaks the OpenAI-compatible `POST {base}/v1/embe
 - Degradation: any failure returns "no vector" and retrieval runs lexically (Tamil, English and mixed-script lexical retrieval do not depend on embeddings). Tenant scoping happens in SQL before ranking and is unaffected.
 - Model safety: a chunk's vector is compared semantically only if it was produced by the same model as the query embedding; otherwise that chunk is scored lexically. After changing the embedding model, re-embed documents to regain semantic scoring.
 - Status: `embeddingStatus()` reports `verified: false`; there is no automatic live probe. Verified only against an in-process fake transport; no real embedding server was run.
+
+## Retrieval candidate strategy (DB-first)
+
+`db.searchChunks` -> `server/retrievalStore.ts`. All candidate queries filter by workspace in SQL (chunk and document) before ranking: (1) lexical rows via `documentChunks.searchText` (normalised content, maintained at ingestion; ordered in SQL by matched-term count then id, top 200), (2) legacy rows with `searchText IS NULL` (capped 500, vanishes after `pnpm db:backfill-search-text`), (3) with embeddings: same-model embedded rows, newest first, capped (default 1000). Ranking is the unchanged deterministic scorer (ties by chunk id). Apply migration 0006 first. Limits: `RETRIEVAL_LEXICAL_CANDIDATES`, `RETRIEVAL_LEGACY_CANDIDATES`, `RETRIEVAL_SEMANTIC_SCAN_LIMIT`.

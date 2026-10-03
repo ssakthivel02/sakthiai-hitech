@@ -26,7 +26,7 @@ export const workspaceMembers = mysqlTable("workspaceMembers", {
   userId: int("userId").notNull(),
   role: mysqlEnum("role", ["owner", "member"]).default("member").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, table => [index("workspaceMembers_userId_workspaceId_idx").on(table.userId, table.workspaceId)]);
 
 export const projects = mysqlTable("projects", {
   id: int("id").autoincrement().primaryKey(),
@@ -35,7 +35,7 @@ export const projects = mysqlTable("projects", {
   description: text("description"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, table => [index("projects_workspaceId_idx").on(table.workspaceId)]);
 
 export const documents = mysqlTable("documents", {
   id: int("id").autoincrement().primaryKey(),
@@ -48,7 +48,11 @@ export const documents = mysqlTable("documents", {
   contentHash: varchar("contentHash", { length: 64 }).notNull(),
   pageCount: int("pageCount").default(1).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, table => [
+  index("documents_workspaceId_createdAt_idx").on(table.workspaceId, table.createdAt),
+  // (workspaceId, contentHash) is already indexed by documents_workspace_hash_idx (migration 0002).
+  // documents_storageKey_idx is a PREFIX index (storageKey(191)); Drizzle cannot express prefix lengths, so it exists only in migration 0006.
+]);
 
 export const documentChunks = mysqlTable("documentChunks", {
   id: int("id").autoincrement().primaryKey(),
@@ -63,7 +67,12 @@ export const documentChunks = mysqlTable("documentChunks", {
   content: text("content").notNull(),
   embeddingJson: text("embeddingJson"),
   embeddingModel: varchar("embeddingModel", { length: 160 }),
-});
+  /** normalizeRetrievalText(content), maintained at ingestion; NULL for legacy rows until backfilled. Enables DB-side lexical prefiltering. */
+  searchText: text("searchText"),
+}, table => [
+  // (workspaceId, documentId) is already indexed by chunks_workspace_document_idx (migration 0002).
+  index("documentChunks_documentId_chunkIndex_idx").on(table.documentId, table.chunkIndex),
+]);
 
 export const conversations = mysqlTable("conversations", {
   id: int("id").autoincrement().primaryKey(),
@@ -83,7 +92,7 @@ export const messages = mysqlTable("messages", {
   content: text("content").notNull(),
   citationsJson: text("citationsJson"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, table => [index("messages_workspaceId_conversationId_createdAt_idx").on(table.workspaceId, table.conversationId, table.createdAt)]);
 
 /** SakthiAI Creator owns orchestration state; media providers remain replaceable workers. */
 export const creatorProjects = mysqlTable("creatorProjects", {
