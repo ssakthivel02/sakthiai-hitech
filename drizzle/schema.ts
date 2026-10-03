@@ -1,4 +1,4 @@
-import { bigint, boolean, char, date, datetime, decimal, index, int, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { bigint, boolean, char, customType, date, datetime, decimal, index, int, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -421,3 +421,39 @@ export const mcpConnectorAudit = mysqlTable("mcpConnectorAudit", {
   responseBytes: int("responseBytes"),
   createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
 }, table => ({ workspaceCreatedIdx: index("mcpConnectorAudit_workspace_created_idx").on(table.workspaceId, table.createdAt) }));
+
+const mediumBlob = customType<{ data: Buffer }>({ dataType: () => "mediumblob" });
+
+/** Resumable upload sessions. Raw bytes live ONLY in fileUploadChunks (quarantine) until scan+extraction pass; never in object storage. */
+export const fileUploadSessions = mysqlTable("fileUploadSessions", {
+  id: char("id", { length: 36 }).primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  userId: int("userId").notNull(),
+  projectId: int("projectId"),
+  filename: varchar("filename", { length: 255 }).notNull(),
+  mimeType: varchar("mimeType", { length: 160 }).notNull(),
+  declaredBytes: int("declaredBytes").notNull(),
+  declaredSha256: char("declaredSha256", { length: 64 }).notNull(),
+  chunkSize: int("chunkSize").notNull(),
+  totalChunks: int("totalChunks").notNull(),
+  state: mysqlEnum("state", ["OPEN", "FINALIZING", "COMPLETED", "REJECTED", "EXPIRED", "ABORTED"]).default("OPEN").notNull(),
+  rejectReason: varchar("rejectReason", { length: 64 }),
+  lastError: varchar("lastError", { length: 160 }),
+  scanStatus: varchar("scanStatus", { length: 16 }),
+  scanEngine: varchar("scanEngine", { length: 32 }),
+  documentId: int("documentId"),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+  updatedAt: datetime("updatedAt", { fsp: 3 }).notNull(),
+  expiresAt: datetime("expiresAt", { fsp: 3 }).notNull(),
+}, table => ({
+  workspaceStateIdx: index("fileUploadSessions_workspace_state_idx").on(table.workspaceId, table.state),
+  stateExpiresIdx: index("fileUploadSessions_state_expires_idx").on(table.state, table.expiresAt),
+}));
+
+export const fileUploadChunks = mysqlTable("fileUploadChunks", {
+  uploadId: char("uploadId", { length: 36 }).notNull(),
+  chunkIndex: int("chunkIndex").notNull(),
+  bytes: int("bytes").notNull(),
+  sha256: char("sha256", { length: 64 }).notNull(),
+  data: mediumBlob("data").notNull(),
+}, table => ({ pk: primaryKey({ columns: [table.uploadId, table.chunkIndex] }) }));

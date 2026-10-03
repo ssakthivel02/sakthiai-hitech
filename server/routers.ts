@@ -1,4 +1,5 @@
 import { MysqlTaskStore, TASK_STATES, toView } from "./tasks";
+import { ResumableIngestion, UploadStore, IngestError, createCommitter, projectBelongsToWorkspace } from "./ingestion";
 import { McpConnectorService, McpConnectorStore, McpPolicyError } from "./connectors/mcp";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -24,6 +25,10 @@ let taskStore: MysqlTaskStore | null = null;
 const sharedTaskStore = () => (taskStore ??= new MysqlTaskStore(getDb));
 let mcpService: McpConnectorService | null = null;
 const sharedMcp = () => (mcpService ??= new McpConnectorService({ store: new McpConnectorStore(getDb) }));
+let ingestion: ResumableIngestion | null = null;
+const sharedIngestion = () => (ingestion ??= new ResumableIngestion({ store: new UploadStore(getDb), commit: createCommitter(), projectAllowed: projectBelongsToWorkspace }));
+const ingestErrorCode = { DISABLED: "FORBIDDEN", INVALID: "BAD_REQUEST", NOT_FOUND: "NOT_FOUND", CONFLICT: "CONFLICT", LIMIT: "TOO_MANY_REQUESTS", CLOSED: "CONFLICT", INCOMPLETE: "PRECONDITION_FAILED", INFECTED: "BAD_REQUEST", SCANNER_UNAVAILABLE: "SERVICE_UNAVAILABLE", DUPLICATE: "CONFLICT", EXTRACTION_FAILED: "BAD_REQUEST", PROJECT_DENIED: "FORBIDDEN" } as const;
+async function ingestGuard<T>(run: () => Promise<T>): Promise<T> { try { return await run(); } catch (error) { if (error instanceof IngestError) throw new TRPCError({ code: ingestErrorCode[error.code], message: error.message }); throw error; } }
 const mcpErrorCode = { DENIED: "FORBIDDEN", NOT_FOUND: "NOT_FOUND", INVALID: "BAD_REQUEST", DUPLICATE: "CONFLICT", UNAVAILABLE: "BAD_GATEWAY", TIMEOUT: "TIMEOUT", TOO_LARGE: "PAYLOAD_TOO_LARGE" } as const;
 async function mcpGuard<T>(run: () => Promise<T>): Promise<T> { try { return await run(); } catch (error) { if (error instanceof McpPolicyError) throw new TRPCError({ code: mcpErrorCode[error.code], message: error.message }); throw error; } }
 async function requireWorkspaceOwner(userId: number, workspaceId: number) { const role = await getWorkspaceRole(userId, workspaceId); if (role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Workspace owner role required" }); }
@@ -52,6 +57,14 @@ export const appRouter = router({
     create: protectedProcedure.input(workspaceInput.extend({ name: z.string().min(1).max(180), description: z.string().max(2000).optional() })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" }); await db.insert(projects).values({ workspaceId: input.workspaceId, name: input.name, description: input.description ?? null }); return listProjects(input.workspaceId); }),
   }),
   files: router({
+    /** Resumable, quarantined ingestion (backend only; off unless FILE_INGESTION_BACKEND_ENABLED=true; the upload UI stays gated). */
+    resumable: router({
+      begin: protectedProcedure.input(workspaceInput.extend({ projectId: z.number().int().positive().optional(), filename: z.string().min(1).max(255), mimeType: z.string().min(1).max(160), sizeBytes: z.number().int().positive(), sha256: z.string().length(64), chunkSize: z.number().int().positive() })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); const { workspaceId, ...rest } = input; return ingestGuard(() => sharedIngestion().begin({ workspaceId, userId: ctx.user.id }, rest)); }),
+      putChunk: protectedProcedure.input(workspaceInput.extend({ uploadId: z.string().length(36), index: z.number().int().min(0), dataBase64: z.string().min(1).max(200_000), sha256: z.string().length(64).optional() })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return ingestGuard(() => sharedIngestion().putChunk({ workspaceId: input.workspaceId, userId: ctx.user.id }, input.uploadId, input.index, base64ToBuffer(input.dataBase64), input.sha256)); }),
+      status: protectedProcedure.input(workspaceInput.extend({ uploadId: z.string().length(36) })).query(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return ingestGuard(() => sharedIngestion().status({ workspaceId: input.workspaceId, userId: ctx.user.id }, input.uploadId)); }),
+      finalize: protectedProcedure.input(workspaceInput.extend({ uploadId: z.string().length(36) })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return ingestGuard(() => sharedIngestion().finalize({ workspaceId: input.workspaceId, userId: ctx.user.id }, input.uploadId)); }),
+      abort: protectedProcedure.input(workspaceInput.extend({ uploadId: z.string().length(36) })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return ingestGuard(() => sharedIngestion().abort({ workspaceId: input.workspaceId, userId: ctx.user.id }, input.uploadId)); }),
+    }),
     list: protectedProcedure.input(workspaceInput).query(({ ctx, input }) => requireWorkspace(ctx.user.id, input.workspaceId).then(() => listDocuments(input.workspaceId))),
     upload: protectedProcedure.input(workspaceInput.extend({ projectId: z.number().int().positive().optional(), filename: z.string().min(1).max(255), mimeType: z.string().min(1), dataBase64: z.string().min(1) })).mutation(async ({ ctx, input }) => {
       await requireWorkspace(ctx.user.id, input.workspaceId);

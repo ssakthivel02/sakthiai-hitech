@@ -504,6 +504,30 @@
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
       "knownLimitation": "Exercised only against a deterministic in-process fake MCP server; no real MCP server, no OAuth-protected MCP servers, no stdio transport (deliberately unsupported). Not yet exposed to the chat/agent runtime: callers use tRPC or the service. Name-based mutation heuristics are conservative (false positives such as get_order are denied). Secrets are resolved from MCP_SECRET_<REF> environment variables."
+    },
+    {
+      "capability": "resumable_quarantined_ingestion",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Backend-only resumable chunked ingestion: tRPC files.resumable.{begin,putChunk,status,finalize,abort}; chunks live only in the fileUploadChunks quarantine table; finalize = assemble -> size/checksum -> shape -> malware scan -> clean decision -> extraction -> normal storage (object store + documents + chunks). Infected = terminal reject + purge; scanner unavailable = fail closed, bytes stay quarantined, retryable. Default OFF (FILE_INGESTION_BACKEND_ENABLED); the owner-approval gate keeps the upload UI disabled",
+      "sourceFiles": [
+        "server/ingestion/service.ts",
+        "server/ingestion/store.ts",
+        "server/ingestion/commit.ts",
+        "server/ingestion/index.ts",
+        "drizzle/0010_resumable_ingestion.sql"
+      ],
+      "tests": [
+        "server/ingestion/ingestion.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Verified on local MariaDB 10.11 with a stub scanner and an in-process clamd INSTREAM fake; no real ClamAV and no real S3. No client uses it and the upload UI remains gated. Max 12 MiB per file (assembled in memory), 128 KiB chunks. No scheduled cleanup runner is wired: UploadStore.cleanup() must be invoked by an operator job. Quarantine bytes sit in the application database (mediumblob) until purge."
     }
   ]
 }
