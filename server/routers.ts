@@ -1,4 +1,5 @@
 import { MysqlTaskStore, TASK_STATES, toView } from "./tasks";
+import { McpConnectorService, McpConnectorStore, McpPolicyError } from "./connectors/mcp";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -9,7 +10,7 @@ import { sdk } from "./_core/sdk";
 import { systemRouter } from "./_core/systemRouter";
 import { getProviderGateway, type GatewayOutcome } from "./gateway";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { getDb, ensureWorkspace, getWorkspaceForUser, listUserWorkspaces, listProjects, listDocuments, searchChunks, getConversationMessages, projects, documents, documentChunks, conversations, messages, type Citation } from "./db";
+import { getDb, ensureWorkspace, getWorkspaceForUser, getWorkspaceRole, listUserWorkspaces, listProjects, listDocuments, searchChunks, getConversationMessages, projects, documents, documentChunks, conversations, messages, type Citation } from "./db";
 import { storagePut } from "./storage";
 import { extractDocument } from "./provenance";
 import { embeddingStatus, tryEmbed, serializeEmbedding } from "./embeddings";
@@ -21,6 +22,11 @@ import { resolveGroundedOutcome, type ModelResult } from "./grounding";
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
 let taskStore: MysqlTaskStore | null = null;
 const sharedTaskStore = () => (taskStore ??= new MysqlTaskStore(getDb));
+let mcpService: McpConnectorService | null = null;
+const sharedMcp = () => (mcpService ??= new McpConnectorService({ store: new McpConnectorStore(getDb) }));
+const mcpErrorCode = { DENIED: "FORBIDDEN", NOT_FOUND: "NOT_FOUND", INVALID: "BAD_REQUEST", DUPLICATE: "CONFLICT", UNAVAILABLE: "BAD_GATEWAY", TIMEOUT: "TIMEOUT", TOO_LARGE: "PAYLOAD_TOO_LARGE" } as const;
+async function mcpGuard<T>(run: () => Promise<T>): Promise<T> { try { return await run(); } catch (error) { if (error instanceof McpPolicyError) throw new TRPCError({ code: mcpErrorCode[error.code], message: error.message }); throw error; } }
+async function requireWorkspaceOwner(userId: number, workspaceId: number) { const role = await getWorkspaceRole(userId, workspaceId); if (role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Workspace owner role required" }); }
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
 const base64ToBuffer = (value: string) => Buffer.from(value.replace(/^data:[^;]+;base64,/, ""), "base64");
 const safeFilename = (value: string) => value.normalize("NFKC").replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^\.+/, "").slice(0, 180) || "upload";
@@ -99,6 +105,18 @@ export const appRouter = router({
       const answerCitations = outcome.includeCitations ? citations : [];
       await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: outcome.answer, citationsJson: JSON.stringify(answerCitations) });
       return { conversationId, answer: outcome.answer, citations: answerCitations, grounding: outcome.grounding, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId, gateway: { status: gatewayOutcome.status, providerId: gatewayOutcome.status === "returned" ? gatewayOutcome.providerId : undefined, failureReason: gatewayOutcome.status === "failed" ? gatewayOutcome.reason : undefined, attempts: gatewayOutcome.attempts.length } } };
+    }),
+  }),
+  connectors: router({
+    mcp: router({
+      list: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return sharedMcp().list(input.workspaceId); }),
+      register: protectedProcedure.input(workspaceInput.extend({ name: z.string().min(1).max(96), endpoint: z.string().min(1).max(500), secretRef: z.string().max(64).optional(), allowedTools: z.array(z.string().max(128)).max(100).optional(), timeoutMs: z.number().int().optional(), maxResponseBytes: z.number().int().optional() })).mutation(async ({ ctx, input }) => { await requireWorkspaceOwner(ctx.user.id, input.workspaceId); const { workspaceId, ...rest } = input; return mcpGuard(() => sharedMcp().register({ workspaceId, userId: ctx.user.id }, rest)); }),
+      setEnabled: protectedProcedure.input(workspaceInput.extend({ connectorId: z.string().uuid(), enabled: z.boolean() })).mutation(async ({ ctx, input }) => { await requireWorkspaceOwner(ctx.user.id, input.workspaceId); await mcpGuard(() => sharedMcp().setEnabled({ workspaceId: input.workspaceId, userId: ctx.user.id }, input.connectorId, input.enabled)); return { ok: true as const }; }),
+      remove: protectedProcedure.input(workspaceInput.extend({ connectorId: z.string().uuid() })).mutation(async ({ ctx, input }) => { await requireWorkspaceOwner(ctx.user.id, input.workspaceId); await mcpGuard(() => sharedMcp().remove({ workspaceId: input.workspaceId, userId: ctx.user.id }, input.connectorId)); return { ok: true as const }; }),
+      discover: protectedProcedure.input(workspaceInput.extend({ connectorId: z.string().uuid() })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return mcpGuard(() => sharedMcp().discover({ workspaceId: input.workspaceId, userId: ctx.user.id }, input.connectorId)); }),
+      readResource: protectedProcedure.input(workspaceInput.extend({ connectorId: z.string().uuid(), uri: z.string().min(1).max(2048) })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return mcpGuard(() => sharedMcp().readResource({ workspaceId: input.workspaceId, userId: ctx.user.id }, input.connectorId, input.uri)); }),
+      callTool: protectedProcedure.input(workspaceInput.extend({ connectorId: z.string().uuid(), tool: z.string().min(1).max(128), arguments: z.record(z.string(), z.unknown()).optional() })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return mcpGuard(() => sharedMcp().callTool({ workspaceId: input.workspaceId, userId: ctx.user.id }, input.connectorId, input.tool, input.arguments ?? {})); }),
+      audit: protectedProcedure.input(workspaceInput.extend({ limit: z.number().int().min(1).max(500).optional() })).query(async ({ ctx, input }) => { await requireWorkspaceOwner(ctx.user.id, input.workspaceId); return new McpConnectorStore(getDb).listAudit(input.workspaceId, input.limit); }),
     }),
   }),
   tasks: router({

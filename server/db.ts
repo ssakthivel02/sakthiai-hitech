@@ -258,3 +258,11 @@ export {
   workspaceMembers,
   workspaces,
 };
+
+/** Membership role of a user in a workspace (undefined when not a member). */
+export async function getWorkspaceRole(userId: number, workspaceId: number): Promise<"owner" | "member" | undefined> {
+  const db = await getDb();
+  if (!db) return undefined;
+  const rows = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.userId, userId), eq(workspaceMembers.workspaceId, workspaceId))).limit(1);
+  return rows[0]?.role;
+}

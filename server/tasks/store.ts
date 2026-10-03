@@ -26,6 +26,14 @@ const encode = (value: unknown, what: string): string => {
 };
 const decode = (text: unknown): unknown => { if (typeof text !== "string") return null; try { return JSON.parse(text); } catch { return null; } };
 const isDuplicate = (error: unknown) => { const e = error as { code?: string; errno?: number; cause?: { code?: string; errno?: number } }; return e?.code === "ER_DUP_ENTRY" || e?.errno === 1062 || e?.cause?.code === "ER_DUP_ENTRY" || e?.cause?.errno === 1062; };
+const isDeadlock = (error: unknown) => { const e = error as { code?: string; errno?: number; cause?: { code?: string; errno?: number } }; return [e?.code, e?.cause?.code].some(c => c === "ER_LOCK_DEADLOCK" || c === "ER_LOCK_WAIT_TIMEOUT") || [e?.errno, e?.cause?.errno].some(n => n === 1213 || n === 1205); };
+/** InnoDB may pick a worker as a deadlock victim under heavy contention; the statement is safe to repeat (all transitions are conditional). */
+async function withDeadlockRetry<T>(run: () => Promise<T>, attempts = 6): Promise<T> {
+  for (let i = 1; ; i += 1) {
+    try { return await run(); }
+    catch (error) { if (!isDeadlock(error) || i >= attempts) throw error; await new Promise(r => setTimeout(r, 5 + Math.random() * 25 * i)); }
+  }
+}
 export const hashInput = (type: string, input: unknown) => createHash("sha256").update(`${type}\n${JSON.stringify(input ?? null)}`).digest("hex");
 
 type Row = Record<string, any>;
@@ -106,19 +114,25 @@ export class MysqlTaskStore {
     const db = await this.db();
     const types = options.types?.length ? options.types : null;
     if (options.types && options.types.length === 0) return null;
-    // 1) cancelled work whose worker is gone (or never started) is finalised, not run
-    await db.execute(sql`UPDATE durableTasks SET state = 'CANCELLED', leaseOwner = NULL, leaseExpiresAt = NULL, finishedAt = NOW(3), updatedAt = NOW(3)
-      WHERE cancelRequested = 1 AND ((state IN ('QUEUED','WAITING')) OR (state = 'RUNNING' AND leaseExpiresAt < NOW(3)))`);
-    // 2) a crashed worker never counts as success; out-of-attempts tasks fail visibly
-    await db.execute(sql`UPDATE durableTasks SET state = 'FAILED', failureClass = 'LEASE_EXPIRED', errorMessage = 'worker lease expired and no attempts remain', leaseOwner = NULL, leaseExpiresAt = NULL, finishedAt = NOW(3), updatedAt = NOW(3)
-      WHERE state = 'RUNNING' AND leaseExpiresAt < NOW(3) AND attempt >= maxAttempts`);
+    // Housekeeping touches rows by PRIMARY KEY only (candidates come from a non-locking read), so concurrent workers
+    // never take overlapping range locks; a deadlock victim simply retries.
+    const cancelOrphan = sql`cancelRequested = 1 AND ((state IN ('QUEUED','WAITING')) OR (state = 'RUNNING' AND leaseExpiresAt < NOW(3)))`;
+    for (const row of rowsOf<{ id: string }>(await db.execute(sql`SELECT id FROM durableTasks WHERE ${cancelOrphan} LIMIT 50`))) {
+      // 1) cancelled work whose worker is gone (or never started) is finalised, not run
+      await withDeadlockRetry(() => db.execute(sql`UPDATE durableTasks SET state = 'CANCELLED', leaseOwner = NULL, leaseExpiresAt = NULL, finishedAt = NOW(3), updatedAt = NOW(3) WHERE id = ${row.id} AND ${cancelOrphan}`));
+    }
+    const exhausted = sql`state = 'RUNNING' AND leaseExpiresAt < NOW(3) AND attempt >= maxAttempts`;
+    for (const row of rowsOf<{ id: string }>(await db.execute(sql`SELECT id FROM durableTasks WHERE ${exhausted} LIMIT 50`))) {
+      // 2) a crashed worker never counts as success; out-of-attempts tasks fail visibly
+      await withDeadlockRetry(() => db.execute(sql`UPDATE durableTasks SET state = 'FAILED', failureClass = 'LEASE_EXPIRED', errorMessage = 'worker lease expired and no attempts remain', leaseOwner = NULL, leaseExpiresAt = NULL, finishedAt = NOW(3), updatedAt = NOW(3) WHERE id = ${row.id} AND ${exhausted}`));
+    }
     const eligible = sql`attempt < maxAttempts AND cancelRequested = 0 AND (state = 'QUEUED' OR (state = 'WAITING' AND retryAfter <= NOW(3)) OR (state = 'RUNNING' AND leaseExpiresAt < NOW(3)))`;
     const typeFilter = types ? sql` AND type IN (${sql.join(types.map(t => sql`${t}`), sql`, `)})` : sql``;
     const candidates = rowsOf<{ id: string }>(await db.execute(sql`SELECT id FROM durableTasks WHERE ${eligible}${typeFilter} ORDER BY createdAt, id LIMIT 10`));
     for (const candidate of candidates) {
-      const result = await db.execute(sql`UPDATE durableTasks SET state = 'RUNNING', leaseOwner = ${owner}, leaseExpiresAt = DATE_ADD(NOW(3), INTERVAL ${microsOf(options.leaseMs)} MICROSECOND),
+      const result = await withDeadlockRetry(() => db.execute(sql`UPDATE durableTasks SET state = 'RUNNING', leaseOwner = ${owner}, leaseExpiresAt = DATE_ADD(NOW(3), INTERVAL ${microsOf(options.leaseMs)} MICROSECOND),
         attempt = attempt + 1, retryAfter = NULL, startedAt = COALESCE(startedAt, NOW(3)), updatedAt = NOW(3)
-        WHERE id = ${candidate.id} AND ${eligible}`);
+        WHERE id = ${candidate.id} AND ${eligible}`));
       if (affected(result) === 1) return this.getInternal(candidate.id);
     }
     return null;

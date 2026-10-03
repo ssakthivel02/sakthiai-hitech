@@ -477,6 +477,33 @@
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
       "knownLimitation": "Verified on local MariaDB 10.11 only (MySQL 8 CI pending). No product feature enqueues tasks yet and no worker is started by the server: the execution substrate is SOURCE_IMPLEMENTED and tested, not wired to a user-facing workflow. Side effects are at-least-once with durable dedupe records (a crash between the effect and its record repeats it); handlers must use idempotent operations. Cancellation of a running task is cooperative (next checkpoint)."
+    },
+    {
+      "capability": "mcp_readonly_connector",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Governed READ-ONLY MCP (Streamable HTTP JSON-RPC) connector: server/connectors/mcp (policy, client, store, service), tRPC connectors.mcp.*; workspace-owned, disabled by default, operator-approved endpoints only, explicit readOnlyHint required, mutation-looking tools denied, bounded time/bytes, schema-validated, redacted, provenance + audit",
+      "sourceFiles": [
+        "server/connectors/mcp/policy.ts",
+        "server/connectors/mcp/client.ts",
+        "server/connectors/mcp/store.ts",
+        "server/connectors/mcp/service.ts",
+        "server/skills/mcp.ts",
+        "drizzle/0009_mcp_connectors.sql"
+      ],
+      "tests": [
+        "server/connectors/mcp/mcp.test.ts",
+        "server/connectors/mcp/service.mysql.test.ts",
+        "server/mysql.integration.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Exercised only against a deterministic in-process fake MCP server; no real MCP server, no OAuth-protected MCP servers, no stdio transport (deliberately unsupported). Not yet exposed to the chat/agent runtime: callers use tRPC or the service. Name-based mutation heuristics are conservative (false positives such as get_order are denied). Secrets are resolved from MCP_SECRET_<REF> environment variables."
     }
   ]
 }

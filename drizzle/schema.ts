@@ -392,3 +392,32 @@ export const durableTaskEffects = mysqlTable("durableTaskEffects", {
   resultJson: text("resultJson"),
   createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
 }, table => ({ pk: primaryKey({ columns: [table.taskId, table.effectKey] }) }));
+
+/** Workspace-owned READ-ONLY MCP connector registrations. Secrets are never stored: `secretRef` names a server-side secret. */
+export const mcpConnectors = mysqlTable("mcpConnectors", {
+  id: char("id", { length: 36 }).primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  name: varchar("name", { length: 96 }).notNull(),
+  endpoint: varchar("endpoint", { length: 500 }).notNull(),
+  enabled: boolean("enabled").default(false).notNull(),
+  secretRef: varchar("secretRef", { length: 64 }),
+  allowedToolsJson: text("allowedToolsJson"),
+  timeoutMs: int("timeoutMs").default(8000).notNull(),
+  maxResponseBytes: int("maxResponseBytes").default(262144).notNull(),
+  createdByUserId: int("createdByUserId"),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+  updatedAt: datetime("updatedAt", { fsp: 3 }).notNull(),
+}, table => ({ nameUq: uniqueIndex("mcpConnectors_workspace_name_uq").on(table.workspaceId, table.name) }));
+
+export const mcpConnectorAudit = mysqlTable("mcpConnectorAudit", {
+  id: bigint("id", { mode: "number" }).autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  connectorId: char("connectorId", { length: 36 }).notNull(),
+  actorUserId: int("actorUserId"),
+  action: mysqlEnum("action", ["REGISTER", "ENABLE", "DISABLE", "REMOVE", "DISCOVER", "READ_RESOURCE", "CALL_TOOL"]).notNull(),
+  target: varchar("target", { length: 255 }),
+  outcome: mysqlEnum("outcome", ["OK", "DENIED", "ERROR", "TIMEOUT", "TOO_LARGE", "INVALID"]).notNull(),
+  detail: varchar("detail", { length: 255 }),
+  responseBytes: int("responseBytes"),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+}, table => ({ workspaceCreatedIdx: index("mcpConnectorAudit_workspace_created_idx").on(table.workspaceId, table.createdAt) }));

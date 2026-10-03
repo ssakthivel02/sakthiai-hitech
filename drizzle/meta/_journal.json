@@ -64,6 +64,13 @@
       "when": 1790294400000,
       "tag": "0008_durable_tasks",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1790380800000,
+      "tag": "0009_mcp_connectors",
+      "breakpoints": true
     }
   ]
 }

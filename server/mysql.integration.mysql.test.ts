@@ -209,6 +209,41 @@ describe.skipIf(skipMysqlSuite())("application on real SQL", () => {
     });
   });
 
+  describe("read-only MCP connector through tRPC (owner vs member vs outsider)", () => {
+    it("only workspace owners register/enable; members can use enabled read-only tools; outsiders get FORBIDDEN; mutation tools stay denied", async () => {
+      const { startFakeMcp } = await import("./testing/fakeMcpServer");
+      const fake = await startFakeMcp();
+      Object.assign(process.env, { MCP_ALLOWED_ENDPOINTS: fake.origin, MCP_ALLOW_LOOPBACK_HTTP: "true" });
+      try {
+        await database.db.insert(m.schema.workspaceMembers).values({ workspaceId: wsA, userId: userB.id, role: "member" });
+        const owner = callerFor(userA); const member = callerFor(userB);
+        // outsider = a third user with no membership in wsA
+        await m.db.upsertUser({ openId: "it-user-c", name: "Chitra", email: "c@example.test", loginMethod: "test" });
+        const outsider = callerFor(await m.db.getUserByOpenId("it-user-c"));
+        await expect(member.connectors.mcp.register({ workspaceId: wsA, name: "docs", endpoint: fake.url })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        await expect(outsider.connectors.mcp.register({ workspaceId: wsA, name: "docs", endpoint: fake.url })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        await expect(owner.connectors.mcp.register({ workspaceId: wsA, name: "evil", endpoint: "https://evil.example.com/mcp" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        const view = await owner.connectors.mcp.register({ workspaceId: wsA, name: "docs", endpoint: fake.url });
+        await expect(member.connectors.mcp.callTool({ workspaceId: wsA, connectorId: view.id, tool: "search_docs", arguments: { query: "x" } })).rejects.toMatchObject({ code: "FORBIDDEN" }); // disabled until the owner enables
+        await expect(member.connectors.mcp.setEnabled({ workspaceId: wsA, connectorId: view.id, enabled: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        await owner.connectors.mcp.setEnabled({ workspaceId: wsA, connectorId: view.id, enabled: true });
+        expect((await member.connectors.mcp.list({ workspaceId: wsA })).map(c => c.name)).toEqual(["docs"]);
+        const result = await member.connectors.mcp.callTool({ workspaceId: wsA, connectorId: view.id, tool: "search_docs", arguments: { query: "leave" } });
+        expect(result).toMatchObject({ text: "results for leave", provenance: { connectorName: "docs", kind: "tool" } });
+        await expect(member.connectors.mcp.callTool({ workspaceId: wsA, connectorId: view.id, tool: "delete_record", arguments: { id: "1" } })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        await expect(outsider.connectors.mcp.discover({ workspaceId: wsA, connectorId: view.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        await expect(callerFor(userB).connectors.mcp.discover({ workspaceId: wsB, connectorId: view.id })).rejects.toMatchObject({ code: "NOT_FOUND" }); // own workspace, someone else's connector id
+        await expect(member.connectors.mcp.audit({ workspaceId: wsA })).rejects.toMatchObject({ code: "FORBIDDEN" });
+        expect((await owner.connectors.mcp.audit({ workspaceId: wsA })).some(a => a.action === "CALL_TOOL" && a.target === "delete_record" && a.outcome === "DENIED")).toBe(true);
+        expect(fake.calls("tools/call")).toBe(1);
+      } finally {
+        delete process.env.MCP_ALLOWED_ENDPOINTS; delete process.env.MCP_ALLOW_LOOPBACK_HTTP;
+        await database.db.execute(sql`DELETE FROM workspaceMembers WHERE workspaceId = ${wsA} AND userId = ${userB.id}`);
+        await fake.close();
+      }
+    });
+  });
+
   describe("safe upload (real scanner protocol), storage ownership", () => {
     it("clean upload persists document + chunks with searchText inside the workspace only", async () => {
       const a = callerFor(userA);
