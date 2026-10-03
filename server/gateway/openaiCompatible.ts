@@ -1,4 +1,5 @@
 import { isRetryableHttpStatus } from "../_core/llm";
+export { isRetryableHttpStatus };
 import {
   ERROR_TRAITS,
   ProviderCallError,
@@ -40,7 +41,7 @@ export function chatCompletionsUrl(baseUrl: string): string {
   return /\/v1$/.test(trimmed) ? `${trimmed}/chat/completions` : `${trimmed}/v1/chat/completions`;
 }
 
-function classifyStatus(status: number): ProviderErrorClass {
+export function classifyStatus(status: number): ProviderErrorClass {
   if (status === 401 || status === 403) return "auth_failed";
   if (status === 408) return "timeout";
   if (status === 429) return "rate_limited";
@@ -49,7 +50,7 @@ function classifyStatus(status: number): ProviderErrorClass {
   return "unexpected_status";
 }
 
-function parseRetryAfterMs(value: string | null, now: number): number | undefined {
+export function parseRetryAfterMs(value: string | null, now: number): number | undefined {
   if (!value) return undefined;
   const seconds = Number(value);
   if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);

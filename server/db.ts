@@ -233,7 +233,7 @@ export async function searchChunks(workspaceId: number, query: string): Promise<
   if (!db) return [];
   const rows = await db.select({ chunk: documentChunks, document: documents }).from(documentChunks).innerJoin(documents, eq(documentChunks.documentId, documents.id)).where(and(eq(documentChunks.workspaceId, workspaceId), eq(documents.workspaceId, workspaceId))).limit(500);
   const semantic = await tryEmbed(query);
-  return rankChunkCandidates(rows, query, semantic?.vector ?? null);
+  return rankChunkCandidates(rows, query, semantic?.vector ?? null, 8, semantic?.adapter.model ?? null);
 }
 
 export {

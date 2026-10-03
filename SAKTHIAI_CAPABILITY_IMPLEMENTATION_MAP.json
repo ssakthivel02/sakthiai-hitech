@@ -196,13 +196,16 @@
     {
       "capability": "semantic_retrieval",
       "truthModel": "PARTIAL",
-      "status": "IMPLEMENTED_SOURCE",
-      "runtimePath": "Optional embedding adapter -> cosine hybrid scoring",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Embedding gateway (self-hosted OpenAI-compatible /v1/embeddings first, optional opt-in external) -> same-model cosine hybrid scoring; lexical fallback on any failure",
       "sourceFiles": [
+        "server/embedding/gateway.ts",
         "server/embeddings.ts",
-        "server/retrieval.ts"
+        "server/retrieval.ts",
+        "server/db.ts"
       ],
       "tests": [
+        "server/embedding/gateway.test.ts",
         "server/retrieval.acceptance.test.ts",
         "server/chat.grounding.test.ts"
       ],
@@ -211,7 +214,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "No embedding provider is configured or verified and no vector index exists; default runtime is lexical-only (embeddingStatus=unavailable). Eval harness runs with embeddings off."
+      "knownLimitation": "No real embedding server (Ollama/vLLM/llama.cpp) has been run: only an in-process fake transport. No vector index; semantic scoring is brute-force over the DB-prefiltered candidate set. Vectors from a different or unrecorded embedding model are ignored (lexical only), so existing rows need re-embedding after a model change. External embeddings require EMBEDDING_ALLOW_EXTERNAL=true."
     },
     {
       "capability": "grounded_response",
@@ -322,7 +325,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "SELF_HOST_RUNTIME_NOT_LIVE_QUALIFIED: exercised only against fake loopback/in-process servers; no real self-hosted model server has been run."
+      "knownLimitation": "SELF_HOST_RUNTIME_NOT_LIVE_QUALIFIED: exercised only against fake loopback/in-process servers; no real self-hosted model server has been run. Local embeddings: same limitation (fake transport only)."
     },
     {
       "capability": "external_provider_path",

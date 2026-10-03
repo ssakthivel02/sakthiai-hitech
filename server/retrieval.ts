@@ -68,6 +68,9 @@ export function scoreRetrievalCandidate(input: {
   terms: string[];
   queryVector: number[] | null;
   candidateVector: number[] | null;
+  /** When the query embedder's model is known, only vectors produced by the SAME model are comparable. */
+  queryModel?: string | null;
+  candidateModel?: string | null;
 }): { score: number; retrievalMethod: RetrievalMethod; lexicalScore: number; semanticScore: number } {
   const haystack = input.terms.length ? normalizeRetrievalText(input.content) : "";
   const lexicalHits = input.terms.reduce(
@@ -75,8 +78,10 @@ export function scoreRetrievalCandidate(input: {
     0,
   );
   const lexicalScore = input.terms.length ? lexicalHits / input.terms.length : 0;
+  const modelsComparable = !input.queryModel || input.candidateModel === input.queryModel;
   const hasSemantic = Boolean(
-    input.queryVector &&
+    modelsComparable &&
+      input.queryVector &&
       input.candidateVector &&
       input.queryVector.length > 0 &&
       input.queryVector.length === input.candidateVector.length,
@@ -99,13 +104,14 @@ export function scoreRetrievalCandidate(input: {
  * scoring path used by db.searchChunks, extracted so it is executable without a database.
  */
 export function rankChunkCandidates<
-  Chunk extends { content: string; embeddingJson: string | null },
+  Chunk extends { content: string; embeddingJson: string | null; embeddingModel?: string | null },
   Doc extends { filename: string; mimeType: string },
 >(
   rows: Array<{ chunk: Chunk; document: Doc }>,
   query: string,
   queryVector: number[] | null,
   limit = 8,
+  queryModel: string | null = null,
 ) {
   const terms = normalizeRetrievalTerms(query);
   return rows
@@ -115,6 +121,8 @@ export function rankChunkCandidates<
         terms,
         queryVector,
         candidateVector: queryVector ? parseEmbedding(chunk.embeddingJson) : null,
+        queryModel,
+        candidateModel: chunk.embeddingModel ?? null,
       });
       return {
         ...chunk,
