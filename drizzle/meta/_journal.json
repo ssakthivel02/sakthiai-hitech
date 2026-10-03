@@ -36,6 +36,13 @@
       "when": 1789948800000,
       "tag": "0004_creator_spend_control",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1790035200000,
+      "tag": "0005_provider_policy_runtime",
+      "breakpoints": true
     }
   ]
 }

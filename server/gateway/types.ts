@@ -141,6 +141,7 @@ export type GatewayFailureReason =
   | "all_candidates_skipped"
   | "budget_denied"
   | "internal_error"
+  | "policy_denied"
   | ProviderErrorClass;
 
 export type GatewayOutcome =

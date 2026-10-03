@@ -18,3 +18,14 @@ The gateway is the only chat-model invocation boundary. `routers.ts` imports `ge
 - `SINGLE_INSTANCE_LIMITATION`: circuit-breaker state and the budget store are in-memory per process.
 - `PERSISTENT_MULTI_INSTANCE_ENFORCEMENT_NOT_IMPLEMENTED`: the budget store interface is ready for a shared/DB-backed implementation (atomic reserve); none exists yet, and per-workspace policy currently comes from environment defaults (`WorkspacePolicyResolver` is the seam).
 - Token usage is provider-reported when present, otherwise labelled `estimated`; cost is computed only from configured rates.
+
+## Shared (multi-instance) policy, budget and breaker state
+
+Set `GATEWAY_STATE_STORE=mysql` (requires `DATABASE_URL` and migration `0005_provider_policy_runtime`) to move state into the application database:
+
+- `providerWorkspacePolicies`: per-workspace `externalEnabled`, `meteredEnabled` and daily limits. **No row = external denied.** A corrupt row = denied. `GATEWAY_ALLOW_EXTERNAL`/`GATEWAY_ALLOW_METERED` remain the global ceiling; a workspace row can only narrow, never widen, them. In this mode `GATEWAY_EXTERNAL_MAX_*` env defaults are ignored; limits come from the row.
+- `providerUsageWindows` / `providerUsageHolds`: UTC-day counters. `reserve` is one conditional `UPDATE` (atomic under concurrent instances); `commit`/`release` apply exactly once. Stale holds from crashed instances stay counted (conservative).
+- `providerBreakerStates`: transitions are compare-and-set, so only one instance wins a HALF_OPEN probe.
+- Failure policy: if shared state is unreadable, external providers are denied (fail closed); the self-hosted provider keeps working (no spend, no data egress).
+- Writing policy: `upsertWorkspaceProviderPolicy(getDb, workspaceId, {...})` (validated). There is no end-user API; enabling spend is an operator action.
+- Verified locally against MariaDB 10.11 only (`pnpm test:mysql`); MySQL 8 and any live database remain unverified.

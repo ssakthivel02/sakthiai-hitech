@@ -13,6 +13,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "evals": "node scripts/run-evals.mjs",
+    "test:mysql": "node scripts/run-mysql-tests.mjs",
     "db:push": "drizzle-kit migrate",
     "creator:runtime:acceptance": "tsx scripts/creator-runtime-acceptance.ts"
   },

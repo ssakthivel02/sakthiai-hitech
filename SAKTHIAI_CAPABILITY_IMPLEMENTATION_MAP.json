@@ -286,12 +286,14 @@
         "server/gateway/gateway.ts",
         "server/gateway/openaiCompatible.ts",
         "server/gateway/circuitBreaker.ts",
-        "server/gateway/config.ts"
+        "server/gateway/config.ts",
+        "server/gateway/mysqlStores.ts"
       ],
       "tests": [
         "server/gateway/gateway.test.ts",
         "server/gateway/units.test.ts",
-        "server/gateway/boundary.test.ts"
+        "server/gateway/boundary.test.ts",
+        "server/gateway/mysqlStores.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -299,7 +301,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "SINGLE_INSTANCE_LIMITATION: breaker/budget state is in-memory; PERSISTENT_MULTI_INSTANCE_ENFORCEMENT_NOT_IMPLEMENTED."
+      "knownLimitation": "Distributed breaker/budget/policy state exists (GATEWAY_STATE_STORE=mysql, compare-and-set breaker, fail-closed external / fail-open self-hosted) but is verified only on local MariaDB; the default configuration is still the in-memory SINGLE_INSTANCE store."
     },
     {
       "capability": "local_self_host_path",
@@ -347,15 +349,18 @@
       "capability": "budget_controls",
       "truthModel": "PARTIAL",
       "status": "TESTED_LOCAL",
-      "runtimePath": "Per-workspace daily request/token/cost budget gate for metered external providers",
+      "runtimePath": "Per-workspace policy (providerWorkspacePolicies) + atomic daily budget (providerUsageWindows/Holds) for metered external providers; GATEWAY_STATE_STORE=mysql shares it across instances (memory store remains the default)",
       "sourceFiles": [
         "server/gateway/budget.ts",
-        "server/gateway/gateway.ts"
+        "server/gateway/gateway.ts",
+        "server/gateway/mysqlStores.ts",
+        "drizzle/0005_provider_policy_runtime.sql"
       ],
       "tests": [
         "server/gateway/gateway.test.ts",
         "server/gateway/units.test.ts",
-        "server/evals/contract.eval.test.ts"
+        "server/evals/contract.eval.test.ts",
+        "server/gateway/mysqlStores.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -363,7 +368,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "In-memory budget store only: counters reset on restart and are not shared across instances; cost is computed only from operator-configured rates."
+      "knownLimitation": "MySQL store tested only against a local MariaDB 10.11 (MySQL 8 CI job pending, no Aiven run). Default remains the in-memory store (single-instance only) until GATEWAY_STATE_STORE=mysql is set and migration 0005 is applied. Stale HELD reservations from crashed instances stay counted (conservative). No admin API/UI to edit workspace policy yet (SQL/upsert helper only)."
     },
     {
       "capability": "creator_provider_path",

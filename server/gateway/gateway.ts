@@ -53,7 +53,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
   const log = deps.log ?? ((entry: Record<string, unknown>) => console.log(JSON.stringify(entry)));
   const breakerConfig: BreakerConfig = config.breaker;
   const breaker = new CircuitBreaker(deps.breakerStore, breakerConfig, now);
-  const budgetStore: BudgetStore | null = deps.budgetStore ?? (config.budget.store === "memory" ? new InMemoryBudgetStore(now) : null);
+  const budgetStore: BudgetStore | null = deps.budgetStore ?? (config.budget.store === "memory" ? new InMemoryBudgetStore(now) : null); // "mysql" requires the store to be injected (see buildGatewayFromEnv)
   const policyResolver: WorkspacePolicyResolver = deps.policyResolver ?? { resolve: async () => ({ ...config.budget.defaults }) };
   const catalog = deps.models ?? MODEL_CATALOG;
 
@@ -113,13 +113,47 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     return { source: "estimated", totalTokens: estimatedTokens };
   }
 
+  /**
+   * Workspace-level opt-in for external providers. Metered providers additionally need meteredEnabled
+   * (when the policy declares it). Metered limits/exhaustion are enforced atomically by the budget gate.
+   * Resolver failure fails closed for non-metered external providers; the budget gate does so for metered ones.
+   */
+  const policyCache = new WeakMap<GatewayRequest, Promise<WorkspaceBudgetPolicy>>();
+  function resolvePolicy(request: GatewayRequest): Promise<WorkspaceBudgetPolicy> {
+    let pending = policyCache.get(request);
+    if (!pending) {
+      pending = policyResolver.resolve(request.workspaceId);
+      policyCache.set(request, pending);
+    }
+    return pending;
+  }
+
+  async function workspaceGate(binding: ProviderBinding, request: GatewayRequest): Promise<{ ok: true } | { ok: false; detail: string }> {
+    if (binding.billingMode === "metered_api") {
+      // The budget gate owns resolver failure / externalEnabled for metered providers; here only the metered opt-in.
+      try {
+        const policy = await resolvePolicy(request);
+        if (policy.meteredEnabled === false) return { ok: false, detail: "metered_disabled" };
+      } catch {
+        /* handled (fail closed) by budgetGate */
+      }
+      return { ok: true };
+    }
+    try {
+      const policy = await resolvePolicy(request);
+      return policy.externalEnabled ? { ok: true } : { ok: false, detail: "external_disabled" };
+    } catch {
+      return { ok: false, detail: "policy_unavailable" };
+    }
+  }
+
   async function budgetGate(binding: ProviderBinding, request: GatewayRequest, estimatedTokens: number): Promise<{ ok: true; reservation: Reservation | null } | { ok: false; detail: string }> {
     if (binding.kind !== "external" || binding.billingMode !== "metered_api") return { ok: true, reservation: null };
     if (!config.policy.allowMetered) return { ok: false, detail: "metered_not_allowed" };
     if (!budgetStore) return { ok: false, detail: "budget_store_unavailable" };
     let policy: WorkspaceBudgetPolicy;
     try {
-      policy = await policyResolver.resolve(request.workspaceId);
+      policy = await resolvePolicy(request);
     } catch {
       return { ok: false, detail: "policy_unavailable" };
     }
@@ -175,7 +209,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
 
     const maxOutputTokens = request.maxOutputTokens ?? config.budget.defaultMaxOutputTokens;
     const estimatedTokens = estimateTokens(request.messages, maxOutputTokens);
-    let lastFailure: ProviderErrorClass | "budget_denied" | null = null;
+    let lastFailure: ProviderErrorClass | "budget_denied" | "policy_denied" | null = null;
     const tried = new Set<string>();
 
     for (const profile of ordered.slice(0, config.maxCandidates)) {
@@ -183,7 +217,18 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
       if (!binding || tried.has(binding.providerId)) continue; // never revisit a provider: no fallback loops
       tried.add(binding.providerId);
 
-      const admission = await breaker.admit(binding.providerId);
+      // External/metered providers need an explicit per-workspace opt-in (resolved once per request).
+      if (binding.kind === "external") {
+        const verdict = await workspaceGate(binding, request);
+        if (!verdict.ok) {
+          attempts.push({ providerId: binding.providerId, outcome: `skipped:policy:${verdict.detail}` });
+          lastFailure = binding.billingMode === "metered_api" ? "budget_denied" : "policy_denied";
+          continue;
+        }
+      }
+
+      // Fail closed if shared breaker state is unreadable, except for self-hosted providers (no spend, no data egress).
+      const admission = await breaker.admit(binding.providerId, { failOpen: binding.kind === "self_hosted" });
       if (!admission.allowed) {
         attempts.push({ providerId: binding.providerId, outcome: SKIP_CIRCUIT_OPEN });
         continue;
@@ -254,8 +299,12 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     try {
       return await invokeInner(request);
     } catch {
-      log({ event: "gateway.invoke", requestId: request.requestId, workspaceId: request.workspaceId, status: "failed", reason: "internal_error" });
-      return { status: "failed", reason: "internal_error", attempts: [], latencyMs: now() - startedAt };
+      try {
+        log({ event: "gateway.invoke", requestId: request.requestId, workspaceId: request.workspaceId, status: "failed", reason: "internal_error" });
+      } catch {
+        /* a broken log sink must never turn a contained fault into a throw */
+      }
+      return { status: "failed", reason: "internal_error", attempts: [], latencyMs: 0 };
     }
   }
 

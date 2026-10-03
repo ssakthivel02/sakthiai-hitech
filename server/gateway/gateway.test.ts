@@ -511,8 +511,18 @@ describe("confidentiality and containment", () => {
 
   it("an internal fault is reported as a failed outcome, never thrown and never as a success", async () => {
     const local = await fakeProvider([OK("x")]);
-    const gateway = build(localEnv(local.url), { breakerStore: { get: async () => { throw new Error("store down"); }, set: async () => { throw new Error("store down"); } } });
+    const gateway = build(localEnv(local.url), { models: { map: () => { throw new Error("catalog fault"); } } as never });
     expect(await gateway.invoke(request())).toMatchObject({ status: "failed", reason: "internal_error" });
+  });
+
+  it("a failing shared breaker store never blocks the self-hosted provider (fail open) but always blocks external (fail closed)", async () => {
+    const broken = { get: async () => { throw new Error("store down"); }, set: async () => { throw new Error("store down"); } };
+    const local = await fakeProvider([OK("local ok")]);
+    expect(await build(localEnv(local.url), { breakerStore: broken }).invoke(request())).toMatchObject({ status: "returned", providerId: LOCAL_PROVIDER_ID });
+    const ext = await fakeProvider([], OK("must not be called"));
+    const denied = await build(externalEnv(ext.url), { breakerStore: broken }).invoke(request());
+    expect(denied.status).toBe("failed");
+    expect(ext.requests).toHaveLength(0);
   });
 
   it("rejects credentials embedded in provider URLs and plain-http external providers", () => {

@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { bigint, boolean, date, decimal, index, int, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -285,3 +285,48 @@ export type CreatorGeneration = typeof creatorGenerations.$inferSelect;
 export type CreatorProviderJob = typeof creatorProviderJobs.$inferSelect;
 export type CreatorTimeline = typeof creatorTimelines.$inferSelect;
 export type Citation = { filename: string; mimeType?: string; documentId: number; page?: number; section?: string; paragraph?: number; chunkId?: number; excerpt: string; sourceStart?: number; sourceEnd?: number; retrievalMethod?: "lexical" | "semantic" | "hybrid"; retrievalScore?: number };
+
+// ---- Provider policy and runtime enforcement (shared across server instances) ----
+
+/** Per-workspace opt-in for external / metered model providers. A missing row means DENIED (fail closed). */
+export const providerWorkspacePolicies = mysqlTable("providerWorkspacePolicies", {
+  workspaceId: int("workspaceId").primaryKey(),
+  externalEnabled: boolean("externalEnabled").default(false).notNull(),
+  meteredEnabled: boolean("meteredEnabled").default(false).notNull(),
+  maxRequestsPerDay: bigint("maxRequestsPerDay", { mode: "number" }),
+  maxTokensPerDay: bigint("maxTokensPerDay", { mode: "number" }),
+  maxCostPerDay: decimal("maxCostPerDay", { precision: 18, scale: 6 }),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+/** UTC-day usage counters. Mutated only through single conditional UPDATE statements. */
+export const providerUsageWindows = mysqlTable("providerUsageWindows", {
+  workspaceId: int("workspaceId").notNull(),
+  windowStart: date("windowStart", { mode: "string" }).notNull(),
+  requests: bigint("requests", { mode: "number" }).default(0).notNull(),
+  tokens: bigint("tokens", { mode: "number" }).default(0).notNull(),
+  cost: decimal("cost", { precision: 18, scale: 6 }).default("0").notNull(),
+  estimatedCommits: bigint("estimatedCommits", { mode: "number" }).default(0).notNull(),
+}, table => [primaryKey({ columns: [table.workspaceId, table.windowStart] })]);
+
+/** One row per reservation so commit/release are idempotent across instances. */
+export const providerUsageHolds = mysqlTable("providerUsageHolds", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  providerId: varchar("providerId", { length: 96 }).notNull(),
+  windowStart: date("windowStart", { mode: "string" }).notNull(),
+  tokens: bigint("tokens", { mode: "number" }).notNull(),
+  cost: decimal("cost", { precision: 18, scale: 6 }).default("0").notNull(),
+  state: mysqlEnum("state", ["HELD", "COMMITTED", "RELEASED"]).default("HELD").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [index("providerUsageHolds_state_createdAt_idx").on(table.state, table.createdAt)]);
+
+/** Distributed circuit-breaker state; transitions use compare-and-set on the previous values. */
+export const providerBreakerStates = mysqlTable("providerBreakerStates", {
+  providerId: varchar("providerId", { length: 96 }).primaryKey(),
+  state: mysqlEnum("state", ["CLOSED", "OPEN", "HALF_OPEN"]).default("CLOSED").notNull(),
+  consecutiveFailures: int("consecutiveFailures").default(0).notNull(),
+  openedAt: bigint("openedAt", { mode: "number" }).default(0).notNull(),
+  probeInFlightSince: bigint("probeInFlightSince", { mode: "number" }),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});

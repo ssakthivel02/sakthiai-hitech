@@ -13,9 +13,10 @@ export type EnvLike = Record<string, string | undefined>;
 export type GatewayConfig = {
   bindings: ProviderBinding[];
   invalid: Array<{ providerId: string; reason: string }>;
+  stateStore: "memory" | "mysql";
   policy: { allowExternal: boolean; allowMetered: boolean };
   budget: {
-    store: "none" | "memory";
+    store: "none" | "memory" | "mysql";
     defaults: WorkspaceBudgetPolicy;
     /** Cost per 1,000 tokens in `unit`. Absent = cost cannot be computed (and a cost ceiling fails closed). */
     rates?: { promptPer1k: number; completionPer1k: number; unit: string };
@@ -116,9 +117,11 @@ export function loadGatewayConfig(env: EnvLike): GatewayConfig {
   return {
     bindings,
     invalid,
+    /** Where breaker/budget/policy state lives. "mysql" shares it across instances; "memory" is per-process. */
+    stateStore: (env.GATEWAY_STATE_STORE?.trim().toLowerCase() === "mysql" ? "mysql" : "memory") as "mysql" | "memory",
     policy: { allowExternal: flag(env.GATEWAY_ALLOW_EXTERNAL), allowMetered: flag(env.GATEWAY_ALLOW_METERED) },
     budget: {
-      store: env.GATEWAY_BUDGET_STORE?.trim().toLowerCase() === "memory" ? "memory" : "none",
+      store: (env.GATEWAY_STATE_STORE?.trim().toLowerCase() === "mysql" ? "mysql" : env.GATEWAY_BUDGET_STORE?.trim().toLowerCase() === "memory" ? "memory" : "none") as "mysql" | "memory" | "none",
       defaults: {
         externalEnabled: flag(env.GATEWAY_ALLOW_EXTERNAL),
         maxRequests: optionalPositive(env.GATEWAY_EXTERNAL_MAX_REQUESTS_PER_DAY),

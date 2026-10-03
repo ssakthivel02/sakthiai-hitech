@@ -1,14 +1,15 @@
 /**
  * Provider-neutral usage accounting and workspace budget enforcement for METERED providers.
  *
- * PERSISTENT_MULTI_INSTANCE_ENFORCEMENT_NOT_IMPLEMENTED: the only implementation here is
- * InMemoryBudgetStore, which is per-process and resets on restart. It is a conservative per-instance
- * ceiling, not distributed enforcement. A DB-backed BudgetStore (shared counters with an atomic
- * reserve) is required before relying on this across instances; the interface is shaped for that.
+ * InMemoryBudgetStore here is per-process and resets on restart: a conservative per-instance ceiling only
+ * (SINGLE_INSTANCE_LIMITATION when it is the configured store). For multi-instance enforcement use
+ * MysqlBudgetStore (mysqlStores.ts), whose reserve is a single conditional UPDATE and therefore atomic.
  */
 export type WorkspaceBudgetPolicy = {
   /** Master switch for any external provider for this workspace. */
   externalEnabled: boolean;
+  /** When false, metered (pay-per-use) providers are denied for this workspace even if external is enabled. Undefined = not restricted here. */
+  meteredEnabled?: boolean;
   maxRequests?: number;
   maxTokens?: number;
   /** Spend ceiling in the configured cost unit. Requires trustworthy configured rates. */
