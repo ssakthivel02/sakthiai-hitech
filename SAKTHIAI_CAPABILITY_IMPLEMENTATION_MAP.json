@@ -28,17 +28,20 @@
       "capability": "authentication",
       "truthModel": "PARTIAL",
       "status": "TESTED_LOCAL",
-      "runtimePath": "OIDC auth-code flow with S256 PKCE, single-use state/PKCE cookies, nonce ledger: /api/oauth/*",
+      "runtimePath": "OIDC auth-code flow with S256 PKCE, single-use state/PKCE cookies, nonce ledger: /api/oauth/*; server-issued login transactions persisted in MySQL (POST /api/oauth/begin, atomic single-use consume)",
       "sourceFiles": [
         "server/_core/oauth.ts",
         "server/_core/oauthSafety.ts",
         "server/_core/sdk.ts",
-        "client/src/const.ts"
+        "client/src/const.ts",
+        "server/_core/loginTransactions.ts"
       ],
       "tests": [
         "server/_core/oauth.security.test.ts",
         "server/auth.logout.test.ts",
-        "e2e/specs/auth.spec.ts"
+        "e2e/specs/auth.spec.ts",
+        "server/_core/loginTransactions.test.ts",
+        "server/_core/loginTransactions.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -46,7 +49,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Verified only against an in-process fake OIDC provider; no live identity provider exercised. Nonce ledger is process-local. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+      "knownLimitation": "Verified only against an in-process fake OIDC provider; no live identity provider exercised. Login transactions are persisted and consumed atomically in MySQL (multi-instance safe; verified on MariaDB 10.11, MySQL 8 CI_PENDING); without DATABASE_URL a process-local store is used (development only). Requires migration 0007. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "session_revocation",

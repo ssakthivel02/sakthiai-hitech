@@ -132,6 +132,9 @@ export class OAuthTransactionLedger {
   private readonly consumed = new Map<string, number>();
   constructor(private readonly ttlMs = 15 * 60 * 1000, private readonly now: () => number = Date.now) {}
 
+  /** Legacy in-process ledger accepts client-minted nonces; server-issued transactions live in loginTransactions.ts. */
+  async begin(): Promise<void> {}
+
   /** True the first time a nonce is seen, false on replay. */
   consume(nonce: string): boolean {
     const now = this.now();

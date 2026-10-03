@@ -1,4 +1,4 @@
-import { bigint, boolean, date, decimal, index, int, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { bigint, boolean, char, date, datetime, decimal, index, int, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -339,3 +339,15 @@ export const providerBreakerStates = mysqlTable("providerBreakerStates", {
   probeInFlightSince: bigint("probeInFlightSince", { mode: "number" }),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
+
+/**
+ * Server-issued OAuth login transactions shared by every application instance. Only SHA-256 digests are stored
+ * (never the usable nonce or PKCE challenge). Consumption is one conditional UPDATE, so exactly one callback wins.
+ */
+export const oauthLoginTransactions = mysqlTable("oauthLoginTransactions", {
+  nonceHash: char("nonceHash", { length: 64 }).primaryKey(),
+  challengeHash: char("challengeHash", { length: 64 }).notNull(),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+  expiresAt: datetime("expiresAt", { fsp: 3 }).notNull(),
+  consumedAt: datetime("consumedAt", { fsp: 3 }),
+}, table => ({ expiresIdx: index("oauthLoginTransactions_expiresAt_idx").on(table.expiresAt) }));

@@ -23,10 +23,18 @@ export const startLogin = async (returnTo?: string) => {
   }
 
   const redirectUri = `${window.location.origin}/api/oauth/callback`;
-  const nonce = crypto.randomUUID();
-  document.cookie = `${OAUTH_STATE_COOKIE}=${nonce}; Path=/; Max-Age=600; SameSite=Lax; Secure`;
   const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32))); // 43 chars, RFC 7636
   const challenge = base64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+  // The nonce is issued by the server (stored in the shared database, bound to this challenge, 10-minute lifetime).
+  const begin = await fetch("/api/oauth/begin", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ challenge }),
+  });
+  if (!begin.ok) throw new Error(`Login could not be started (${begin.status})`);
+  const { nonce } = (await begin.json()) as { nonce: string };
+  document.cookie = `${OAUTH_STATE_COOKIE}=${nonce}; Path=/; Max-Age=600; SameSite=Lax; Secure`;
   document.cookie = `${OAUTH_PKCE_COOKIE}=${verifier}; Path=/; Max-Age=600; SameSite=Lax; Secure`;
   const state = encodeOAuthState({ redirectUri, nonce, challenge, ...(returnTo ? { returnTo } : {}) });
 

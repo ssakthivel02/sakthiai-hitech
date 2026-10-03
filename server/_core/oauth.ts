@@ -10,7 +10,6 @@ import type { Express, Request, Response } from "express";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import {
-  OAuthTransactionLedger,
   isAcceptableStateLength,
   isValidPkceVerifier,
   pkceS256Challenge,
@@ -18,6 +17,8 @@ import {
   resolvePostLoginPath,
   safeEqual,
 } from "./oauthSafety";
+import { InMemoryRateLimiter } from "./rateLimit";
+import { getLoginTransactionStore, isWellFormedChallenge, newLoginNonce, type LoginTransactionStore } from "./loginTransactions";
 import { sdk } from "./sdk";
 import { sessionGenerationFromDate } from "./sessionRevocation";
 
@@ -26,9 +27,36 @@ function getQueryParam(req: Request, key: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-const transactionLedger = new OAuthTransactionLedger();
+const BEGIN_POLICY = { name: "oauth-begin", maxRequests: 600, windowMs: 60_000 } as const; // flood guard for table growth; behind a proxy without trust-proxy req.ip is the proxy, so this is deliberately a high shared ceiling
+const beginLimiter = new InMemoryRateLimiter();
 
-export function registerOAuthRoutes(app: Express, ledger: OAuthTransactionLedger = transactionLedger) {
+export function registerOAuthRoutes(app: Express, injectedStore?: LoginTransactionStore) {
+  const store = () => injectedStore ?? getLoginTransactionStore(db.getDb);
+
+  // Server-issued login transaction: the nonce is generated here (never by the browser), bound to the PKCE
+  // challenge, stored as digests in the shared database and valid for ten minutes.
+  app.post("/api/oauth/begin", async (req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    const decision = beginLimiter.consume(req.ip || "unknown", BEGIN_POLICY);
+    if (!decision.allowed) {
+      res.setHeader("Retry-After", String(Math.ceil(decision.retryAfterMs / 1000)));
+      res.status(429).json({ error: "too many login attempts" });
+      return;
+    }
+    const challenge = (req.body as { challenge?: unknown } | undefined)?.challenge;
+    if (!isWellFormedChallenge(challenge)) {
+      res.status(400).json({ error: "valid PKCE challenge required" });
+      return;
+    }
+    try {
+      const nonce = newLoginNonce();
+      await store().begin(nonce, challenge);
+      res.status(201).json({ nonce, expiresInSeconds: 600 });
+    } catch {
+      res.status(503).json({ error: "login unavailable" });
+    }
+  });
+
   app.get("/api/oauth/callback", async (req: Request, res: Response) => {
     const code = getQueryParam(req, "code");
     const state = getQueryParam(req, "state");
@@ -69,7 +97,15 @@ export function registerOAuthRoutes(app: Express, ledger: OAuthTransactionLedger
       rejectState();
       return;
     }
-    if (!ledger.consume(nonce)) {
+    let consumed: boolean;
+    try {
+      consumed = await store().consume(nonce, decodedState.challenge);
+    } catch {
+      // Cannot prove the transaction is fresh: fail closed without exposing details.
+      res.status(503).json({ error: "login transaction store unavailable" });
+      return;
+    }
+    if (!consumed) {
       rejectState();
       return;
     }

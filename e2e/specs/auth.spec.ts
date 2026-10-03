@@ -21,9 +21,10 @@ test.describe("authentication, safe return destination, revocation", () => {
     await page.goto("/");
     const { state, challenge, nonce, verifier } = await page.evaluate(async rt => {
       const b64u = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-      const nonce = crypto.randomUUID();
       const verifier = b64u(crypto.getRandomValues(new Uint8Array(32)));
       const challenge = b64u(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+      // the nonce is issued by the server (persisted login transaction), exactly as startLogin() does
+      const { nonce } = await (await fetch("/api/oauth/begin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ challenge }) })).json();
       document.cookie = `__Host-oauth_state=${nonce}; Path=/; Max-Age=600; SameSite=Lax; Secure`;
       document.cookie = `__Host-oauth_pkce=${verifier}; Path=/; Max-Age=600; SameSite=Lax; Secure`;
       const state = btoa(JSON.stringify({ redirectUri: `${location.origin}/api/oauth/callback`, nonce, challenge, ...(rt ? { returnTo: rt } : {}) }));
@@ -63,6 +64,23 @@ test.describe("authentication, safe return destination, revocation", () => {
     tampered.nonce = "attacker-nonce";
     const bad = await page.request.get(`/api/oauth/callback?code=${second.code}&state=${encodeURIComponent(Buffer.from(JSON.stringify(tampered)).toString("base64"))}`, { maxRedirects: 0 });
     expect(bad.status()).toBe(403);
+  });
+
+  test("a login transaction not issued by the server (forged nonce cookie + state) is refused", async ({ page }) => {
+    await page.goto("/");
+    const forged = await page.evaluate(async () => {
+      const b64u = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const nonce = b64u(crypto.getRandomValues(new Uint8Array(32)));
+      const verifier = b64u(crypto.getRandomValues(new Uint8Array(32)));
+      const challenge = b64u(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))));
+      document.cookie = `__Host-oauth_state=${nonce}; Path=/; Max-Age=600; SameSite=Lax; Secure`;
+      document.cookie = `__Host-oauth_pkce=${verifier}; Path=/; Max-Age=600; SameSite=Lax; Secure`;
+      return { challenge, state: btoa(JSON.stringify({ redirectUri: `${location.origin}/api/oauth/callback`, nonce, challenge })) };
+    });
+    const { code } = await (await fetch(`${urls.oidc}/__control/code`, { method: "POST", body: JSON.stringify({ identity: newIdentity("forged"), challenge: forged.challenge }) })).json();
+    const response = await page.request.get(`/api/oauth/callback?code=${code}&state=${encodeURIComponent(forged.state)}`, { maxRedirects: 0 });
+    expect(response.status()).toBe(403);
+    expect((await response.headersArray()).some(h => h.name.toLowerCase() === "set-cookie" && h.value.startsWith("app_session_id="))).toBe(false);
   });
 
   test("UI logout revokes the server-side session: the old cookie is dead even if replayed", async ({ page, context, browser }) => {
