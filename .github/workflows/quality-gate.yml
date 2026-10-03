@@ -207,3 +207,54 @@ jobs:
           name: mysql-integration-report
           path: reports/mysql/vitest-report.json
           if-no-files-found: warn
+
+  e2e:
+    # Browser-level production-shaped qualification: the real BUILT server + client against a disposable MySQL 8 service
+    # container, with in-process fakes for OIDC, the local LLM, an "external" LLM (must never be contacted), S3 and clamd.
+    # No paid API, hosted database or deployment is ever contacted.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-root-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Playwright E2E
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: reports/e2e
+          if-no-files-found: warn

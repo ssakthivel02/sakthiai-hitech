@@ -14,6 +14,7 @@
     "test": "vitest run",
     "evals": "node scripts/run-evals.mjs",
     "test:mysql": "node scripts/run-mysql-tests.mjs",
+    "test:e2e": "node scripts/run-e2e.mjs",
     "db:backfill-search-text": "tsx scripts/backfill-search-text.ts",
     "db:push": "drizzle-kit migrate",
     "creator:runtime:acceptance": "tsx scripts/creator-runtime-acceptance.ts"
@@ -87,7 +88,9 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@builder.io/vite-plugin-jsx-loc": "^0.1.1",
+    "@playwright/test": "1.56.0",
     "@tailwindcss/typography": "^0.5.15",
     "@tailwindcss/vite": "^4.1.3",
     "@types/express": "4.17.21",

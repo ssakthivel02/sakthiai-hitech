@@ -37,7 +37,8 @@
       ],
       "tests": [
         "server/_core/oauth.security.test.ts",
-        "server/auth.logout.test.ts"
+        "server/auth.logout.test.ts",
+        "e2e/specs/auth.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -45,7 +46,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Verified only against an in-process fake OIDC provider; no live identity provider exercised. Nonce ledger is process-local."
+      "knownLimitation": "Verified only against an in-process fake OIDC provider; no live identity provider exercised. Nonce ledger is process-local. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "session_revocation",
@@ -59,7 +60,8 @@
       "tests": [
         "server/_core/sessionRevocation.test.ts",
         "server/_core/sessionRevocation.integration.test.ts",
-        "server/mysql.integration.mysql.test.ts"
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/auth.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -67,7 +69,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Exercised end-to-end on real SQL (local MariaDB 10.11): revoke-all, concurrent generation advances, and login-upsert monotonicity (a defect found and fixed). MySQL 8 CI job and a live IdP/Aiven run are pending."
+      "knownLimitation": "Exercised end-to-end on real SQL (local MariaDB 10.11): revoke-all, concurrent generation advances, and login-upsert monotonicity (a defect found and fixed). MySQL 8 CI job and a live IdP/Aiven run are pending. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "tenant_isolation",
@@ -82,7 +84,8 @@
         "server/authTenantIsolation.test.ts",
         "server/tenant-isolation.regression.test.ts",
         "server/evals/contract.eval.test.ts",
-        "server/mysql.integration.mysql.test.ts"
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -90,7 +93,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Proven through tRPC on real SQL (local MariaDB 10.11): membership matrix, cross-tenant FORBIDDEN, conversation ownership, retrieval scoping. MySQL 8 CI job pending; no production database exercised."
+      "knownLimitation": "Proven through tRPC on real SQL (local MariaDB 10.11): membership matrix, cross-tenant FORBIDDEN, conversation ownership, retrieval scoping. MySQL 8 CI job pending; no production database exercised. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "storage_authorization",
@@ -130,7 +133,8 @@
       "tests": [
         "server/fileIngestion.acceptance.test.ts",
         "server/_core/bodyLimits.test.ts",
-        "server/mysql.integration.mysql.test.ts"
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -138,7 +142,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Upload exercised on real SQL with a real clamd INSTREAM protocol server (clean, infected, scanner down) on local MariaDB; object storage is faked and no real scanner daemon was run. Authenticated 17 MiB limit proven in-process."
+      "knownLimitation": "Upload exercised on real SQL with a real clamd INSTREAM protocol server (clean, infected, scanner down) on local MariaDB; object storage is faked and no real scanner daemon was run. Authenticated 17 MiB limit proven in-process. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "malware_gate",
@@ -150,14 +154,15 @@
       ],
       "tests": [
         "server/security/malwareScanner.test.ts",
-        "server/mysql.integration.mysql.test.ts"
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test"
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Fail-closed behaviour verified over the real INSTREAM protocol against an in-process clamd stand-in (clean/infected/unavailable); no real ClamAV daemon configured or contacted; deployment default is not_configured and blocks uploads."
+      "knownLimitation": "Fail-closed behaviour verified over the real INSTREAM protocol against an in-process clamd stand-in (clean/infected/unavailable); no real ClamAV daemon configured or contacted; deployment default is not_configured and blocks uploads. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "english_lexical_retrieval",
@@ -174,7 +179,8 @@
         "server/evals/contract.eval.test.ts",
         "server/retrieval.acceptance.test.ts",
         "server/retrieval.determinism.test.ts",
-        "server/retrievalStore.mysql.test.ts"
+        "server/retrievalStore.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -182,7 +188,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Verified on real SQL only against local MariaDB 10.11 (1,200+ chunk workspace); MySQL 8 CI job and live Aiven pending. LIKE-based prefilter scans a workspace's rows inside the DB (index narrows by workspace only): fine for tens of thousands of chunks per workspace, not millions (no FULLTEXT/ANN index). Migration 0006 and `pnpm db:backfill-search-text` must be run for pre-existing rows (they stay searchable through a capped legacy path meanwhile). Tamil matching is lexical/Unicode-normalised only."
+      "knownLimitation": "Verified on real SQL only against local MariaDB 10.11 (1,200+ chunk workspace); MySQL 8 CI job and live Aiven pending. LIKE-based prefilter scans a workspace's rows inside the DB (index narrows by workspace only): fine for tens of thousands of chunks per workspace, not millions (no FULLTEXT/ANN index). Migration 0006 and `pnpm db:backfill-search-text` must be run for pre-existing rows (they stay searchable through a capped legacy path meanwhile). Tamil matching is lexical/Unicode-normalised only. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "tamil_lexical_retrieval",
@@ -198,7 +204,8 @@
         "server/evals/contract.eval.test.ts",
         "server/retrieval.determinism.test.ts",
         "server/retrieval.unicode.test.ts",
-        "server/retrievalStore.mysql.test.ts"
+        "server/retrievalStore.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -206,7 +213,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Verified on real SQL only against local MariaDB 10.11 (1,200+ chunk workspace); MySQL 8 CI job and live Aiven pending. LIKE-based prefilter scans a workspace's rows inside the DB (index narrows by workspace only): fine for tens of thousands of chunks per workspace, not millions (no FULLTEXT/ANN index). Migration 0006 and `pnpm db:backfill-search-text` must be run for pre-existing rows (they stay searchable through a capped legacy path meanwhile). Tamil matching is lexical/Unicode-normalised only."
+      "knownLimitation": "Verified on real SQL only against local MariaDB 10.11 (1,200+ chunk workspace); MySQL 8 CI job and live Aiven pending. LIKE-based prefilter scans a workspace's rows inside the DB (index narrows by workspace only): fine for tens of thousands of chunks per workspace, not millions (no FULLTEXT/ANN index). Migration 0006 and `pnpm db:backfill-search-text` must be run for pre-existing rows (they stay searchable through a capped legacy path meanwhile). Tamil matching is lexical/Unicode-normalised only. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "semantic_retrieval",
@@ -245,7 +252,8 @@
       ],
       "tests": [
         "server/chat.grounding.test.ts",
-        "server/evals/contract.eval.test.ts"
+        "server/evals/contract.eval.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -254,7 +262,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Contract behaviour only: no real model has produced an answer through this path; answer quality is NOT_MEASURED."
+      "knownLimitation": "Contract behaviour only: no real model has produced an answer through this path; answer quality is NOT_MEASURED. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "model_unavailable_truthfulness",
@@ -267,7 +275,8 @@
       ],
       "tests": [
         "server/chat.grounding.test.ts",
-        "server/evals/contract.eval.test.ts"
+        "server/evals/contract.eval.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -275,7 +284,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Failure injection is simulated via replayed transport responses."
+      "knownLimitation": "Failure injection is simulated via replayed transport responses. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "capability_router",
@@ -334,7 +343,8 @@
       ],
       "tests": [
         "server/gateway/gateway.test.ts",
-        "server/evals/contract.eval.test.ts"
+        "server/evals/contract.eval.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -342,7 +352,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "SELF_HOST_RUNTIME_NOT_LIVE_QUALIFIED: exercised only against fake loopback/in-process servers; no real self-hosted model server has been run. Local embeddings: same limitation (fake transport only)."
+      "knownLimitation": "SELF_HOST_RUNTIME_NOT_LIVE_QUALIFIED: exercised only against fake loopback/in-process servers; no real self-hosted model server has been run. Local embeddings: same limitation (fake transport only). Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "external_provider_path",
@@ -355,7 +365,8 @@
       ],
       "tests": [
         "server/gateway/gateway.test.ts",
-        "server/evals/contract.eval.test.ts"
+        "server/evals/contract.eval.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -363,7 +374,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Deny-by-default and never called in tests; no real external provider or credential has been exercised (no paid call made)."
+      "knownLimitation": "Deny-by-default and never called in tests; no real external provider or credential has been exercised (no paid call made). Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     },
     {
       "capability": "budget_controls",
@@ -427,7 +438,8 @@
       "tests": [
         "server/_core/readiness.test.ts",
         "server/_core/httpTelemetry.test.ts",
-        "server/mysql.integration.mysql.test.ts"
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -435,7 +447,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Probe verified against a live local database and with bad credentials/wrong database name; built-server smoke run locally without DB/auth/storage; no deployed environment probed."
+      "knownLimitation": "Probe verified against a live local database and with bad credentials/wrong database name; built-server smoke run locally without DB/auth/storage; no deployed environment probed. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
     }
   ]
 }
