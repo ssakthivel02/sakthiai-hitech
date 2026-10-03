@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
@@ -59,7 +60,9 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     lastSignedIn: new Date(),
   };
   const updateSet: Record<string, unknown> = {
-    lastSignedIn: values.lastSignedIn,
+    // lastSignedIn doubles as the persisted session generation (see advanceUserSessionGeneration): it must
+    // NEVER move backwards, or a revoked token's generation could become current again.
+    lastSignedIn: sql`GREATEST(${users.lastSignedIn}, ${values.lastSignedIn})`,
     name: values.name,
     email: values.email,
     loginMethod: values.loginMethod,
@@ -120,28 +123,34 @@ export function assertWorkspaceAccess(
 export async function ensureWorkspace(user: User) {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
-  const existing = await db
-    .select({ workspace: workspaces })
-    .from(workspaceMembers)
-    .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-    .where(eq(workspaceMembers.userId, user.id))
-    .limit(1);
-  if (existing[0]?.workspace) return existing[0].workspace;
+  // Serialise concurrent first-time callers for the SAME user by locking their users row, so parallel
+  // requests (e.g. several tabs right after first login) can never create duplicate workspaces or collide on slug.
+  return db.transaction(async tx => {
+    await tx.select({ id: users.id }).from(users).where(eq(users.id, user.id)).for("update");
+    const existing = await tx
+      .select({ workspace: workspaces })
+      .from(workspaceMembers)
+      .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+      .where(eq(workspaceMembers.userId, user.id))
+      .orderBy(asc(workspaces.id))
+      .limit(1);
+    if (existing[0]?.workspace) return existing[0].workspace;
 
-  const slug = `ws-${user.id}-${Date.now()}`;
-  await db.insert(workspaces).values({
-    ownerUserId: user.id,
-    name: `${user.name || "Personal"} workspace`,
-    slug,
+    const slug = `ws-${user.id}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    await tx.insert(workspaces).values({
+      ownerUserId: user.id,
+      name: `${user.name || "Personal"} workspace`,
+      slug,
+    });
+    const created = await tx.select().from(workspaces).where(eq(workspaces.slug, slug)).limit(1);
+    if (!created[0]) throw new Error("Workspace creation failed");
+    await tx.insert(workspaceMembers).values({
+      workspaceId: created[0].id,
+      userId: user.id,
+      role: "owner",
+    });
+    return created[0];
   });
-  const created = await db.select().from(workspaces).where(eq(workspaces.slug, slug)).limit(1);
-  if (!created[0]) throw new Error("Workspace creation failed");
-  await db.insert(workspaceMembers).values({
-    workspaceId: created[0].id,
-    userId: user.id,
-    role: "owner",
-  });
-  return created[0];
 }
 
 export async function listUserWorkspaces(userId: number) {

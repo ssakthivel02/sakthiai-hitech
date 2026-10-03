@@ -159,3 +159,51 @@ jobs:
             echo "Expected /readyz to fail closed with 503 when required preview services are absent; got $ready_status"
             exit 1
           fi
+
+  mysql-integration:
+    # Real MySQL 8 qualification: migrations vs schema, session revocation, tenancy, upload/scanner protocol,
+    # storage ownership, retrieval, provider policy/budget/breaker persistence, readiness. Disposable service
+    # container only; never a hosted database.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-root-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Real-MySQL integration tests
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+        run: pnpm test:mysql
+
+      - name: Upload MySQL integration report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-integration-report
+          path: reports/mysql/vitest-report.json
+          if-no-files-found: warn

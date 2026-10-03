@@ -58,7 +58,8 @@
       ],
       "tests": [
         "server/_core/sessionRevocation.test.ts",
-        "server/_core/sessionRevocation.integration.test.ts"
+        "server/_core/sessionRevocation.integration.test.ts",
+        "server/mysql.integration.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -66,7 +67,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "No live database run; revocation correctness depends on the production DB schema being migrated (not performed here)."
+      "knownLimitation": "Exercised end-to-end on real SQL (local MariaDB 10.11): revoke-all, concurrent generation advances, and login-upsert monotonicity (a defect found and fixed). MySQL 8 CI job and a live IdP/Aiven run are pending."
     },
     {
       "capability": "tenant_isolation",
@@ -80,7 +81,8 @@
       "tests": [
         "server/authTenantIsolation.test.ts",
         "server/tenant-isolation.regression.test.ts",
-        "server/evals/contract.eval.test.ts"
+        "server/evals/contract.eval.test.ts",
+        "server/mysql.integration.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -88,7 +90,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Proven against mocked persistence; not proven against a real multi-tenant MySQL instance."
+      "knownLimitation": "Proven through tRPC on real SQL (local MariaDB 10.11): membership matrix, cross-tenant FORBIDDEN, conversation ownership, retrieval scoping. MySQL 8 CI job pending; no production database exercised."
     },
     {
       "capability": "storage_authorization",
@@ -105,14 +107,15 @@
         "server/retrievalStore.mysql.test.ts",
         "server/storage.test.ts",
         "server/storageAccess.test.ts",
-        "server/storageProxy.security.test.ts"
+        "server/storageProxy.security.test.ts",
+        "server/mysql.integration.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test"
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "No real object-storage backend exercised; scoped credentials and bucket policy are unverified. storageKey lookups now use prefix indexes (query plans verified on local MariaDB only)."
+      "knownLimitation": "Object ownership resolved against real SQL (documents and creator assets, binary-exact keys) on local MariaDB; object-store backend, scoped credentials and bucket policy remain unverified. storageKey lookups use prefix indexes (plans verified on MariaDB only)."
     },
     {
       "capability": "file_ingestion",
@@ -126,7 +129,8 @@
       ],
       "tests": [
         "server/fileIngestion.acceptance.test.ts",
-        "server/_core/bodyLimits.test.ts"
+        "server/_core/bodyLimits.test.ts",
+        "server/mysql.integration.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -134,7 +138,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Authenticated 17 MiB ingestion limit proven in-process; no real storage or DB write path executed."
+      "knownLimitation": "Upload exercised on real SQL with a real clamd INSTREAM protocol server (clean, infected, scanner down) on local MariaDB; object storage is faked and no real scanner daemon was run. Authenticated 17 MiB limit proven in-process."
     },
     {
       "capability": "malware_gate",
@@ -145,14 +149,15 @@
         "server/security/malwareScanner.ts"
       ],
       "tests": [
-        "server/security/malwareScanner.test.ts"
+        "server/security/malwareScanner.test.ts",
+        "server/mysql.integration.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test"
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "No real scanner daemon (e.g. ClamAV) configured or contacted; deployment status is not_configured by default and fails closed."
+      "knownLimitation": "Fail-closed behaviour verified over the real INSTREAM protocol against an in-process clamd stand-in (clean/infected/unavailable); no real ClamAV daemon configured or contacted; deployment default is not_configured and blocks uploads."
     },
     {
       "capability": "english_lexical_retrieval",
@@ -421,7 +426,8 @@
       ],
       "tests": [
         "server/_core/readiness.test.ts",
-        "server/_core/httpTelemetry.test.ts"
+        "server/_core/httpTelemetry.test.ts",
+        "server/mysql.integration.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -429,7 +435,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Built-server smoke run locally without DB/auth/storage; no deployed environment probed."
+      "knownLimitation": "Probe verified against a live local database and with bad credentials/wrong database name; built-server smoke run locally without DB/auth/storage; no deployed environment probed."
     }
   ]
 }
