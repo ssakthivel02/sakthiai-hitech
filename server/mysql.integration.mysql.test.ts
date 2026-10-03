@@ -189,6 +189,26 @@ describe.skipIf(skipMysqlSuite())("application on real SQL", () => {
     });
   });
 
+  describe("durable tasks through tRPC (workspace ownership)", () => {
+    it("members see and cancel only their own workspace's tasks; foreign workspaces are FORBIDDEN and foreign task ids are NOT_FOUND", async () => {
+      const { MysqlTaskStore } = await import("./tasks");
+      const store = new MysqlTaskStore(m.db.getDb as never);
+      const { task } = await store.create({ workspaceId: wsA, type: "it.task", input: { n: 1 } });
+      const a = callerFor(userA); const b = callerFor(userB);
+      expect(await a.tasks.get({ workspaceId: wsA, taskId: task.id })).toMatchObject({ id: task.id, state: "QUEUED", type: "it.task" });
+      expect(JSON.stringify(await a.tasks.get({ workspaceId: wsA, taskId: task.id }))).not.toMatch(/leaseOwner|inputJson/);
+      expect((await a.tasks.list({ workspaceId: wsA })).map(t => t.id)).toContain(task.id);
+      await expect(b.tasks.get({ workspaceId: wsA, taskId: task.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(b.tasks.list({ workspaceId: wsA })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(b.tasks.cancel({ workspaceId: wsA, taskId: task.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      // B names its OWN workspace but A's task id: indistinguishable from absent, and nothing changes
+      await expect(b.tasks.get({ workspaceId: wsB, taskId: task.id })).rejects.toMatchObject({ code: "NOT_FOUND" });
+      await expect(b.tasks.cancel({ workspaceId: wsB, taskId: task.id })).rejects.toMatchObject({ code: "NOT_FOUND" });
+      expect((await a.tasks.get({ workspaceId: wsA, taskId: task.id })).state).toBe("QUEUED");
+      expect((await a.tasks.cancel({ workspaceId: wsA, taskId: task.id })).state).toBe("CANCELLED");
+    });
+  });
+
   describe("safe upload (real scanner protocol), storage ownership", () => {
     it("clean upload persists document + chunks with searchText inside the workspace only", async () => {
       const a = callerFor(userA);

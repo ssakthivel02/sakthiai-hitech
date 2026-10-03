@@ -351,3 +351,44 @@ export const oauthLoginTransactions = mysqlTable("oauthLoginTransactions", {
   expiresAt: datetime("expiresAt", { fsp: 3 }).notNull(),
   consumedAt: datetime("consumedAt", { fsp: 3 }),
 }, table => ({ expiresIdx: index("oauthLoginTransactions_expiresAt_idx").on(table.expiresAt) }));
+
+/** Durable, workspace-owned task state. Leases + attempt-number fencing make execution crash-safe and resumable. */
+export const durableTasks = mysqlTable("durableTasks", {
+  id: char("id", { length: 36 }).primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  createdByUserId: int("createdByUserId"),
+  type: varchar("type", { length: 96 }).notNull(),
+  state: mysqlEnum("state", ["QUEUED", "RUNNING", "WAITING", "SUCCEEDED", "FAILED", "CANCELLED"]).default("QUEUED").notNull(),
+  idempotencyKey: varchar("idempotencyKey", { length: 128 }),
+  inputHash: char("inputHash", { length: 64 }).notNull(),
+  inputJson: text("inputJson").notNull(),
+  checkpointJson: text("checkpointJson"),
+  checkpointSeq: int("checkpointSeq").default(0).notNull(),
+  progressPercent: int("progressPercent"),
+  progressNote: varchar("progressNote", { length: 255 }),
+  resultJson: text("resultJson"),
+  attempt: int("attempt").default(0).notNull(),
+  maxAttempts: int("maxAttempts").default(3).notNull(),
+  retryAfter: datetime("retryAfter", { fsp: 3 }),
+  leaseOwner: varchar("leaseOwner", { length: 96 }),
+  leaseExpiresAt: datetime("leaseExpiresAt", { fsp: 3 }),
+  cancelRequested: boolean("cancelRequested").default(false).notNull(),
+  failureClass: mysqlEnum("failureClass", ["RETRYABLE", "NON_RETRYABLE", "PROVIDER_UNAVAILABLE", "BUDGET_DENIED", "POLICY_DENIED", "LEASE_EXPIRED", "INTERNAL"]),
+  errorMessage: varchar("errorMessage", { length: 500 }),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+  updatedAt: datetime("updatedAt", { fsp: 3 }).notNull(),
+  startedAt: datetime("startedAt", { fsp: 3 }),
+  finishedAt: datetime("finishedAt", { fsp: 3 }),
+}, table => ({
+  idempotencyUq: uniqueIndex("durableTasks_workspace_idempotency_uq").on(table.workspaceId, table.idempotencyKey),
+  stateRetryIdx: index("durableTasks_state_retry_idx").on(table.state, table.retryAfter, table.createdAt),
+  workspaceCreatedIdx: index("durableTasks_workspace_created_idx").on(table.workspaceId, table.createdAt),
+}));
+
+/** Completed side-effect markers: a resumed/retried task replays recorded results instead of repeating the effect. */
+export const durableTaskEffects = mysqlTable("durableTaskEffects", {
+  taskId: char("taskId", { length: 36 }).notNull(),
+  effectKey: varchar("effectKey", { length: 128 }).notNull(),
+  resultJson: text("resultJson"),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+}, table => ({ pk: primaryKey({ columns: [table.taskId, table.effectKey] }) }));

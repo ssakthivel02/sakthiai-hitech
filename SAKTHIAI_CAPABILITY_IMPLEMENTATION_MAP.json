@@ -451,6 +451,32 @@
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
       "knownLimitation": "Probe verified against a live local database and with bad credentials/wrong database name; built-server smoke run locally without DB/auth/storage; no deployed environment probed. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "durable_task_execution",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "MySQL-backed durable tasks: server/tasks (store, worker), tRPC tasks.get/list/cancel; leases + attempt fencing, checkpoint/resume, bounded retry, durable cancel, idempotent create, effect dedupe, Provider Gateway-governed model calls",
+      "sourceFiles": [
+        "server/tasks/store.ts",
+        "server/tasks/worker.ts",
+        "server/tasks/types.ts",
+        "server/tasks/index.ts",
+        "drizzle/0008_durable_tasks.sql"
+      ],
+      "tests": [
+        "server/tasks/tasks.test.ts",
+        "server/tasks/tasks.mysql.test.ts",
+        "server/mysql.integration.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Verified on local MariaDB 10.11 only (MySQL 8 CI pending). No product feature enqueues tasks yet and no worker is started by the server: the execution substrate is SOURCE_IMPLEMENTED and tested, not wired to a user-facing workflow. Side effects are at-least-once with durable dedupe records (a crash between the effect and its record repeats it); handlers must use idempotent operations. Cancellation of a running task is cooperative (next checkpoint)."
     }
   ]
 }

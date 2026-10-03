@@ -1,3 +1,4 @@
+import { MysqlTaskStore, TASK_STATES, toView } from "./tasks";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -18,6 +19,8 @@ import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
 import { resolveGroundedOutcome, type ModelResult } from "./grounding";
 
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
+let taskStore: MysqlTaskStore | null = null;
+const sharedTaskStore = () => (taskStore ??= new MysqlTaskStore(getDb));
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
 const base64ToBuffer = (value: string) => Buffer.from(value.replace(/^data:[^;]+;base64,/, ""), "base64");
 const safeFilename = (value: string) => value.normalize("NFKC").replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^\.+/, "").slice(0, 180) || "upload";
@@ -97,6 +100,11 @@ export const appRouter = router({
       await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: outcome.answer, citationsJson: JSON.stringify(answerCitations) });
       return { conversationId, answer: outcome.answer, citations: answerCitations, grounding: outcome.grounding, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId, gateway: { status: gatewayOutcome.status, providerId: gatewayOutcome.status === "returned" ? gatewayOutcome.providerId : undefined, failureReason: gatewayOutcome.status === "failed" ? gatewayOutcome.reason : undefined, attempts: gatewayOutcome.attempts.length } } };
     }),
+  }),
+  tasks: router({
+    get: protectedProcedure.input(workspaceInput.extend({ taskId: z.string().uuid() })).query(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); const task = await sharedTaskStore().get(input.workspaceId, input.taskId); if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "Task not found" }); return toView(task); }),
+    list: protectedProcedure.input(workspaceInput.extend({ state: z.enum(TASK_STATES).optional(), limit: z.number().int().min(1).max(200).optional() })).query(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return (await sharedTaskStore().list(input.workspaceId, { state: input.state, limit: input.limit })).map(toView); }),
+    cancel: protectedProcedure.input(workspaceInput.extend({ taskId: z.string().uuid() })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); const task = await sharedTaskStore().cancel(input.workspaceId, input.taskId); if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "Task not found" }); return toView(task); }),
   }),
 });
 export type AppRouter = typeof appRouter;
