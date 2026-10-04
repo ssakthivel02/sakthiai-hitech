@@ -293,7 +293,8 @@ export type CreatorAsset = typeof creatorAssets.$inferSelect;
 export type CreatorGeneration = typeof creatorGenerations.$inferSelect;
 export type CreatorProviderJob = typeof creatorProviderJobs.$inferSelect;
 export type CreatorTimeline = typeof creatorTimelines.$inferSelect;
-export type Citation = { filename: string; mimeType?: string; documentId: number; page?: number; section?: string; paragraph?: number; chunkId?: number; excerpt: string; sourceStart?: number; sourceEnd?: number; retrievalMethod?: "lexical" | "semantic" | "hybrid"; retrievalScore?: number };
+export type Citation = { filename: string; mimeType?: string; documentId: number; page?: number; section?: string; paragraph?: number; chunkId?: number; excerpt: string; sourceStart?: number; sourceEnd?: number; retrievalMethod?: "lexical" | "semantic" | "hybrid"; retrievalScore?: number; /** Present only for governed read-only MCP tool evidence (documentId is 0 for these). */ source?: "mcp"; mcp?: McpEvidenceProvenance };
+export type McpEvidenceProvenance = { connectorId: string; connectorName: string; serverName: string | null; serverVersion: string | null; endpointOrigin: string; tool: string; retrievedAt: string; responseBytes: number; truncated: boolean };
 
 // ---- Provider policy and runtime enforcement (shared across server instances) ----
 

@@ -1,4 +1,5 @@
 import { TASK_STATES, toView, CHAT_ANSWER_TASK, TaskIdempotencyConflict } from "./tasks";
+import { getSharedMcpService } from "./connectors/mcp/shared";
 import { getSharedTaskStore, asyncAnswersEnabled } from "./tasks/shared";
 import { toCitations, groundedSystemPrompt } from "./chat/grounded";
 import { ResumableIngestion, UploadStore, IngestError, createCommitter, projectBelongsToWorkspace } from "./ingestion";
@@ -24,8 +25,7 @@ import { resolveGroundedOutcome, type ModelResult } from "./grounding";
 
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
 const sharedTaskStore = () => getSharedTaskStore();
-let mcpService: McpConnectorService | null = null;
-const sharedMcp = () => (mcpService ??= new McpConnectorService({ store: new McpConnectorStore(getDb) }));
+const sharedMcp = () => getSharedMcpService();
 let ingestion: ResumableIngestion | null = null;
 const sharedIngestion = () => (ingestion ??= new ResumableIngestion({ store: new UploadStore(getDb), commit: createCommitter(), projectAllowed: projectBelongsToWorkspace }));
 const ingestErrorCode = { DISABLED: "FORBIDDEN", INVALID: "BAD_REQUEST", NOT_FOUND: "NOT_FOUND", CONFLICT: "CONFLICT", LIMIT: "TOO_MANY_REQUESTS", CLOSED: "CONFLICT", INCOMPLETE: "PRECONDITION_FAILED", INFECTED: "BAD_REQUEST", SCANNER_UNAVAILABLE: "SERVICE_UNAVAILABLE", DUPLICATE: "CONFLICT", EXTRACTION_FAILED: "BAD_REQUEST", PROJECT_DENIED: "FORBIDDEN" } as const;

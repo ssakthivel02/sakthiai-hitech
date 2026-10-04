@@ -495,12 +495,17 @@
         "server/connectors/mcp/store.ts",
         "server/connectors/mcp/service.ts",
         "server/skills/mcp.ts",
-        "drizzle/0009_mcp_connectors.sql"
+        "drizzle/0009_mcp_connectors.sql",
+        "server/chat/mcpTools.ts",
+        "server/connectors/mcp/shared.ts",
+        "server/tasks/chatAnswer.ts"
       ],
       "tests": [
         "server/connectors/mcp/mcp.test.ts",
         "server/connectors/mcp/service.mysql.test.ts",
-        "server/mysql.integration.mysql.test.ts"
+        "server/mysql.integration.mysql.test.ts",
+        "server/chat/mcpTools.test.ts",
+        "server/chat/mcpChat.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -509,7 +514,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Exercised only against a deterministic in-process fake MCP server; no real MCP server, no OAuth-protected MCP servers, no stdio transport (deliberately unsupported). Not yet exposed to the chat/agent runtime: callers use tRPC or the service. Name-based mutation heuristics are conservative (false positives such as get_order are denied). Secrets are resolved from MCP_SECRET_<REF> environment variables."
+      "knownLimitation": "Exercised only against a deterministic in-process fake MCP server; no real MCP server, no OAuth-protected MCP servers, no stdio transport (deliberately unsupported). Wired (default OFF, MCP_CHAT_TOOLS_ENABLED) into the durable chat.answer path only (one read-only call per answer, provenance in the citation); synchronous chat.send and the brain/agent orchestrator do not use it. See docs/MCP_CHAT_TOOLS.md. Name-based mutation heuristics are conservative (false positives such as get_order are denied). Secrets are resolved from MCP_SECRET_<REF> environment variables."
     },
     {
       "capability": "resumable_quarantined_ingestion",

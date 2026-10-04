@@ -1,12 +1,13 @@
 import { getDb } from "../db";
 import { getProviderGateway } from "../gateway";
 import { createChatAnswerHandler, CHAT_ANSWER_TASK } from "./chatAnswer";
+import { getSharedMcpService } from "../connectors/mcp/shared";
 import { MysqlTaskStore } from "./store";
 import { TaskWorkerRuntime, runtimeConfigFromEnv } from "./runtime";
 
 let store: MysqlTaskStore | null = null;
 export const getSharedTaskStore = () => (store ??= new MysqlTaskStore(getDb));
-export const taskHandlers = () => ({ [CHAT_ANSWER_TASK]: createChatAnswerHandler() });
+export const taskHandlers = () => ({ [CHAT_ANSWER_TASK]: createChatAnswerHandler({ mcp: { service: getSharedMcpService() } }) });
 
 let runtime: TaskWorkerRuntime | null = null;
 export const getTaskRuntime = () => (runtime ??= new TaskWorkerRuntime({
