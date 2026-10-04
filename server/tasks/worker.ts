@@ -56,6 +56,7 @@ export class TaskWorker {
   private readonly leaseMs: number;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private abandoned = false;
   constructor(private readonly options: WorkerOptions) {
     this.owner = options.owner ?? `worker-${randomUUID()}`;
     this.leaseMs = options.leaseMs ?? 30_000;
@@ -72,11 +73,12 @@ export class TaskWorker {
     let cancelled = task.cancelRequested;
     let seq = task.checkpointSeq;
     const heartbeat = setInterval(() => {
+      if (this.abandoned) { clearInterval(heartbeat); return; }
       store.heartbeat(task.id, this.owner, attempt, this.leaseMs).then(r => { if (!r.ok) lost = true; else if (r.cancelRequested) cancelled = true; }).catch(() => undefined);
     }, Math.max(10, Math.floor(this.leaseMs / 3)));
     heartbeat.unref?.();
 
-    const stopIfNeeded = () => { if (lost) throw new TaskLeaseLostError(); if (cancelled) throw new TaskCancelledError(); };
+    const stopIfNeeded = () => { if (this.abandoned || lost) throw new TaskLeaseLostError(); if (cancelled) throw new TaskCancelledError(); };
     const ctx: TaskContext = {
       task, input: task.input, checkpoint: task.checkpoint, attempt,
       throwIfCancelled: stopIfNeeded,
@@ -133,6 +135,12 @@ export class TaskWorker {
       clearInterval(heartbeat);
     }
   }
+
+  /**
+   * Shutdown escape hatch: stop renewing the lease and make the handler's next ctx call fail with TaskLeaseLostError WITHOUT
+   * any store write. The task keeps its (now unrenewed) lease, so another worker resumes it from the last checkpoint after expiry.
+   */
+  abandon() { this.abandoned = true; }
 
   /** In-process polling loop (no external queue required). Safe to run on many instances. */
   start(pollMs = 1000) {

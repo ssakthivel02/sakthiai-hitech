@@ -1,4 +1,6 @@
 import "dotenv/config";
+import { getTaskRuntime } from "../tasks/shared";
+import { runtimeConfigFromEnv } from "../tasks/runtime";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
@@ -142,6 +144,7 @@ async function startServer() {
         llm: llmReady ? "configured" : "missing_configuration",
         storage: storageReady ? "configured" : "missing_configuration",
         embeddings: embeddingStatus(),
+        taskWorker: getTaskRuntime().status(),
         scanner: {
           configuration: malwareScannerConfigurationStatus(),
           liveProbe: "not_checked",
@@ -164,9 +167,26 @@ async function startServer() {
   if (port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
-  server.listen(port, "0.0.0.0", () =>
-    console.log(`Server running on http://0.0.0.0:${port}/`),
-  );
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${port}/`);
+    // Default OFF (TASK_WORKER_ENABLED). A worker failure is contained inside the runtime and never crashes the HTTP app.
+    try { getTaskRuntime().start(); } catch (error) { console.error("task runtime failed to start", error instanceof Error ? error.message : error); }
+  });
+
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal} received: stopping task runtime, then HTTP server`);
+    const force = setTimeout(() => process.exit(1), runtimeConfigFromEnv().shutdownGraceMs + 10_000);
+    force.unref?.();
+    getTaskRuntime().stop()
+      .catch(() => undefined)
+      .then(() => new Promise<void>(resolve => server.close(() => resolve())))
+      .then(() => process.exit(0));
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 startServer().catch(console.error);

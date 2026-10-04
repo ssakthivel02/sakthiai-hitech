@@ -1,4 +1,6 @@
-import { MysqlTaskStore, TASK_STATES, toView } from "./tasks";
+import { TASK_STATES, toView, CHAT_ANSWER_TASK, TaskIdempotencyConflict } from "./tasks";
+import { getSharedTaskStore, asyncAnswersEnabled } from "./tasks/shared";
+import { toCitations, groundedSystemPrompt } from "./chat/grounded";
 import { ResumableIngestion, UploadStore, IngestError, createCommitter, projectBelongsToWorkspace } from "./ingestion";
 import { McpConnectorService, McpConnectorStore, McpPolicyError } from "./connectors/mcp";
 import { createHash } from "node:crypto";
@@ -21,8 +23,7 @@ import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
 import { resolveGroundedOutcome, type ModelResult } from "./grounding";
 
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
-let taskStore: MysqlTaskStore | null = null;
-const sharedTaskStore = () => (taskStore ??= new MysqlTaskStore(getDb));
+const sharedTaskStore = () => getSharedTaskStore();
 let mcpService: McpConnectorService | null = null;
 const sharedMcp = () => (mcpService ??= new McpConnectorService({ store: new McpConnectorStore(getDb) }));
 let ingestion: ResumableIngestion | null = null;
@@ -106,18 +107,29 @@ export const appRouter = router({
       if (!conversationId) { await db.insert(conversations).values({ workspaceId: input.workspaceId, userId: ctx.user.id, title: input.message.slice(0, 80), language: input.language }); const row = await db.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.workspaceId, input.workspaceId), eq(conversations.userId, ctx.user.id))).orderBy(desc(conversations.id)).limit(1); conversationId = row[0]?.id; }
       if (!conversationId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Conversation creation failed" });
       const retrievalStarted = Date.now(); const matches = await searchChunks(input.workspaceId, input.message); const retrievalLatencyMs = Date.now() - retrievalStarted;
-      const citations: Citation[] = matches.map(match => ({ filename: match.filename, mimeType: match.mimeType, documentId: match.documentId, page: match.page ?? undefined, section: match.section ?? undefined, paragraph: match.paragraph ?? undefined, chunkId: match.id, excerpt: match.content.slice(0, 260), sourceStart: match.sourceStart ?? undefined, sourceEnd: match.sourceEnd ?? undefined, retrievalMethod: match.retrievalMethod, retrievalScore: Number(match.score.toFixed(6)) }));
+      const citations: Citation[] = toCitations(matches);
       await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "user", content: input.message });
       if (!matches.length) { const answer = "INSUFFICIENT_EVIDENCE"; await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: answer, citationsJson: "[]" }); return { conversationId, answer, citations: [], grounding: "INSUFFICIENT_EVIDENCE" as const, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } }; }
-      const context = matches.map((m, i) => `[${i + 1}] ${m.filename}${m.page ? ` page ${m.page}` : m.section ? ` section ${m.section}` : ""}: ${m.content}`).join("\n\n");
       let model: ModelResult = { status: "failed" };
       let gatewayOutcome: GatewayOutcome;
-      try { gatewayOutcome = await getProviderGateway().invoke({ requestId: ctx.requestId, workspaceId: input.workspaceId, messages: [{ role: "system", content: `You are Sakthi AI Nexus. Answer in ${input.language === "ta" ? "Tamil" : "English"}. Use only the supplied evidence. If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE. Do not invent citations.\n\nEVIDENCE:\n${context}` }, { role: "user", content: input.message }], intents: ["conversation"], requiredCapabilities: ["chat"], optionalCapabilities: input.language === "ta" ? ["multilingual"] : [] }); } catch { gatewayOutcome = { status: "failed", reason: "internal_error", attempts: [], latencyMs: 0 }; }
+      try { gatewayOutcome = await getProviderGateway().invoke({ requestId: ctx.requestId, workspaceId: input.workspaceId, messages: [{ role: "system", content: groundedSystemPrompt(input.language, matches) }, { role: "user", content: input.message }], intents: ["conversation"], requiredCapabilities: ["chat"], optionalCapabilities: input.language === "ta" ? ["multilingual"] : [] }); } catch { gatewayOutcome = { status: "failed", reason: "internal_error", attempts: [], latencyMs: 0 }; }
       if (gatewayOutcome.status === "returned") model = { status: "returned", content: gatewayOutcome.content };
       const outcome = resolveGroundedOutcome({ language: input.language, evidenceCount: matches.length, model });
       const answerCitations = outcome.includeCitations ? citations : [];
       await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: outcome.answer, citationsJson: JSON.stringify(answerCitations) });
       return { conversationId, answer: outcome.answer, citations: answerCitations, grounding: outcome.grounding, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId, gateway: { status: gatewayOutcome.status, providerId: gatewayOutcome.status === "returned" ? gatewayOutcome.providerId : undefined, failureReason: gatewayOutcome.status === "failed" ? gatewayOutcome.reason : undefined, attempts: gatewayOutcome.attempts.length } } };
+    }),
+    sendAsync: protectedProcedure.input(workspaceInput.extend({ conversationId: z.number().int().positive().optional(), message: z.string().trim().min(1).max(12000), language: z.enum(["en", "ta"]).default("en"), idempotencyKey: z.string().min(8).max(128).optional() })).mutation(async ({ ctx, input }) => {
+      if (!asyncAnswersEnabled()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Asynchronous answers are not enabled" });
+      await requireWorkspace(ctx.user.id, input.workspaceId); const db = await getDb(); if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+      let conversationId = input.conversationId;
+      if (conversationId) { const owned = await db.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.id, conversationId), eq(conversations.workspaceId, input.workspaceId), eq(conversations.userId, ctx.user.id))).limit(1); if (!owned[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Conversation access denied" }); }
+      if (!conversationId) { await db.insert(conversations).values({ workspaceId: input.workspaceId, userId: ctx.user.id, title: input.message.slice(0, 80), language: input.language }); const row = await db.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.workspaceId, input.workspaceId), eq(conversations.userId, ctx.user.id))).orderBy(desc(conversations.id)).limit(1); conversationId = row[0]?.id; }
+      if (!conversationId) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Conversation creation failed" });
+      try {
+        const { task } = await sharedTaskStore().create({ workspaceId: input.workspaceId, type: CHAT_ANSWER_TASK, input: { conversationId, userId: ctx.user.id, message: input.message, language: input.language }, idempotencyKey: input.idempotencyKey, maxAttempts: 3, createdByUserId: ctx.user.id });
+        return { taskId: task.id, conversationId };
+      } catch (error) { if (error instanceof TaskIdempotencyConflict) throw new TRPCError({ code: "CONFLICT", message: "Idempotency key reused with a different request" }); throw error; }
     }),
   }),
   connectors: router({

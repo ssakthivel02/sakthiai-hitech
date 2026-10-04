@@ -456,18 +456,24 @@
       "capability": "durable_task_execution",
       "truthModel": "PARTIAL",
       "status": "TESTED_LOCAL",
-      "runtimePath": "MySQL-backed durable tasks: server/tasks (store, worker), tRPC tasks.get/list/cancel; leases + attempt fencing, checkpoint/resume, bounded retry, durable cancel, idempotent create, effect dedupe, Provider Gateway-governed model calls",
+      "runtimePath": "MySQL-backed durable tasks: server/tasks (store, worker), tRPC tasks.get/list/cancel; leases + attempt fencing, checkpoint/resume, bounded retry, durable cancel, idempotent create, effect dedupe, Provider Gateway-governed model calls; server-wired worker runtime (server/tasks/runtime.ts, default OFF via TASK_WORKER_ENABLED) executing one workflow, chat.answer, via tRPC chat.sendAsync",
       "sourceFiles": [
         "server/tasks/store.ts",
         "server/tasks/worker.ts",
         "server/tasks/types.ts",
         "server/tasks/index.ts",
-        "drizzle/0008_durable_tasks.sql"
+        "drizzle/0008_durable_tasks.sql",
+        "server/tasks/runtime.ts",
+        "server/tasks/chatAnswer.ts",
+        "server/tasks/shared.ts",
+        "server/chat/grounded.ts"
       ],
       "tests": [
         "server/tasks/tasks.test.ts",
         "server/tasks/tasks.mysql.test.ts",
-        "server/mysql.integration.mysql.test.ts"
+        "server/mysql.integration.mysql.test.ts",
+        "server/tasks/runtime.test.ts",
+        "server/tasks/runtime.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -476,7 +482,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Verified on local MariaDB 10.11 only (MySQL 8 CI pending). No product feature enqueues tasks yet and no worker is started by the server: the execution substrate is SOURCE_IMPLEMENTED and tested, not wired to a user-facing workflow. Side effects are at-least-once with durable dedupe records (a crash between the effect and its record repeats it); handlers must use idempotent operations. Cancellation of a running task is cooperative (next checkpoint)."
+      "knownLimitation": "Verified on local MariaDB 10.11 only (MySQL 8 CI pending; no GitHub CI observed). The worker runtime is wired into server startup/shutdown and /readyz but is OFF by default; exactly one workflow (chat.answer via chat.sendAsync) is enqueued; synchronous chat.send is unchanged. No client UI uses sendAsync yet. Not exercised against a live deployment or a real model. Side effects are at-least-once with durable dedupe records; handlers must use idempotent operations. Cancellation of a running task is cooperative (next checkpoint/effect). A shutdown that exceeds the grace period abandons in-flight tasks; they resume after lease expiry."
     },
     {
       "capability": "mcp_readonly_connector",
@@ -591,6 +597,28 @@
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
       "knownLimitation": "The workflow changes have NOT run on GitHub: the release-evidence job is CI_PENDING until a real Actions run on the exact head. A local run can only reach LOCAL_GATES_PASS_CI_PENDING; frozen install and typecheck are attested only by upstream CI job success. The manifest can never claim RUNTIME_VERIFIED and does not cover Render/Aiven staging, a live scanner, real-model quality, or production."
+    },
+    {
+      "capability": "durable_worker_runtime_wiring",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "TaskWorkerRuntime (bounded concurrency, graceful stop, abandon-on-timeout, health) started from server/_core/index.ts after listen; SIGTERM/SIGINT stop runtime then HTTP server; /readyz dependencies.taskWorker",
+      "sourceFiles": [
+        "server/tasks/runtime.ts",
+        "server/tasks/shared.ts",
+        "server/_core/index.ts"
+      ],
+      "tests": [
+        "server/tasks/runtime.test.ts",
+        "server/tasks/runtime.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Default OFF. In-process only: no separate worker deployment topology. Signal handling not exercised against a real orchestrator."
     }
   ]
 }
