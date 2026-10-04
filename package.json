@@ -21,7 +21,8 @@
     "test:e2e": "node scripts/run-e2e.mjs",
     "db:backfill-search-text": "tsx scripts/backfill-search-text.ts",
     "db:push": "drizzle-kit migrate",
-    "creator:runtime:acceptance": "tsx scripts/creator-runtime-acceptance.ts"
+    "creator:runtime:acceptance": "tsx scripts/creator-runtime-acceptance.ts",
+    "staging:migration-manifest": "tsx scripts/migration-manifest.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",
