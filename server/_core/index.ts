@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { getTaskRuntime } from "../tasks/shared";
 import { runtimeConfigFromEnv } from "../tasks/runtime";
+import { getUploadCleanupRunner } from "../ingestion/shared";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
@@ -145,6 +146,7 @@ async function startServer() {
         storage: storageReady ? "configured" : "missing_configuration",
         embeddings: embeddingStatus(),
         taskWorker: getTaskRuntime().status(),
+        uploadCleanup: getUploadCleanupRunner().status(),
         scanner: {
           configuration: malwareScannerConfigurationStatus(),
           liveProbe: "not_checked",
@@ -170,6 +172,7 @@ async function startServer() {
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://0.0.0.0:${port}/`);
     // Default OFF (TASK_WORKER_ENABLED). A worker failure is contained inside the runtime and never crashes the HTTP app.
+    try { getUploadCleanupRunner().start(); } catch (error) { console.error("upload cleanup failed to start", error instanceof Error ? error.message : error); }
     try { getTaskRuntime().start(); } catch (error) { console.error("task runtime failed to start", error instanceof Error ? error.message : error); }
   });
 
@@ -180,8 +183,7 @@ async function startServer() {
     console.log(`${signal} received: stopping task runtime, then HTTP server`);
     const force = setTimeout(() => process.exit(1), runtimeConfigFromEnv().shutdownGraceMs + 10_000);
     force.unref?.();
-    getTaskRuntime().stop()
-      .catch(() => undefined)
+    Promise.all([getUploadCleanupRunner().stop(5_000).catch(() => undefined), getTaskRuntime().stop().catch(() => undefined)])
       .then(() => new Promise<void>(resolve => server.close(() => resolve())))
       .then(() => process.exit(0));
   };

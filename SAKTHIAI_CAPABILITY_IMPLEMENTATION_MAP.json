@@ -526,10 +526,14 @@
         "server/ingestion/store.ts",
         "server/ingestion/commit.ts",
         "server/ingestion/index.ts",
-        "drizzle/0010_resumable_ingestion.sql"
+        "drizzle/0010_resumable_ingestion.sql",
+        "server/ingestion/cleanupRunner.ts",
+        "server/ingestion/shared.ts"
       ],
       "tests": [
-        "server/ingestion/ingestion.mysql.test.ts"
+        "server/ingestion/ingestion.mysql.test.ts",
+        "server/ingestion/cleanupRunner.test.ts",
+        "server/ingestion/cleanupRunner.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm test",
@@ -538,7 +542,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Verified on local MariaDB 10.11 with a stub scanner and an in-process clamd INSTREAM fake; no real ClamAV and no real S3. No client uses it and the upload UI remains gated. Max 12 MiB per file (assembled in memory), 128 KiB chunks. No scheduled cleanup runner is wired: UploadStore.cleanup() must be invoked by an operator job. Quarantine bytes sit in the application database (mediumblob) until purge."
+      "knownLimitation": "Verified on local MariaDB 10.11 with a stub scanner and an in-process clamd INSTREAM fake; no real ClamAV and no real S3. No client uses it and the upload UI remains gated. Max 12 MiB per file (assembled in memory), 128 KiB chunks. A bounded cleanup runner is wired but OFF by default. Quarantine bytes sit in the application database (mediumblob) until purge. Cleanup runner: OFF by default, single-flight per process, verified on MariaDB only, not run against a live deployment. Client upload UI intentionally unchanged (Coming Soon)."
     },
     {
       "capability": "tamil_codeswitch_golden_benchmark",

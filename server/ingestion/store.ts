@@ -115,13 +115,37 @@ export class UploadStore {
    * Housekeeping: expire stale OPEN sessions, recover FINALIZING sessions whose finalizer died, purge chunks of any terminal
    * session, and forget terminal session rows after retention. Never touches live OPEN/FINALIZING sessions.
    */
-  async cleanup(opts: { finalizingStaleSeconds?: number; retentionDays?: number } = {}): Promise<{ expired: number; recovered: number; purgedChunkRows: number; deletedSessions: number }> {
+  async cleanup(opts: { finalizingStaleSeconds?: number; retentionDays?: number; batchLimit?: number } = {}): Promise<{ expired: number; recovered: number; purgedChunkRows: number; deletedSessions: number; truncated: boolean }> {
     const db = await this.db(); const stale = opts.finalizingStaleSeconds ?? 300; const days = opts.retentionDays ?? 7;
-    const expired = affected(await db.execute(sql`UPDATE fileUploadSessions SET state = 'EXPIRED', updatedAt = NOW(3) WHERE state = 'OPEN' AND expiresAt < NOW(3)`));
-    const recovered = affected(await db.execute(sql`UPDATE fileUploadSessions SET state = 'OPEN', lastError = 'finalize_interrupted', updatedAt = NOW(3) WHERE state = 'FINALIZING' AND updatedAt < DATE_SUB(NOW(3), INTERVAL ${stale} SECOND)`));
-    const purgedChunkRows = affected(await db.execute(sql`DELETE c FROM fileUploadChunks c JOIN fileUploadSessions s ON s.id = c.uploadId WHERE s.state IN ('COMPLETED','REJECTED','EXPIRED','ABORTED')`))
-      + affected(await db.execute(sql`DELETE c FROM fileUploadChunks c LEFT JOIN fileUploadSessions s ON s.id = c.uploadId WHERE s.id IS NULL`));
-    const deletedSessions = affected(await db.execute(sql`DELETE FROM fileUploadSessions WHERE state IN ('COMPLETED','REJECTED','EXPIRED','ABORTED') AND updatedAt < DATE_SUB(NOW(3), INTERVAL ${days} DAY)`));
-    return { expired, recovered, purgedChunkRows, deletedSessions };
+    const limit = opts.batchLimit && opts.batchLimit > 0 ? Math.floor(opts.batchLimit) : null;
+    let truncated = false;
+    const bounded = (n: number) => { if (limit !== null && n >= limit) truncated = true; return n; };
+    // Single-table statements take LIMIT directly (bounded runs); the unbounded default keeps the original one-shot behaviour.
+    const expired = bounded(affected(await db.execute(limit === null
+      ? sql`UPDATE fileUploadSessions SET state = 'EXPIRED', updatedAt = NOW(3) WHERE state = 'OPEN' AND expiresAt < NOW(3)`
+      : sql`UPDATE fileUploadSessions SET state = 'EXPIRED', updatedAt = NOW(3) WHERE state = 'OPEN' AND expiresAt < NOW(3) LIMIT ${limit}`)));
+    const recovered = bounded(affected(await db.execute(limit === null
+      ? sql`UPDATE fileUploadSessions SET state = 'OPEN', lastError = 'finalize_interrupted', updatedAt = NOW(3) WHERE state = 'FINALIZING' AND updatedAt < DATE_SUB(NOW(3), INTERVAL ${stale} SECOND)`
+      : sql`UPDATE fileUploadSessions SET state = 'OPEN', lastError = 'finalize_interrupted', updatedAt = NOW(3) WHERE state = 'FINALIZING' AND updatedAt < DATE_SUB(NOW(3), INTERVAL ${stale} SECOND) LIMIT ${limit}`)));
+    let purgedChunkRows = 0;
+    if (limit === null) {
+      purgedChunkRows = affected(await db.execute(sql`DELETE c FROM fileUploadChunks c JOIN fileUploadSessions s ON s.id = c.uploadId WHERE s.state IN ('COMPLETED','REJECTED','EXPIRED','ABORTED')`))
+        + affected(await db.execute(sql`DELETE c FROM fileUploadChunks c LEFT JOIN fileUploadSessions s ON s.id = c.uploadId WHERE s.id IS NULL`));
+    } else {
+      // Bounded: pick at most `limit` terminal/orphaned uploads per run, then purge each one's chunks by primary-key prefix.
+      const ids = new Set<string>();
+      const terminal = ((await db.execute(sql`SELECT DISTINCT c.uploadId AS id FROM fileUploadChunks c JOIN fileUploadSessions s ON s.id = c.uploadId WHERE s.state IN ('COMPLETED','REJECTED','EXPIRED','ABORTED') LIMIT ${limit}`)) as unknown as [Array<{ id: string }>])[0];
+      const orphan = ((await db.execute(sql`SELECT DISTINCT c.uploadId AS id FROM fileUploadChunks c LEFT JOIN fileUploadSessions s ON s.id = c.uploadId WHERE s.id IS NULL LIMIT ${limit}`)) as unknown as [Array<{ id: string }>])[0];
+      if (terminal.length >= limit || orphan.length >= limit) truncated = true;
+      for (const row of [...terminal, ...orphan]) ids.add(row.id);
+      for (const id of ids) {
+        // Re-check at delete time: only terminal sessions or true orphans are ever purged; live OPEN/FINALIZING uploads never are.
+        purgedChunkRows += affected(await db.execute(sql`DELETE c FROM fileUploadChunks c LEFT JOIN fileUploadSessions s ON s.id = c.uploadId WHERE c.uploadId = ${id} AND (s.id IS NULL OR s.state IN ('COMPLETED','REJECTED','EXPIRED','ABORTED'))`));
+      }
+    }
+    const deletedSessions = bounded(affected(await db.execute(limit === null
+      ? sql`DELETE FROM fileUploadSessions WHERE state IN ('COMPLETED','REJECTED','EXPIRED','ABORTED') AND updatedAt < DATE_SUB(NOW(3), INTERVAL ${days} DAY)`
+      : sql`DELETE FROM fileUploadSessions WHERE state IN ('COMPLETED','REJECTED','EXPIRED','ABORTED') AND updatedAt < DATE_SUB(NOW(3), INTERVAL ${days} DAY) LIMIT ${limit}`)));
+    return { expired, recovered, purgedChunkRows, deletedSessions, truncated };
   }
 }
