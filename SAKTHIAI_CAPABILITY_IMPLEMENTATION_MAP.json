@@ -568,6 +568,29 @@
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
       "knownLimitation": "Local throwaway MariaDB 10.11 only; no managed database (Aiven) was touched, so the managed backup/restore path, PITR and real RTO/RPO are NOT verified. Rehearsal-sized data. Migrations are forward-only: there is NO schema downgrade; rollback = restore a pre-migration backup and writes after it are lost. The logical export is a rehearsal tool, not a replacement for the provider's managed backups. Backup/restore is not scheduled or automated."
+    },
+    {
+      "capability": "release_evidence_manifest",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "pnpm release:evidence consolidates unit/MySQL/E2E totals, eval + golden + recovery digests, migration consistency, capability truth, secret hygiene, source neutrality, production advisory counts and built-server smoke into reports/release/release-evidence.json bound to the git SHA; the quality-gate workflow's release-evidence job enforces it after validate, mysql-integration and e2e succeed",
+      "sourceFiles": [
+        "server/release/evidence.ts",
+        "scripts/release-evidence.ts",
+        "scripts/smoke-built-server.mjs",
+        "scripts/validate-source-neutrality.mjs",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "tests": [
+        "server/release/evidence.test.ts"
+      ],
+      "workflowGate": [
+        ".github/workflows/quality-gate.yml",
+        "pnpm release:evidence"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "The workflow changes have NOT run on GitHub: the release-evidence job is CI_PENDING until a real Actions run on the exact head. A local run can only reach LOCAL_GATES_PASS_CI_PENDING; frozen install and typecheck are attested only by upstream CI job success. The manifest can never claim RUNTIME_VERIFIED and does not cover Render/Aiven staging, a live scanner, real-model quality, or production."
     }
   ]
 }
