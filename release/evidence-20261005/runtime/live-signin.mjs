@@ -1,0 +1,14 @@
+import { chromium } from "@playwright/test";
+const b = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium", proxy: { server: process.env.HTTPS_PROXY }, args: [`--ignore-certificate-errors-spki-list=${process.env.SPKI}`] });
+const ctx = await b.newContext({ viewport: { width: 390, height: 844 } }); const page = await ctx.newPage();
+const reqs = []; page.on("request", r => { if (!r.url().includes("/assets/")) reqs.push(`${r.method()} ${r.url().replace(/code_challenge=[^&]+/, "code_challenge=…")}`); });
+await page.goto("https://sakthiai-hitech-preview.onrender.com/", { waitUntil: "networkidle" });
+const btn = page.getByRole("button", { name: /sign in/i }).or(page.getByRole("link", { name: /sign in/i }));
+console.log("role-count", await btn.count());
+const box = await btn.first().boundingBox(); console.log("box", JSON.stringify(box));
+const styles = await btn.first().evaluate(e => { const s = getComputedStyle(e); return { tag: e.tagName, bg: s.backgroundColor, border: s.borderStyle + " " + s.borderWidth, color: s.color, textDecoration: s.textDecorationLine }; }); console.log("style", JSON.stringify(styles));
+await btn.first().click(); await page.waitForTimeout(4000);
+console.log("url-after", page.url().replace(/code_challenge=[^&]+/, "code_challenge=…").slice(0, 200));
+console.log("text-after", (await page.innerText("body")).replace(/\s+/g, " ").slice(0, 400));
+console.log("requests", reqs.slice(-6).join(" | "));
+await page.screenshot({ path: "/var/tmp/live-signin-390.png" }); await b.close();

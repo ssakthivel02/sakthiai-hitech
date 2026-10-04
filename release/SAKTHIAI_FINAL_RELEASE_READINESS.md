@@ -1,129 +1,151 @@
 # SAKTHIAI FINAL RELEASE READINESS
 
-**Decision: HOLD.** Exact-head CI is green, including MySQL 8 and migrations. Mandatory runtime evidence is missing.
+**Decision: HOLD.** This is a preview-scope release.
 
-Date: 4 October 2026. Scope: `ssakthivel02/sakthiai-hitech`, PR #29 combined candidate, release to the existing **preview** only. Production is out of scope.
+The CI-qualified candidate is now **deployed to the existing preview**, and its deployed provenance, unauthenticated security boundary and landing accessibility are **runtime-verified**.
 
-This file supersedes the copy inside `sakthiai-release-qualification-evidence.zip` (archive sha256 `7a22ab5a…ec91`). That copy recorded the pre-integration state.
+Core runtime acceptance is still **not verified**: real login, session revocation, two-tenant isolation, retrieval, grounding and the real model. The preview database is unreachable, and OIDC, LLM and storage are unconfigured. Those can only be cleared by owner actions.
+
+Updated 5 October 2026, 00:00–02:35 UTC session. Scope: `ssakthivel02/sakthiai-hitech`, PR #29 combined candidate, release to the existing **preview** only. Production, merging to `main` and paid providers are out of scope.
+
+This file supersedes earlier versions: `bdb11a1` on this branch, and the copy inside `sakthiai-release-qualification-evidence.zip`.
 
 ## Dashboard
 
 | State | Item |
 |---|---|
-| COMPLETED | Archive retrieval by Drive ID and checksum verification; bundle import; fast-forward integration; exact-head CI green including MySQL 8, migration manifest, E2E and release evidence; read-only preview inspection |
-| IN PROGRESS | None |
-| BLOCKED | Runtime qualification. The preview runs the old head, its DB is unreachable, and OIDC/LLM/storage are unconfigured |
-| PENDING | Preview deploy of `7b240f7`, preview DB migration 0005–0010 plus backfill, live auth/isolation/retrieval/grounding/a11y acceptance, real dependencies |
-| OWNER ACTION REQUIRED | See "Owner actions" below: deploy authorization, Aiven power-on plus recovery point, dependency configuration |
+| COMPLETED | Reconciliation (no other writer; source and preview state matched the record). Controlled preview deploy of the CI-qualified `7b240f7`; `/releasez` provenance verified. Live unauthenticated security probes. Live axe/mobile landing scan. Demonstrated landing-page defects fixed with a regression test. Existing preview-DB migration workflow given recovery-point, journal, preservation, rerun and backfill guards, rehearsed on MySQL 8 |
+| IN PROGRESS | See "Final state" below for the redeploy of the latest qualified head |
+| BLOCKED | Preview DB (Aiven: no access from this session, billing unknown); OIDC, LLM and storage configuration (secure owner entry required) |
+| PENDING | Preview DB migration 0005–0010 plus backfill; live login/logout/revocation/replay; two-user isolation; storage ownership; retrieval, citations and grounding states; Tamil/Tanglish live answers; MODEL_UNAVAILABLE and provider routing live; worker, uploads and MCP live |
+| OWNER ACTION REQUIRED | Three precise actions; see "Owner actions" |
 
-| Evidence tier | Status for `7b240f7e40118982792f9cfaf03b248129042943` |
+## Final state (exact SHAs)
+
+| Item | Value |
 |---|---|
-| SOURCE_IMPLEMENTED | Yes: original 0001–0020, 2 release repairs, 2 CI-only commits |
-| LOCALLY_TESTED | Yes. Node 24 in the original handoff; this session re-ran MySQL 153/153, manifest 7/7 and typecheck on Node 22 with MySQL 8.0.46 |
-| CI_VERIFIED | **Yes**, exact-head run `37198715132`, `ciShaBinding=PASS` |
-| RUNTIME_VERIFIED | **No** |
+| Remote integration head = tested head | `2ea4b4f6909dfc11f3084d8294e016531b96b1c5` |
+| Deployed preview (`/releasez`) | `7b240f7e40118982792f9cfaf03b248129042943` (redeploy of 2ea4b4f pending exact-head CI) |
+| Previous verified deploy | `7b240f7e40118982792f9cfaf03b248129042943`, deploy `dep-db1e6jpsrm7s73b9bdm0` (live from 23:39:28 UTC) |
+| Rollback target (pre-session) | `79fbe21d4289782ceba88c604fc0984a37d5632a`, deploy `dep-dav0miaj7g8c73aakpg0` |
+| PR #29 | Open, **draft**, base `main` = `71614dfb2adc7b496d365d458fa5dab1a7f90c8c` (unchanged, not merged) |
+| Imported qualified candidate | `bf2835bba3d65ee255501cbf8bcf4e045456a3af` (tree `53526012…`), unchanged |
 
-## Exact SHAs
+Commits on top of the imported candidate. All were normal fast-forward pushes, each guarded by an expected-remote-head check:
 
-| Item | SHA |
-|---|---|
-| Remote integration head, which is also the tested head | `7b240f7e40118982792f9cfaf03b248129042943` |
-| Imported qualified candidate | `bf2835bba3d65ee255501cbf8bcf4e045456a3af` (tree `53526012878491a9c2700cf99dea934878ff821d`, verified) |
-| Original 0001–0020 candidate | `0dbf8107f023dd0719ca2587cb4c83c614b8b9b0` (tree `4afc3ac9c316111c26ffb3250279cf5897f6f0de`, verified) |
-| Pre-integration baseline | `79fbe21d4289782ceba88c604fc0984a37d5632a` |
-| Deployed preview (`/releasez`) | `79fbe21d4289782ceba88c604fc0984a37d5632a`, i.e. **not** the candidate |
-| PR base (`main`) | `71614dfb2adc7b496d365d458fa5dab1a7f90c8c`; unchanged and not merged |
+| Commit | Type | Why |
+|---|---|---|
+| `aa0ee1c` | CI | Runs the existing migration manifest in the MySQL 8 job |
+| `7b240f7` | test | Recovery suite gets the `{ timeout: 30_000 }` used by the other heavy SQL suites (shown flaky in run `37198546157`) |
+| `c1fbb2b` | fix | **Observed on the deployed preview:** "Sign in securely" did nothing (an unhandled `startLogin()` rejection) and rendered with no fill (no `--color-primary` theme token). Now shows a `role=alert` message; the primary token maps to the existing `--deep` colour. E2E regression added; **it fails before the fix on desktop and mobile** and passes after |
+| `2ea4b4f` | CI | Guards the existing `preview-db-setup.yml`: required recovery-point input; read-only journal-prefix pre-check; post-check for completeness and row preservation; rerun no-op; backfill run twice with the second updating 0; evidence upload |
 
-## Integration record
+## CI evidence
 
-1. Archive fetched via Drive file ID `1cFU7KEp2CfI3r_glm_yiaPt6Z4CNe2qw`: 512,101 bytes, sha256 matched, all 31 `SHA256SUMS` entries OK.
-2. `git bundle verify` OK. The bundle's only prerequisite is `79fbe21`, and the remote was confirmed still at `79fbe21` immediately before the push.
-3. 22 linear commits with no merge commits. Both repair patches are patch-id-identical to `6665bab` and `bf2835b`.
-4. Normal fast-forward pushes, each guarded by an expected-remote-head check:
-   - `79fbe21..bf2835b`: the exact candidate.
-   - `bf2835b..aa0ee1c`: CI-only change that wires the **existing** `scripts/migration-manifest.ts` into the `mysql-integration` job, because the 0005–0010 rehearsal previously ran only locally.
-   - `aa0ee1c..7b240f7`: `rehearsal.mysql.test.ts` gets the same `{ timeout: 30_000 }` suite option as the other heavy MySQL suites. PR run `37198546157` showed "refuses unsafe restores", which builds up to 7 migrated scratch DBs, exceeding vitest's 5 s default under parallel load. No assertions changed.
-5. No force push, no history rewrite, no main merge. PR #29 is still an open draft.
-
-## CI evidence: exact head `7b240f7`
-
-PR #29 is draft, open and `mergeable_state: clean`. Quality Gate runs twice: the PR run tests GitHub's generated merge commit, while the `workflow_dispatch` run checks out the exact head. Both passed.
-
-| Run | Event | Tested ref | Result |
+| Head | Quality Gate (exact head, `workflow_dispatch`) | Quality Gate (PR merge ref) | Other PR workflows |
 |---|---|---|---|
-| Quality Gate `37198715132` | workflow_dispatch | `7b240f7` exact head; `release-evidence.json` `source.gitSha` and checkout `git log -1` confirm it | PASS |
-| Quality Gate `37198715877` | pull_request | merge ref of `7b240f7` into `main` | PASS |
-| 11 other PR workflows (Secret Hygiene, Session Cookie, Grounding, File Ingestion, Accessibility Semantics, Focus Touch, Beta Capability Truth, Preview Smoke/Contract, Protected Main, Parallel Work Guard) | pull_request | `7b240f7` | PASS |
+| `7b240f7` | `37198715132` PASS | `37198715877` PASS | 11/11 PASS |
+| `c1fbb2b` | `37244899822` PASS | `37244897590` PASS | 11/11 PASS |
+| `2ea4b4f` | `37245003799` in progress | `37245003699` in progress | 11/11 PASS, plus Preview Deployment Preflight `37245000384` PASS |
 
-Jobs in exact-head run `37198715132`: validate `111425797861`, mysql-integration `111425797928`, e2e `111425797984`, release-evidence `111426124217`. Environment: Node v22.23.3, pnpm 10.4.1 frozen install, MySQL 8.0.46 service container.
+Exact-head gate contents, as established at `7b240f7` and re-run on every later head:
 
-| Gate | CI result (exact head) |
+| Gate | Result |
 |---|---|
-| Frozen install / typecheck / build / source and dist neutrality | PASS |
-| Unit suite | 682 tests in 85 files: 535 passed, **147 skipped**, 0 failed. The 147 skipped tests are MySQL-gated; with no DB in the `validate` job they run in `mysql-integration` instead. They are not hidden and not double-counted. Locally with a DB: 682/682 |
-| Real MySQL 8 integration | **153/153**, 13 files, 0 skipped |
-| Recovery rehearsal | 9/9 scenarios on 8.0.46. Included in the 153 |
-| Migration manifest | **7/7**: baseline 0000–0004 applied, then 0005–0010 applied in order; rerun is a no-op; legacy data preserved; schema equals a fresh migration; backfill complete and idempotent (2 then 0); post-backfill search works. 0 destructive statements in 0005–0010 |
-| Migration consistency | 11 migrations; journal, SQL and schema consistent; forward-only |
-| E2E (Playwright, built server, MySQL 8, fake OIDC/LLM/S3/clamd) | **46/46**, 0 flaky, 0 skipped |
-| Accessibility | Serious and critical axe findings are enforced by the E2E gate and pass. This is not full WCAG certification |
-| Contract evals | 28/28 (`CONTRACT_HARNESS`, `realModelQuality: NOT_MEASURED`) |
-| Golden benchmark | 47/47, with 1 known gap: cross-lingual retrieval needs embeddings; vectors are synthetic |
-| Secret hygiene | PASS (505 tracked paths) |
-| Production advisories | 0 critical, 0 high (24 moderate, 5 low) |
-| Built-server smoke | `/healthz` 200, SPA shell served, `/readyz` 503 fail-closed |
-| Release evidence | `CI_GATES_PASS`, `CI_VERIFIED_THIS_RUN`, `RUNTIME_UNVERIFIED`, `ciShaBinding=PASS` |
+| Frozen install, typecheck, build, neutrality | PASS |
+| Unit suite | 682 tests: 535 passed, 147 skipped. The skipped tests are MySQL-gated and run in `mysql-integration`; they are not double-counted |
+| Real MySQL 8.0.46 | 153/153, including recovery rehearsal 9/9 |
+| Migration manifest | 7/7: baseline 0004 → 0010; rerun no-op; data preserved; fresh-schema parity; backfill 2 → 0; search works |
+| E2E | 46/46 at `7b240f7`, with serious/critical axe enforced. Later heads add 2 tests (desktop + mobile) for the landing regression |
+| Contract evals / golden benchmark | 28/28 and 47/47 with 1 known gap (cross-lingual retrieval needs real embeddings). Not real-model evidence |
+| Audit | 0 critical / 0 high (24 moderate, 5 low) |
+| Release evidence | `CI_GATES_PASS`, `ciShaBinding=PASS`, `RUNTIME_UNVERIFIED` |
 
-The MySQL 8 coverage spans tenant/workspace isolation and creation races, session generation/revocation, storage ownership, retrieval text and transliteration, provider policy/budgets/breakers, task claim/lease/renewal/cancel/graceful stop/crash recovery/idempotency, upload lifecycle and cleanup, OAuth login transactions, the read-only MCP policy (mutation tools never offered), migrations 0005–0010, and backfill.
+Local checks this session (Node 22, MySQL 8.0.46): auth and a11y E2E 32/32 with the fix; the new regression test fails without it; the unit suite gives the same 535/147; the accessibility-semantics, accessibility-shell, focus-touch, beta-capability, secret-hygiene and source-neutrality validators all PASS; the guarded preview-migration sequence passes; and the journal guard refuses out-of-order state.
 
-## Preview: read-only inspection, no changes made
+## Runtime evidence (preview `srv-dao0vd8473hc73b1raag`)
 
-| Item | Observed |
+Target identity: Render workspace `tea-danue82jnfac739th8lg`; service `sakthiai-hitech-preview`; free plan; Oregon; branch = PR #29 integration branch; **autoDeploy OFF (preserved)**. No other service was touched.
+
+| Check (live, deployed `7b240f7`) | Result |
 |---|---|
-| Render workspace | `tea-danue82jnfac739th8lg` ("My Workspace"), the only workspace |
-| Service | `sakthiai-hitech-preview` (`srv-dao0vd8473hc73b1raag`): free plan, Oregon, branch = PR #29 integration branch, **autoDeploy off**, health check `/healthz` |
-| Live deploy | `dep-dav0miaj7g8c73aakpg0` at `79fbe21`, finished 2026-10-01 07:30 UTC |
-| `/healthz` | 200 `alive`. The first probe timed out during a free-plan cold start |
-| `/releasez` | 200, commit `79fbe21…`, `exactCommitKnown: true` |
-| `/readyz` | **503**: `database: unavailable`, `authentication`, `llm` and `storage`: `missing_configuration`, embeddings unavailable, scanner `not_configured`, file ingestion `coming_soon` |
-| Other services | `divyanexus-ask-staging` belongs to a different repo and was not touched |
+| `/releasez` | 200, commit `7b240f7…`, `exactCommitKnown: true` |
+| `/healthz` | 200. A cold start on the free plan can exceed 60 s |
+| `/readyz` | 503: database `unavailable`; authentication, llm and storage `missing_configuration`; embeddings unavailable; scanner `not_configured`; **taskWorker and uploadCleanup `enabled: false`** |
+| Unauthenticated tRPC (`workspace.list`, `chat.history`, `auth.logout`) | 401 UNAUTHORIZED |
+| Forged session cookie | 401 |
+| OAuth callback without state / with forged state | 400 / 403 `invalid oauth state` |
+| `/api/oauth/begin` without a PKCE challenge | 400 `valid PKCE challenge required` |
+| `/api/auth/revoke-all` without a session | 401 |
+| Storage proxy, unauthenticated or with path traversal | 401 |
+| 300 KiB body (limit 256 KiB) | 413 |
+| Headers | HSTS, `nosniff`, `X-Frame-Options: SAMEORIGIN`, referrer and permissions policies. **CSP is report-only** (backlog, not a preview blocker) |
+| Landing axe (wcag2a/aa, 2.1a/aa) at 360, 390 and 1440 px | **0 violations**, no horizontal overflow; copy truthfully states ingestion is disabled |
+| Landing sign-in click (OIDC unconfigured) | **Defect found:** no request and no message. Fixed in `c1fbb2b` (see above) |
 
-No deploy, env change, Aiven power-on or migration was performed. Preview runtime acceptance was **not run**: the candidate is not deployed, the DB is unreachable, and real authentication is not configured, so login/logout, revocation, isolation, retrieval and grounding cannot be exercised live.
+Raw evidence is in `release/evidence-20261005/runtime/`. Probe output contains no secrets.
 
-## Real dependencies
+These runtime checks verify the deployed artifact's identity and its unauthenticated boundary only. They do **not** verify authenticated isolation, revocation or data paths.
 
-| Dependency | Status |
-|---|---|
-| Self-hosted LLM | **UNVERIFIED**: preview reports `missing_configuration`. Contract evals are not real-model evidence |
-| Embedding model | **UNVERIFIED**: lexical fallback and synthetic-vector contracts pass; the English-to-Tamil semantic gap remains |
-| OIDC | **UNVERIFIED**: preview `missing_configuration` |
-| Object storage | **UNVERIFIED**: preview `missing_configuration` |
-| ClamAV | **UNVERIFIED**: `not_configured`. Uploads must stay disabled |
-| Durable worker | CI SQL behaviour verified; deployed worker **UNVERIFIED** |
-| Read-only MCP endpoint | Policy verified in CI against a fake server; real endpoint **UNVERIFIED** |
-| English/Tamil/mixed/Tanglish quality, insufficient evidence, provider failure, cross-tenant attempts | Contract and SQL evidence only; live testing pending |
+## Capability status
 
-## Feature flags
+| Capability | SOURCE_IMPLEMENTED | LOCALLY_TESTED | CI_VERIFIED | RUNTIME_VERIFIED |
+|---|---|---|---|---|
+| Deploy provenance (`/releasez`), health, fail-closed readiness | Yes | Yes | Yes | **Yes** |
+| Unauthenticated denial, forged cookie/state, PKCE requirement, body limit, storage auth | Yes | Yes | Yes | **Yes (boundary only)** |
+| Landing accessibility and mobile layout | Yes | Yes | Yes | **Yes (landing only)** |
+| Real OIDC login, logout, revocation, replay rejection | Yes | Yes (fake OIDC) | Yes | No: OIDC unconfigured |
+| Two-user/workspace isolation, storage ownership | Yes | Yes | Yes | No: needs DB and login |
+| Migrations 0005–0010 and backfill on the preview DB | Yes | Yes | Yes | No: DB unreachable |
+| Retrieval, citations, grounding states, Tamil/Tanglish | Yes | Yes (contract and synthetic vectors) | Yes | No |
+| MODEL_UNAVAILABLE, self-hosted-first routing, opt-in, budgets, breaker | Yes | Yes | Yes | No: no LLM configured |
+| Real LLM quality | n/a | No | No | **UNVERIFIED**: no endpoint |
+| Real embeddings / semantic retrieval | Yes | Synthetic only | Synthetic only | **UNVERIFIED** |
+| Uploads plus ClamAV | Yes | Fake scanner | Fake scanner | **UNVERIFIED**; flag OFF |
+| Durable worker / `chat.sendAsync` | Yes | Yes | Yes (SQL) | No; flag OFF (verified live) |
+| Read-only MCP | Yes | Fake server | Fake server | **UNVERIFIED**; flag OFF |
 
-None were changed. Uploads, the worker, MCP chat tools and cleanup stay under their existing flags. Uploads must remain disabled until both the real scanner and storage pass acceptance.
+## Feature flags (live, preview)
+
+`TASK_WORKER_ENABLED` and `UPLOAD_CLEANUP_ENABLED` are **OFF**, confirmed by `/readyz`. `FILE_INGESTION_BACKEND_ENABLED` and `MCP_CHAT_TOOLS_ENABLED` default OFF unless set to `true`; Render env values are not visible to this session, and nothing was changed. No flag was toggled in this session.
 
 ## Decision rationale
 
-GO requires every mandatory gate for the stated scope. Source and CI gates are now met at the exact head. The mandatory preview runtime gates are not met: live auth/revocation/isolation, DB migration on the preview DB, `/releasez` showing the candidate, and real-dependency behaviour. That makes the decision **HOLD**. A CONDITIONAL GO would hide a core runtime gap, so it is not used.
+GO needs every mandatory gate for preview scope. Source and CI pass at every head. Deployed provenance and the unauthenticated boundary are runtime-verified.
 
-## Rollback
+Still missing: authenticated login and revocation, tenant isolation, migration of the preview DB, and live model and grounding behaviour. Those are mandatory core gates, so the decision is **HOLD**.
 
-- **App:** the preview's current live deploy is `79fbe21` (`dep-dav0miaj7g8c73aakpg0`). If a later candidate deploy fails acceptance, redeploy that commit through Render's manual deploy. Never force-reset the Git branch.
-- **Database:** migrations are forward-only and **schema downgrade is NOT_SUPPORTED**. Before migrating the preview DB, take or confirm an Aiven recovery point and check that `__drizzle_migrations` holds exactly 5 rows (baseline 0004). On failure: stop writes and workers, restore the recovery point into a fresh approved DB, verify row counts and checksums, then switch over. Writes made after the backup can be lost. The 9-scenario CI rehearsal is not a production RTO/RPO guarantee.
-- **CI-only commits** `aa0ee1c` and `7b240f7` change only the workflow and a test timeout. Reverting them, with a normal revert commit, does not affect runtime behaviour.
+CONDITIONAL GO is not offered. No safely limited scope exists, because without a database and login the preview cannot serve any core feature.
 
-## Owner actions (required for runtime qualification)
+## Rollback (verified targets)
 
-1. **Authorize a preview deploy** of exactly `7b240f7e40118982792f9cfaf03b248129042943` to `sakthiai-hitech-preview`. I can trigger it through Render once you approve. This is a preview, not production.
-2. **Power on `hitech-preview-mysql` (Aiven)** and confirm a fresh recovery point. This session has no Aiven access, so this must be done by you. Before the migration step, confirm the DB name is `sakthiai_preview` with TLS on.
-3. **Configure the existing zero-cost dependencies** (OIDC, self-hosted LLM endpoint, object storage, and optionally the embedding endpoint and ClamAV). Enter the values directly in the Render dashboard environment; never paste secrets into chat. Any dependency that doesn't exist stays UNVERIFIED and blocks GO for that capability.
-4. **Main merge and production deploy are not requested** and stay prohibited.
+- **App:** Render dashboard → `sakthiai-hitech-preview` → Deploys → `dep-db1e6jpsrm7s73b9bdm0` (`7b240f7`) or `dep-dav0miaj7g8c73aakpg0` (`79fbe21`) → Rollback. The Render tooling in this session can only build the branch head, so a commit-specific rollback is a dashboard action. Never force-reset the branch.
+- **Database:** nothing was migrated in this session. When migrating, the guarded workflow requires a recovery point first. Migrations are forward-only and **schema downgrade is NOT_SUPPORTED**. On failure: stop the app and workers, restore the Aiven recovery point into a fresh database, verify row counts, then repoint `DATABASE_URL`.
+- **Source:** `c1fbb2b` and `2ea4b4f` can each be reverted with a normal revert commit.
 
-After steps 1–3: re-login disposable identities, run the live two-tenant/adversarial and revoke-all acceptance, check grounding and MODEL_UNAVAILABLE, run the Tamil/Tanglish checks, run mobile and axe checks against the preview, then re-issue this decision.
+## Owner actions (smallest set that unblocks runtime acceptance)
 
-OLD/LEGACY projects and the Shiva website were not touched.
+1. **Aiven `hitech-preview-mysql`.** This session has no Aiven access. Confirm whether powering it on starts or increases billing; if it does, decide. Then power it on and take or confirm a backup. Ensure repo secrets `SAKTHIAI_PREVIEW_DATABASE_URL` and `AIVEN_MYSQL_CA_CERT_B64` are set, and Render env `DATABASE_URL`, `DATABASE_EXPECTED_NAME=sakthiai_preview` and `DATABASE_CA_CERT_B64`. Then run **Actions → "SakthiAI Preview DB Setup"** on the integration branch with `recovery_point=<backup UTC, e.g. 2026-10-05T01:10>`. The guards stop on any unexpected journal state.
+2. **OIDC, entered in the Render dashboard (never in chat):**
+   - Runtime: `JWT_SECRET`, `OIDC_AUTHORIZATION_URL`, `OIDC_TOKEN_URL`, `OIDC_USERINFO_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_REDIRECT_URI=https://sakthiai-hitech-preview.onrender.com/api/oauth/callback`.
+   - **Build-time:** `VITE_OIDC_AUTHORIZATION_URL` and `VITE_OIDC_CLIENT_ID`. Changing these requires a redeploy.
+   - Register the redirect URI with your provider, and provide two disposable test identities.
+3. **Self-hosted LLM and storage**, only if a zero-cost instance already exists: `LOCAL_LLM_API_URL` and `LOCAL_LLM_MODEL`, and `STORAGE_ENDPOINT`, `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY_ID` and `STORAGE_SECRET_ACCESS_KEY`. If none exists, these stay UNVERIFIED. Chat should then return MODEL_UNAVAILABLE truthfully, which can itself be verified live.
+
+After 1–2: trigger a redeploy, then run live login, revoke-all, replay, two-tenant and storage-ownership acceptance, then retrieval and grounding, then re-issue this decision.
+
+## Qualified scope vs. product backlog
+
+This release lane qualifies the PR #29 core: auth/session security, tenancy, retrieval, grounding contracts, migrations and accessibility. It does **not** make every SakthiAI capability complete.
+
+Backlog, outside this decision:
+- Real-model quality and multilingual evaluation with human review
+- Real embeddings, including the cross-lingual gap
+- Live ClamAV and storage uploads
+- Live MCP
+- Creator video generation (paid providers excluded)
+- Moving CSP from report-only to enforcing
+- Removing the internal "W25 RECOVERY" eyebrow from the landing copy
+- A >500 kB client chunk
+
+OLD/LEGACY projects and Shiva were not touched.
