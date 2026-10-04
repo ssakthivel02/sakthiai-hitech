@@ -58,10 +58,20 @@ for (const testFile of requirements.behaviouralTests || []) {
 }
 if (!(requirements.behaviouralTests || []).length) fail("contract must list the behavioural regression tests");
 
-if (!source.includes("Use only the supplied evidence")) fail("evidence-only system instruction is required");
-if (!source.includes("If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE")) {
+// The synchronous and durable chat paths share this prompt. Verify that chat.send
+// imports and passes it as the system message, then check the actual prompt source.
+if (!/import\s*\{[^}]*\bgroundedSystemPrompt\b[^}]*\}\s*from\s*["']\.\/chat\/grounded["']/.test(source)) {
+  fail("chat path must import the shared groundedSystemPrompt");
+}
+if (!/role:\s*["']system["']\s*,\s*content:\s*groundedSystemPrompt\(input\.language,\s*matches\)/.test(source)) {
+  fail("chat path must pass the shared evidence prompt as its system message");
+}
+const promptPath = process.argv[5] || "server/chat/grounded.ts";
+const promptSource = fs.readFileSync(promptPath, "utf8");
+if (!promptSource.includes("Use only the supplied evidence")) fail("evidence-only system instruction is required");
+if (!promptSource.includes("If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE")) {
   fail("system instruction must require the exact insufficient-evidence sentinel");
 }
-if (!source.includes("Do not invent citations")) fail("system instruction must explicitly forbid invented citations");
+if (!promptSource.includes("Do not invent citations")) fail("system instruction must explicitly forbid invented citations");
 
 console.log("GROUNDING_CONTRACT_PASS");
