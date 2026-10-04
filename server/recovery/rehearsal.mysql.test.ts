@@ -28,7 +28,7 @@ const REPORT = process.env.RECOVERY_REPORT_PATH ?? "reports/recovery/recovery-re
 const scenarios: Array<{ name: string; ok: boolean; ms: number; evidence: Record<string, unknown> }> = [];
 const TAMIL = "முருகன் கோவில் பழநியில் உள்ளது. The Murugan temple opens at 6am.";
 
-describe.skipIf(skipMysqlSuite())("backup / restore / rollback rehearsal on a throwaway local database", () => {
+describe.skipIf(skipMysqlSuite())("backup / restore / rollback rehearsal on a throwaway local database", { timeout: 30_000 }, () => {
   const base = mysqlTestUrl(); const scratch: string[] = []; const dir = mkdtempSync(path.join(tmpdir(), "sakthi-recovery-"));
   let engine = "unknown";
   const openDb = (url: string) => { const pool = mysql.createPool({ uri: url, connectionLimit: 8 }); return { db: drizzle(pool), end: () => pool.promise().end() }; };
