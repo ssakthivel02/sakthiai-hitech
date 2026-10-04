@@ -548,6 +548,26 @@
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
       "knownLimitation": "REAL_MODEL_QUALITY_UNVERIFIED: model replies are scripted and embedding vectors are synthetic, so this scores the retrieval/grounding/citation contract only, not real-model or real-embedding quality. Four documented gaps are tracked (cross-script transliteration x2, stopword-only queries, cross-lingual without embeddings)."
+    },
+    {
+      "capability": "backup_restore_rollback_rehearsal",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "pnpm test:recovery: logical backup (consistent snapshot, per-table count + SHA-256) -> restore into an empty throwaway database -> verification; old-schema backup upgraded to latest via forward migrations; searchText backfill; provider policy/budget, task checkpoint/effect and OAuth-transaction behaviour after restore; bad-migration detection and recovery by restoring a pre-migration backup",
+      "sourceFiles": [
+        "server/recovery/rehearsal.ts",
+        "scripts/run-recovery-rehearsal.mjs"
+      ],
+      "tests": [
+        "server/recovery/rehearsal.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test:recovery",
+        "pnpm test:mysql"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Local throwaway MariaDB 10.11 only; no managed database (Aiven) was touched, so the managed backup/restore path, PITR and real RTO/RPO are NOT verified. Rehearsal-sized data. Migrations are forward-only: there is NO schema downgrade; rollback = restore a pre-migration backup and writes after it are lost. The logical export is a rehearsal tool, not a replacement for the provider's managed backups. Backup/restore is not scheduled or automated."
     }
   ]
 }

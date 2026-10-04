@@ -17,7 +17,7 @@ export const skipMysqlSuite = () => !mysqlTestUrl() && !mysqlRequired();
 
 export type TestDatabase = { pool: Pool; db: ReturnType<typeof drizzle>; name: string; url: string; close(): Promise<void> };
 
-function assertSafeTarget(url: URL) {
+export function assertSafeTarget(url: URL) {
   if (url.protocol !== "mysql:") throw new Error("TEST_DATABASE_URL must use mysql://");
   if (/aivencloud\.com$|\.render\.com$|\.rds\.amazonaws\.com$|\.database\.azure\.com$/i.test(url.hostname)) {
     throw new Error("refusing to run integration tests against a managed database host");
