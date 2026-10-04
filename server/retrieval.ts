@@ -43,12 +43,83 @@ export function normalizeRetrievalText(text: string): string {
 }
 
 /**
+ * Stopwords (English, Tamil script, Tanglish). A query made ONLY of these carries no retrievable information: it is
+ * suppressed (no lexical terms and no embedding lookup) instead of retrieving low-precision noise for the model.
+ * Queries with at least one other token are unaffected: stopwords are never removed from them.
+ */
+const STOPWORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "if", "of", "to", "in", "on", "at", "by", "for", "as", "is", "it", "be", "am", "are", "was", "were", "been", "do", "does", "did", "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "them", "his", "her", "its", "their", "this", "that", "these", "those", "there", "here", "what", "which", "who", "whom", "when", "where", "why", "how", "can", "could", "would", "should", "will", "shall", "may", "might", "not", "no", "with", "from", "into", "than", "then", "so", "tell", "give", "show", "please", "about", "any", "all", "have", "has", "had",
+  "என்ன", "எது", "எந்த", "எப்படி", "எங்கே", "எங்கு", "யார்", "ஏன்", "எப்போது", "இது", "அது", "இந்த", "அந்த", "இங்கே", "அங்கே", "உள்ளது", "உள்ள", "உள்ளன", "மற்றும்", "ஒரு", "என்று", "என", "ஆக", "இல்லை", "உண்டு", "வேண்டும்", "பற்றி", "ஆம்", "இல்",
+  "enna", "ethu", "edhu", "entha", "eppadi", "epdi", "enge", "engu", "yaar", "yar", "yen", "eppothu", "ithu", "idhu", "athu", "adhu", "intha", "antha", "inge", "ange", "irukku", "irukkum", "ullathu", "ulladhu", "mattrum", "matrum", "oru", "illai", "illa", "undu", "venum", "pathi", "patri",
+]);
+const stopKey = (token: string) => token.toLowerCase();
+
+/** True when the query has tokens but every one is a stopword (e.g. "what is the", "என்ன அது"). */
+export function isLowInformationQuery(query: string): boolean {
+  const tokens = (normalizeRetrievalText(query).match(TOKEN_RUN) ?? []).map(t => t.replace(/^[-_]+|[-_]+$/g, "")).filter(t => HAS_LETTER_OR_NUMBER.test(t));
+  return tokens.length > 0 && tokens.every(t => STOPWORDS.has(stopKey(t)));
+}
+
+/**
+ * Deterministic Tamil <-> Tanglish phonetic skeleton (Package 0019). Both scripts are reduced to the same coarse
+ * consonant key: vowels/length/aspiration/voicing are discarded (k=g, t=d=th=dh, p=b, s=ch=j=sh, l=zh=L, n=N=ng, r=R).
+ * It is a heuristic for matching a Latin-script Tamil token against a Tamil-script token (or the reverse) ONLY:
+ * it is never applied Latin-to-Latin (that would add English homophone noise) and it is NOT semantic search.
+ * A key needs >= 2 consonants; a transliteration-only match counts half a lexical hit.
+ */
+const TAMIL_CONSONANT: Record<string, string> = { "க": "k", "ங": "n", "ச": "s", "ஞ": "n", "ட": "t", "ண": "n", "த": "t", "ந": "n", "ப": "p", "ம": "m", "ய": "y", "ர": "r", "ல": "l", "வ": "v", "ழ": "l", "ள": "l", "ற": "r", "ன": "n", "ஜ": "s", "ஷ": "s", "ஸ": "s", "ஹ": "" };
+const LATIN_CONSONANT: Record<string, string> = { b: "p", c: "k", d: "t", f: "p", g: "k", h: "", j: "s", k: "k", l: "l", m: "m", n: "n", p: "p", q: "k", r: "r", s: "s", t: "t", v: "v", w: "v", x: "ks", y: "y", z: "s" };
+const TAMIL_RANGE = /[\u0B80-\u0BFF]/u;
+const LATIN_LETTER = /[a-z]/;
+const LATIN_DIGRAPHS: Array<[string, string]> = [["zh", "l"], ["th", "t"], ["dh", "t"], ["sh", "s"], ["ch", "s"], ["ng", "nk"], ["kh", "k"], ["gh", "k"], ["bh", "p"], ["ph", "p"]];
+
+export type TokenScript = "tamil" | "latin" | "other";
+export function tokenScript(token: string): TokenScript {
+  if (/^[\u0B80-\u0BFF\p{N}_-]+$/u.test(token) && TAMIL_RANGE.test(token)) return "tamil";
+  if (/^[a-z0-9_-]+$/.test(token) && LATIN_LETTER.test(token)) return "latin";
+  return "other";
+}
+
+const collapse = (key: string) => key.replace(/(.)\1+/g, "$1");
+export function translitKey(token: string): string | null {
+  const script = tokenScript(token);
+  let key = "";
+  if (script === "tamil") { for (const ch of token.split("ன்ற").join("\u0001")) key += ch === "\u0001" ? "ntr" : (TAMIL_CONSONANT[ch] ?? ""); } // ன்ற is pronounced ndr/ntr
+  else if (script === "latin") {
+    let t = token;
+    for (const [from, to] of LATIN_DIGRAPHS) t = t.split(from).join(` ${to} `);
+    for (const part of t.split(" ")) { if (part === "nk" || part === "l" || part === "t" || part === "s" || part === "k" || part === "p") { key += part; continue; } for (const ch of part) key += LATIN_CONSONANT[ch] ?? ""; }
+  } else return null;
+  key = collapse(key);
+  return Array.from(key).length >= 2 ? key : null;
+}
+
+/** Index-side companion of searchText: marker + script-tagged keys, so SQL LIKE can find cross-script candidates. */
+export const TRANSLIT_MARKER = "~tl~";
+export function translitIndexBlock(normalizedContent: string): string {
+  const keys = new Set<string>();
+  for (const run of normalizedContent.match(TOKEN_RUN) ?? []) {
+    const token = run.replace(/^[-_]+|[-_]+$/g, ""); const key = translitKey(token); const script = tokenScript(token);
+    if (key && script !== "other") keys.add(`${script === "tamil" ? "t" : "l"}:${key}`);
+  }
+  return `${TRANSLIT_MARKER} ${[...keys].join(" ")} `;
+}
+
+/** Index tags a query term may match across scripts: a Latin term seeks Tamil-derived keys and vice versa. */
+export function crossScriptTag(term: string): string | null {
+  const key = translitKey(term); const script = tokenScript(term);
+  if (!key || script === "other") return null;
+  return `${script === "latin" ? "t" : "l"}:${key}`;
+}
+
+/**
  * Language-neutral lexical terms: Unicode letters/marks/numbers, deduplicated in order.
  * Punctuation-only and mark-only runs are never terms. Short-token noise filtering keeps
  * the previous ASCII rule (>= 3 characters); non-ASCII tokens need >= 2 code points so
  * two-character words in scripts such as Han are not discarded.
  */
 export function normalizeRetrievalTerms(query: string): string[] {
+  if (isLowInformationQuery(query)) return [];
   const terms: string[] = [];
   const seen = new Set<string>();
   for (const run of normalizeRetrievalText(query).match(TOKEN_RUN) ?? []) {
@@ -73,10 +144,14 @@ export function scoreRetrievalCandidate(input: {
   candidateModel?: string | null;
 }): { score: number; retrievalMethod: RetrievalMethod; lexicalScore: number; semanticScore: number } {
   const haystack = input.terms.length ? normalizeRetrievalText(input.content) : "";
-  const lexicalHits = input.terms.reduce(
-    (count, term) => count + (haystack.includes(term) ? 1 : 0),
-    0,
-  );
+  let crossKeys: Set<string> | null = null; // lazily built: only when a term has no direct hit
+  const lexicalHits = input.terms.reduce((count, term) => {
+    if (haystack.includes(term)) return count + 1;
+    const tag = crossScriptTag(term);
+    if (!tag) return count;
+    crossKeys ??= new Set(translitIndexBlock(haystack).split(" ").slice(1));
+    return count + (crossKeys.has(tag) ? 0.5 : 0);
+  }, 0);
   const lexicalScore = input.terms.length ? lexicalHits / input.terms.length : 0;
   const modelsComparable = !input.queryModel || input.candidateModel === input.queryModel;
   const hasSemantic = Boolean(
@@ -113,6 +188,7 @@ export function rankChunkCandidates<
   limit = 8,
   queryModel: string | null = null,
 ) {
+  if (isLowInformationQuery(query)) return [];
   const terms = normalizeRetrievalTerms(query);
   return rows
     .map(({ chunk, document }) => {

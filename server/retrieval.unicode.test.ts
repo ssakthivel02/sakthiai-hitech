@@ -146,10 +146,14 @@ describe("rankChunkCandidates (the searchChunks scoring path)", () => {
 
   it("retrieves the relevant Tamil chunk first, with no embeddings, and excludes irrelevant ones", () => {
     const ranked = rankChunkCandidates(rows, TAMIL_QUERY, null);
-    expect(ranked.map(r => r.id)).toEqual([2, 4]);
+    // Package 0019: the Latin-script "Murugan" (id 3) is now found via the deterministic முருகன் <-> murugan key, but only at
+    // half weight (1 transliteration hit / 4 terms = 0.125) and strictly below every directly-matching Tamil chunk.
+    expect(ranked.map(r => r.id)).toEqual([2, 4, 3]);
     expect(ranked[0]).toMatchObject({ filename: "temples-ta.txt", retrievalMethod: "lexical" });
     expect(ranked[0].score).toBe(1);
-    expect(ranked.find(r => r.id === 1)).toBeUndefined();
+    expect(ranked.find(r => r.id === 3)!.score).toBeCloseTo(0.125, 10);
+    expect(ranked.find(r => r.id === 4)!.score).toBeGreaterThan(ranked.find(r => r.id === 3)!.score);
+    expect(ranked.find(r => r.id === 1)).toBeUndefined(); // irrelevant Tamil chunk is still excluded
   });
 
   it("retrieves mixed-language evidence from a mixed query", () => {

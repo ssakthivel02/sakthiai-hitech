@@ -18,7 +18,7 @@ import { ENV } from "./_core/env";
 import { createVerifiedMysqlPool } from "./_core/mysql";
 import { tryEmbed } from "./embeddings";
 import { searchWorkspaceChunks } from "./retrievalStore";
-import type { RetrievalMethod } from "./retrieval";
+import { isLowInformationQuery, type RetrievalMethod } from "./retrieval";
 
 export type { Citation } from "../drizzle/schema";
 export type { RetrievalMethod } from "./retrieval";
@@ -244,6 +244,7 @@ export async function getConversationMessages(workspaceId: number, conversationI
 export async function searchChunks(workspaceId: number, query: string): Promise<SearchResult[]> {
   const db = await getDb();
   if (!db) return [];
+  if (isLowInformationQuery(query)) return []; // stopword-only: no lexical terms, no embedding call, no noise evidence
   const semantic = await tryEmbed(query);
   return searchWorkspaceChunks(db, workspaceId, query, semantic ? { vector: semantic.vector, model: semantic.adapter.model } : null);
 }

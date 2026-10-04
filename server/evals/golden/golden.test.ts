@@ -24,7 +24,7 @@ describe("golden Tamil / English / code-switch benchmark (CONTRACT_HARNESS_GOLDE
     expect(report.thresholds.failures).toEqual([]);
     expect(report.thresholds.passed).toBe(true);
     expect(report.aggregates.crossWorkspaceLeaks).toBe(0);
-    expect(report.knownGaps.length).toBeGreaterThanOrEqual(4);
+    expect(report.knownGaps.map(g => g.gap)).toEqual(["CROSS_LINGUAL_NEEDS_EMBEDDINGS"]); // 0019 closed transliteration + stopword gaps; only the semantic dependency remains
     expect(report.knownGaps.every(g => g.reproduces)).toBe(true);
   });
 

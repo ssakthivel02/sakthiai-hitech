@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, notLike, or, sql, type SQL } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/mysql2";
 import { documentChunks, documents } from "../drizzle/schema";
-import { normalizeRetrievalTerms, normalizeRetrievalText, rankChunkCandidates } from "./retrieval";
+import { crossScriptTag, isLowInformationQuery, normalizeRetrievalTerms, normalizeRetrievalText, rankChunkCandidates, TRANSLIT_MARKER, translitIndexBlock } from "./retrieval";
 
 /**
  * Tenant-safe, DB-first candidate selection for retrieval.
@@ -40,12 +40,16 @@ export async function fetchRetrievalCandidates(
   query: string,
   semantic: { model: string } | null,
 ): Promise<CandidateRow[]> {
+  if (isLowInformationQuery(query)) return [];
   const terms = normalizeRetrievalTerms(query).slice(0, MAX_QUERY_TERMS);
   const byId = new Map<number, CandidateRow>();
   const add = (rows: CandidateRow[]) => { for (const row of rows) if (!byId.has(row.chunk.id)) byId.set(row.chunk.id, row); };
 
   if (terms.length) {
     const matches: SQL[] = terms.map(term => sql`(${documentChunks.searchText} COLLATE utf8mb4_bin LIKE ${likePattern(term)} ESCAPE '!')`);
+    // Cross-script (Tamil <-> Tanglish) candidates: space-delimited script-tagged keys appended to searchText at index time.
+    const tags = [...new Set(terms.map(crossScriptTag).filter((tag): tag is string => !!tag))].slice(0, MAX_QUERY_TERMS);
+    for (const tag of tags) matches.push(sql`(${documentChunks.searchText} COLLATE utf8mb4_bin LIKE ${likePattern(` ${tag} `)} ESCAPE '!')`);
     const hits = sql.join(matches, sql` + `);
     add(
       await db.select(selection).from(documentChunks).innerJoin(documents, eq(documentChunks.documentId, documents.id))
@@ -80,19 +84,23 @@ export async function searchWorkspaceChunks(db: Db, workspaceId: number, query: 
   return rankChunkCandidates(rows, query, semantic?.vector ?? null, limit, semantic?.model ?? null);
 }
 
-/** Idempotent maintenance: fills searchText for legacy rows in id order. Returns how many rows were updated. */
+/**
+ * Idempotent maintenance: fills searchText for legacy rows (NULL) AND upgrades rows indexed before transliteration keys
+ * existed (no TRANSLIT_MARKER) in id order. Returns how many rows were updated. Safe to re-run; a finished table updates 0.
+ */
 export async function backfillSearchText(db: Db, options: { batchSize?: number; maxBatches?: number } = {}): Promise<number> {
   const batchSize = Math.max(1, Math.min(options.batchSize ?? 500, 2000));
+  const stale = or(isNull(documentChunks.searchText), notLike(documentChunks.searchText, `%${TRANSLIT_MARKER}%`));
   let updated = 0;
   for (let batch = 0; batch < (options.maxBatches ?? Number.POSITIVE_INFINITY); batch += 1) {
-    const rows = await db.select({ id: documentChunks.id, content: documentChunks.content }).from(documentChunks).where(isNull(documentChunks.searchText)).orderBy(asc(documentChunks.id)).limit(batchSize);
+    const rows = await db.select({ id: documentChunks.id, content: documentChunks.content }).from(documentChunks).where(stale).orderBy(asc(documentChunks.id)).limit(batchSize);
     if (!rows.length) break;
     for (const row of rows) {
-      await db.update(documentChunks).set({ searchText: normalizeRetrievalText(row.content) }).where(and(eq(documentChunks.id, row.id), isNull(documentChunks.searchText)));
+      await db.update(documentChunks).set({ searchText: searchTextFor(row.content) }).where(and(eq(documentChunks.id, row.id), stale));
       updated += 1;
     }
   }
   return updated;
 }
 
-export const searchTextFor = (content: string) => normalizeRetrievalText(content);
+export const searchTextFor = (content: string) => { const normalized = normalizeRetrievalText(content); return `${normalized}\n${translitIndexBlock(normalized)}`; };

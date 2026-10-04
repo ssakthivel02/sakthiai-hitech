@@ -1,5 +1,6 @@
-// Fills documentChunks.searchText for rows ingested before migration 0006. Idempotent; safe to re-run.
-// Usage: DATABASE_URL=... pnpm db:backfill-search-text   (it only UPDATEs searchText of rows where it is NULL)
+// Fills documentChunks.searchText for rows ingested before migration 0006 (NULL) AND upgrades rows indexed before the
+// Tamil<->Tanglish transliteration key block existed (no ~tl~ marker). Idempotent; safe to re-run; a finished table updates 0.
+// Usage: DATABASE_URL=... pnpm db:backfill-search-text
 import { getDb } from "../server/db";
 import { backfillSearchText } from "../server/retrievalStore";
 

@@ -461,7 +461,7 @@
    ]
   },
   {
-   "id": "tr-tanglish-to-script-gap",
+   "id": "tr-tanglish-to-script",
    "category": "transliterated",
    "workspaceId": 1,
    "language": "en",
@@ -479,14 +479,10 @@
    "grounding": "GROUNDED_EVIDENCE",
    "cited": [
     "temple_ta"
-   ],
-   "knownGap": {
-    "id": "CROSS_SCRIPT_TRANSLITERATION",
-    "description": "Transliterated (Latin-script Tamil) queries do not lexically match Tamil-script documents; needs transliteration normalisation or embeddings."
-   }
+   ]
   },
   {
-   "id": "tr-script-to-tanglish-gap",
+   "id": "tr-script-to-tanglish",
    "category": "transliterated",
    "workspaceId": 1,
    "language": "ta",
@@ -505,11 +501,7 @@
    "grounding": "GROUNDED_EVIDENCE",
    "cited": [
     "temple_tanglish"
-   ],
-   "knownGap": {
-    "id": "CROSS_SCRIPT_TRANSLITERATION",
-    "description": "Tamil-script queries do not match Latin-script transliterated documents."
-   }
+   ]
   },
   {
    "id": "ins-unrelated",
@@ -698,7 +690,7 @@
    ]
   },
   {
-   "id": "amb-stopwords-gap",
+   "id": "amb-stopwords",
    "category": "ambiguous",
    "workspaceId": 1,
    "language": "en",
@@ -707,11 +699,7 @@
    "retrieval": {
     "none": true
    },
-   "grounding": "INSUFFICIENT_EVIDENCE",
-   "knownGap": {
-    "id": "STOPWORD_ONLY_QUERY_RETRIEVES_NOISE",
-    "description": "A query made only of stopwords (e.g. 'the') matches many chunks lexically; there is no stopword filtering, so low-precision evidence reaches the model."
-   }
+   "grounding": "INSUFFICIENT_EVIDENCE"
   },
   {
    "id": "multi-refund",
@@ -1091,6 +1079,142 @@
    "grounding": "GROUNDED_EVIDENCE",
    "cited": [
     "temple_en"
+   ]
+  },
+  {
+   "id": "tr-translit-tenant-isolation",
+   "category": "adversarial",
+   "workspaceId": 2,
+   "language": "en",
+   "query": "murugan kovil pazhani",
+   "embeddings": "unavailable",
+   "retrieval": {
+    "mustInclude": [
+     "t2_ta"
+    ],
+    "mustExclude": [
+     "temple_ta",
+     "temple_tanglish",
+     "temple_en",
+     "temple_mixed",
+     "temple_old"
+    ]
+   },
+   "model": {
+    "kind": "answer",
+    "text": "[1]"
+   },
+   "grounding": "GROUNDED_EVIDENCE",
+   "cited": [
+    "t2_ta"
+   ]
+  },
+  {
+   "id": "tr-direct-beats-translit",
+   "category": "transliterated",
+   "workspaceId": 1,
+   "language": "ta",
+   "query": "கோவில்",
+   "embeddings": "unavailable",
+   "retrieval": {
+    "mustInclude": [
+     "temple_ta",
+     "temple_tanglish"
+    ],
+    "topIs": "temple_ta"
+   },
+   "model": {
+    "kind": "answer",
+    "text": "[1]"
+   },
+   "grounding": "GROUNDED_EVIDENCE",
+   "cited": [
+    "temple_ta",
+    "temple_tanglish"
+   ]
+  },
+  {
+   "id": "tr-no-latin-latin-noise",
+   "category": "transliterated",
+   "workspaceId": 1,
+   "language": "en",
+   "query": "malai",
+   "embeddings": "unavailable",
+   "retrieval": {
+    "mustInclude": [
+     "temple_tanglish"
+    ],
+    "mustExclude": [
+     "ops_en",
+     "refund_a",
+     "refund_b",
+     "temple_en"
+    ]
+   },
+   "model": {
+    "kind": "answer",
+    "text": "[1]"
+   },
+   "grounding": "GROUNDED_EVIDENCE",
+   "cited": [
+    "temple_tanglish"
+   ]
+  },
+  {
+   "id": "amb-stopwords-ta",
+   "category": "ambiguous",
+   "workspaceId": 1,
+   "language": "ta",
+   "query": "என்ன அது இது",
+   "embeddings": "unavailable",
+   "retrieval": {
+    "none": true
+   },
+   "grounding": "INSUFFICIENT_EVIDENCE",
+   "model": {
+    "kind": "insufficient",
+    "text": "INSUFFICIENT_EVIDENCE"
+   },
+   "cited": []
+  },
+  {
+   "id": "amb-stopwords-tanglish",
+   "category": "ambiguous",
+   "workspaceId": 1,
+   "language": "en",
+   "query": "enna athu",
+   "embeddings": "unavailable",
+   "retrieval": {
+    "none": true
+   },
+   "grounding": "INSUFFICIENT_EVIDENCE",
+   "model": {
+    "kind": "insufficient",
+    "text": "INSUFFICIENT_EVIDENCE"
+   },
+   "cited": []
+  },
+  {
+   "id": "amb-stopwords-with-embeddings",
+   "category": "ambiguous",
+   "workspaceId": 1,
+   "language": "en",
+   "query": "what is the",
+   "embeddings": "synthetic",
+   "retrieval": {
+    "none": true
+   },
+   "grounding": "INSUFFICIENT_EVIDENCE",
+   "model": {
+    "kind": "insufficient",
+    "text": "INSUFFICIENT_EVIDENCE"
+   },
+   "cited": [],
+   "queryVector": [
+    1,
+    0,
+    0,
+    0
    ]
   }
  ]

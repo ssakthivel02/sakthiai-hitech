@@ -10,7 +10,7 @@ import { mysqlTestUrl, skipMysqlSuite } from "../testing/mysqlTestDb";
 import { MysqlBudgetStore } from "../gateway";
 import { MysqlTaskStore, TaskRetryableError, TaskWorker } from "../tasks";
 import { MysqlLoginTransactionStore } from "../_core/loginTransactions";
-import { backfillSearchText, searchWorkspaceChunks } from "../retrievalStore";
+import { backfillSearchText, searchTextFor, searchWorkspaceChunks } from "../retrievalStore";
 import { normalizeRetrievalText } from "../retrieval";
 import {
   RehearsalRefused, RestoreFailed, applyMigrations, backupDatabase, checkBackupIntegrity, createScratchDatabase, dropScratchDatabase, parseTarget, readBackup, readJournal,
@@ -163,7 +163,7 @@ describe.skipIf(skipMysqlSuite())("backup / restore / rollback rehearsal on a th
         // legacy rows are still searchable before the backfill (bounded legacy scan) ...
         expect((await searchWorkspaceChunks(db as any, 1, "பழநி", null)).length).toBeGreaterThan(0);
         expect(await backfillSearchText(db as any)).toBe(2); expect(await backfillSearchText(db as any)).toBe(0); // ... and the backfill is complete + idempotent
-        for (const r of await rows<{ content: string; searchText: string }>(db, sql`SELECT content, searchText FROM documentChunks`)) expect(r.searchText).toBe(normalizeRetrievalText(r.content));
+        for (const r of await rows<{ content: string; searchText: string }>(db, sql`SELECT content, searchText FROM documentChunks`)) { expect(r.searchText).toBe(searchTextFor(r.content)); expect(r.searchText.startsWith(normalizeRetrievalText(r.content))).toBe(true); expect(r.searchText).toContain("~tl~"); }
         expect((await searchWorkspaceChunks(db as any, 1, "பழநி", null)).length).toBeGreaterThan(0);
         // schema equals a freshly migrated database (no drift from the upgrade path)
         const ref = await fresh(); const cols = async (name: string) => (await rows<{ t: string; c: string; ty: string }>(db, sql`SELECT TABLE_NAME t, COLUMN_NAME c, COLUMN_TYPE ty FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ${name} ORDER BY TABLE_NAME, ORDINAL_POSITION`)).map(r => `${r.t}.${r.c}:${r.ty}`);

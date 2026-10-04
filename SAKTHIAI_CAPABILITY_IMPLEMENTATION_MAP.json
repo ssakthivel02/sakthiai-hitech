@@ -548,21 +548,25 @@
       "capability": "tamil_codeswitch_golden_benchmark",
       "truthModel": "PARTIAL",
       "status": "TESTED_LOCAL",
-      "runtimePath": "Deterministic golden corpus (Tamil, English, code-switch, transliterated, grounded, insufficient, conflicting, citation selection, ambiguous, multi-document, adversarial, provider-unavailable, embeddings-unavailable lexical fallback) scored by pnpm evals into a separate CONTRACT_HARNESS_GOLDEN report",
+      "runtimePath": "Deterministic golden corpus (Tamil, English, code-switch, transliterated, grounded, insufficient, conflicting, citation selection, ambiguous, multi-document, adversarial, provider-unavailable, embeddings-unavailable lexical fallback) scored by pnpm evals into a separate CONTRACT_HARNESS_GOLDEN report; deterministic Tamil<->Tanglish transliteration keys (server/retrieval.ts, searchText key block, SQL prefilter) and stopword-only query suppression",
       "sourceFiles": [
         "server/evals/golden/corpus.json",
         "server/evals/golden/run.ts",
-        "scripts/run-evals.mjs"
+        "scripts/run-evals.mjs",
+        "server/retrieval.ts",
+        "server/retrievalStore.ts"
       ],
       "tests": [
-        "server/evals/golden/golden.test.ts"
+        "server/evals/golden/golden.test.ts",
+        "server/retrieval.translit.test.ts",
+        "server/retrievalStore.translit.mysql.test.ts"
       ],
       "workflowGate": [
         "pnpm evals"
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "REAL_MODEL_QUALITY_UNVERIFIED: model replies are scripted and embedding vectors are synthetic, so this scores the retrieval/grounding/citation contract only, not real-model or real-embedding quality. Four documented gaps are tracked (cross-script transliteration x2, stopword-only queries, cross-lingual without embeddings)."
+      "knownLimitation": "REAL_MODEL_QUALITY_UNVERIFIED: model replies are scripted and embedding vectors are synthetic, so this scores the retrieval/grounding/citation contract only. One documented gap remains (CROSS_LINGUAL_NEEDS_EMBEDDINGS: English query for a Tamil-only chunk needs a real embedding model). Tamil<->Tanglish matching is a deterministic consonant-skeleton heuristic (cross-script only, half weight, can collide); stopword-only queries are suppressed. Rows indexed before 0019 need pnpm db:backfill-search-text to gain transliteration keys."
     },
     {
       "capability": "backup_restore_rollback_rehearsal",
