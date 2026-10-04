@@ -17,6 +17,17 @@ test.describe("authentication, safe return destination, revocation", () => {
     expect(cookies.some(c => c.name.includes("oauth_state") || c.name.includes("oauth_pkce"))).toBe(false);
   });
 
+  test("landing sign-in is a visible primary control and a failed login start is reported, never silent", async ({ page }) => {
+    await page.route("**/api/oauth/begin", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"unavailable"}' }));
+    await page.goto("/");
+    const signIn = page.getByRole("button", { name: "Sign in securely" });
+    await expect(signIn).toBeVisible();
+    expect(await signIn.evaluate(e => getComputedStyle(e).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+    await signIn.click();
+    await expect(page.getByRole("alert")).toHaveText("Sign-in could not be started. Please try again.");
+    await expect(page).toHaveURL(`${APP_ORIGIN}/`);
+  });
+
   const callback = async (page: import("@playwright/test").Page, returnTo: string | undefined, who = newIdentity("rt")) => {
     await page.goto("/");
     const { state, challenge, nonce, verifier } = await page.evaluate(async rt => {

@@ -23,6 +23,7 @@ import betaCapabilities from "../../../release/beta-capability-contract.json";
 export default function Home() {
   const { user, loading, isAuthenticated, logout } = useAuth();
   const [workspaceId, setWorkspaceId] = useState<number>();
+  const [loginError, setLoginError] = useState<string>();
   const [message, setMessage] = useState("");
   const [language, setLanguage] = useState<"en" | "ta">("en");
   const [conversationId, setConversationId] = useState<number>();
@@ -102,7 +103,22 @@ export default function Home() {
           Chat in English or Tamil inside tenant-scoped workspaces. New document ingestion remains
           disabled until the malware-scanning runtime has passed controlled security acceptance.
         </p>
-        <Button onClick={() => startLogin()}>Sign in securely</Button>
+        <Button
+          onClick={() => {
+            setLoginError(undefined);
+            // startLogin rejects when OIDC is not configured or /api/oauth/begin fails; never fail silently.
+            startLogin().catch((error: unknown) =>
+              setLoginError(
+                error instanceof Error && error.message === "OIDC login is not configured"
+                  ? "Sign-in is not configured on this deployment yet."
+                  : "Sign-in could not be started. Please try again.",
+              ),
+            );
+          }}
+        >
+          Sign in securely
+        </Button>
+        {loginError ? <p role="alert" className="login-error">{loginError}</p> : null}
         <div className="feature-row">
           <span><ShieldCheck size={16}/> OAuth protected</span>
           <span><FileText size={16}/> Safe ingestion gated</span>
