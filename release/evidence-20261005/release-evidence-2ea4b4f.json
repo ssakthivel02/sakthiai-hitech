@@ -1,0 +1,213 @@
+{
+  "schema": "sakthiai.release-evidence/v1",
+  "generatedAt": "2026-10-04T23:49:39.053Z",
+  "source": {
+    "gitSha": "2ea4b4f6909dfc11f3084d8294e016531b96b1c5",
+    "dirtyWorkingTree": false,
+    "node": "v22.23.3",
+    "pnpm": "10.18.0",
+    "lockfileSha256": "4b8fed833bce518bf4cd262431e62b6d6d8cfd5230843867e9400f13a739ff80",
+    "packageJsonSha256": "fee0ac8e59a545561f8ace5e9a4b338ccb882eb5e51afaff9d01d026812651f8"
+  },
+  "environment": {
+    "kind": "GITHUB_ACTIONS",
+    "runId": "37245003799",
+    "runAttempt": "1",
+    "workflow": "SakthiAI Quality Gate",
+    "ref": "refs/heads/integration/pr7-pr25-runtime-qualification-20260925",
+    "upstreamJobsSucceeded": [
+      "validate",
+      "mysql-integration",
+      "e2e"
+    ]
+  },
+  "claims": {
+    "SOURCE_IMPLEMENTED": true,
+    "LOCALLY_TESTED": true,
+    "CI_VERIFIED": true,
+    "CI_STATUS": "CI_VERIFIED_THIS_RUN",
+    "RUNTIME_VERIFIED": false,
+    "RUNTIME_STATUS": "RUNTIME_UNVERIFIED",
+    "runtimeNote": "No capability is runtime-verified: that requires a deployed runtime, a real scanner/model/storage and a human decision, none of which this manifest can observe."
+  },
+  "tests": {
+    "unit": {
+      "present": true,
+      "files": 85,
+      "filesFailed": 0,
+      "total": 682,
+      "passed": 535,
+      "failed": 0,
+      "skipped": 147
+    },
+    "mysqlIntegration": {
+      "present": true,
+      "files": 13,
+      "filesFailed": 0,
+      "total": 153,
+      "passed": 153,
+      "failed": 0,
+      "skipped": 0
+    },
+    "e2e": {
+      "present": true,
+      "expected": 48,
+      "unexpected": 0,
+      "flaky": 0,
+      "skipped": 0
+    }
+  },
+  "migrations": {
+    "ids": [
+      "0000_marvelous_dreaming_celestial",
+      "0001_wonderful_nemesis",
+      "0002_semantic_rag_provenance",
+      "0003_creator_core",
+      "0004_creator_spend_control",
+      "0005_provider_policy_runtime",
+      "0006_retrieval_storage_indexes",
+      "0007_oauth_login_transactions",
+      "0008_durable_tasks",
+      "0009_mcp_connectors",
+      "0010_resumable_ingestion"
+    ],
+    "count": 11,
+    "latest": "0010_resumable_ingestion",
+    "sqlDigest": "77c82705bd0541c6ba12c1b4488539c119553d1fad849b3593bb696ae9ca02e4"
+  },
+  "evals": {
+    "contract": {
+      "digest": "a35124fcd9765ff587e4cc38119e75eede4ce758621e0f1b8d31c29629b4f841",
+      "evidenceClass": "CONTRACT_HARNESS",
+      "cases": 28,
+      "passed": 28,
+      "realModelQuality": "NOT_MEASURED"
+    },
+    "golden": {
+      "digest": "646307b266627c22e573624af9b07d7c00aa46172504bbf545b809a217fcf8f5",
+      "corpusDigest": "e00b6c23c1ebe9475281528baac5d2eb496583498885558335202b50e50126bb",
+      "evidenceClass": "CONTRACT_HARNESS_GOLDEN",
+      "scored": "47/47",
+      "knownGaps": 1,
+      "realModelQuality": "REAL_MODEL_QUALITY_UNVERIFIED"
+    }
+  },
+  "e2e": {
+    "digest": "c321b52eed746b7de01d43e9ace1a5d289ef48469f11ad5bc699928dda8949d5",
+    "present": true,
+    "expected": 48,
+    "unexpected": 0,
+    "flaky": 0,
+    "skipped": 0
+  },
+  "audit": {
+    "scope": "production dependencies (pnpm audit --prod)",
+    "present": true,
+    "info": 0,
+    "low": 5,
+    "moderate": 24,
+    "high": 0,
+    "critical": 0
+  },
+  "recovery": {
+    "digest": "06c6c9fe266539a471d2c5a942e715ecbb02bae2a0c4125b3a49b39fe97d1a1c",
+    "evidenceClass": "LOCAL_REHEARSAL",
+    "engine": "8.0.46",
+    "scenarios": 9,
+    "managedDatabaseTouched": false,
+    "schemaDowngrade": "NOT_SUPPORTED_FORWARD_ONLY"
+  },
+  "capabilityTruth": {
+    "total": 25,
+    "byTruthModel": {
+      "PARTIAL": 18,
+      "IMPLEMENTED": 7
+    },
+    "byStatus": {
+      "TESTED_LOCAL": 25
+    },
+    "runtimeVerified": [],
+    "ciVerified": []
+  },
+  "gates": {
+    "upstreamJobs": {
+      "status": "ATTESTED",
+      "detail": "all required upstream CI jobs succeeded: validate, mysql-integration, e2e"
+    },
+    "frozenInstall": {
+      "status": "ATTESTED",
+      "detail": "pnpm install --frozen-lockfile: upstream CI job \"validate\" succeeded for this run"
+    },
+    "typecheck": {
+      "status": "ATTESTED",
+      "detail": "pnpm check: upstream CI job \"validate\" succeeded for this run"
+    },
+    "unitTests": {
+      "status": "PASS",
+      "detail": "535/682 passed, 147 skipped, 85 files"
+    },
+    "mysqlIntegration": {
+      "status": "PASS",
+      "detail": "153/153 passed, 0 skipped, 13 files"
+    },
+    "e2e": {
+      "status": "PASS",
+      "detail": "48 passed, 0 skipped",
+      "digest": "c321b52eed746b7de01d43e9ace1a5d289ef48469f11ad5bc699928dda8949d5"
+    },
+    "evals": {
+      "status": "PASS",
+      "detail": "28/28 contract cases",
+      "digest": "a35124fcd9765ff587e4cc38119e75eede4ce758621e0f1b8d31c29629b4f841"
+    },
+    "goldenBenchmark": {
+      "status": "PASS",
+      "detail": "47/47 scored, 1 known gaps",
+      "digest": "646307b266627c22e573624af9b07d7c00aa46172504bbf545b809a217fcf8f5"
+    },
+    "recoveryRehearsal": {
+      "status": "PASS",
+      "detail": "9 scenarios on 8.0.46",
+      "digest": "06c6c9fe266539a471d2c5a942e715ecbb02bae2a0c4125b3a49b39fe97d1a1c"
+    },
+    "capabilityMap": {
+      "status": "PASS",
+      "detail": "25 capabilities, 0 runtime-verified claims"
+    },
+    "migrationConsistency": {
+      "status": "PASS",
+      "detail": "11 migrations, journal/SQL/schema consistent, forward-only",
+      "digest": "77c82705bd0541c6ba12c1b4488539c119553d1fad849b3593bb696ae9ca02e4"
+    },
+    "secretHygiene": {
+      "status": "PASS",
+      "detail": "Secret hygiene PASS: scanned 506 tracked paths plus safe .env.example policy"
+    },
+    "sourceNeutrality": {
+      "status": "PASS",
+      "detail": "NEUTRALITY_PASS scope=source files=10 | NEUTRALITY_PASS scope=dist files=dist/**"
+    },
+    "productionAdvisories": {
+      "status": "PASS",
+      "detail": "0 critical, 0 high (24 moderate, 5 low)"
+    },
+    "build": {
+      "status": "PASS",
+      "detail": "dist/index.js present"
+    },
+    "builtServerSmoke": {
+      "status": "PASS",
+      "detail": "healthz 200, root 571 bytes, readyz 503 (fail-closed expected)"
+    },
+    "ciShaBinding": {
+      "status": "PASS",
+      "detail": "GITHUB_SHA equals checked-out HEAD"
+    }
+  },
+  "summary": {
+    "overall": "CI_GATES_PASS",
+    "failed": [],
+    "missing": [],
+    "notAttested": []
+  }
+}

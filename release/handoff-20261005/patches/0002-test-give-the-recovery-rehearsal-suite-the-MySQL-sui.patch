@@ -1,0 +1,35 @@
+From 7b240f7e40118982792f9cfaf03b248129042943 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 4 Oct 2026 11:25:46 +0000
+Subject: [PATCH 2/4] test: give the recovery rehearsal suite the MySQL suite
+ timeout
+
+'refuses unsafe restores' builds up to seven fully migrated scratch
+databases plus backups against the shared MySQL 8 service. On Quality
+Gate run 37198546157 it passed its assertions' work but exceeded vitest's
+5s default under parallel suite load (it took 1.6s on the previous run).
+Apply the same { timeout: 30_000 } suite option the other heavy MySQL
+suites already use. No assertion, refusal case or threshold changes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ADMGPDEiCj5xPwmjpf1nob
+---
+ server/recovery/rehearsal.mysql.test.ts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/server/recovery/rehearsal.mysql.test.ts b/server/recovery/rehearsal.mysql.test.ts
+index d9d6f7e..0b01653 100644
+--- a/server/recovery/rehearsal.mysql.test.ts
++++ b/server/recovery/rehearsal.mysql.test.ts
+@@ -28,7 +28,7 @@ const REPORT = process.env.RECOVERY_REPORT_PATH ?? "reports/recovery/recovery-re
+ const scenarios: Array<{ name: string; ok: boolean; ms: number; evidence: Record<string, unknown> }> = [];
+ const TAMIL = "முருகன் கோவில் பழநியில் உள்ளது. The Murugan temple opens at 6am.";
+ 
+-describe.skipIf(skipMysqlSuite())("backup / restore / rollback rehearsal on a throwaway local database", () => {
++describe.skipIf(skipMysqlSuite())("backup / restore / rollback rehearsal on a throwaway local database", { timeout: 30_000 }, () => {
+   const base = mysqlTestUrl(); const scratch: string[] = []; const dir = mkdtempSync(path.join(tmpdir(), "sakthi-recovery-"));
+   let engine = "unknown";
+   const openDb = (url: string) => { const pool = mysql.createPool({ uri: url, connectionLimit: 8 }); return { db: drizzle(pool), end: () => pool.promise().end() }; };
+-- 
+2.43.0
+

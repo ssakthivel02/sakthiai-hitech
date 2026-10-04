@@ -1,0 +1,45 @@
+From aa0ee1c1613353d376c2bd5a8eb07fe20e6e61fa Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 4 Oct 2026 11:22:46 +0000
+Subject: [PATCH 1/4] ci: run the existing migration manifest in the MySQL 8
+ job
+
+The 0005-0010 migration rehearsal (scripts/migration-manifest.ts) was only
+run locally. Invoke it in the mysql-integration job against the disposable
+MySQL 8 service so baseline->latest, rerun no-op, legacy data preservation,
+fresh-schema parity and backfill idempotency are checked at the exact head,
+and upload its manifest as an artifact. No script or threshold changes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ADMGPDEiCj5xPwmjpf1nob
+---
+ .github/workflows/quality-gate.yml | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/.github/workflows/quality-gate.yml b/.github/workflows/quality-gate.yml
+index 2b4aaae..434565e 100644
+--- a/.github/workflows/quality-gate.yml
++++ b/.github/workflows/quality-gate.yml
+@@ -185,6 +185,19 @@ jobs:
+           TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+         run: pnpm test:mysql
+ 
++      - name: Migration manifest (baseline 0000-0004 -> latest, rerun no-op, data preservation, fresh-schema parity, backfill)
++        env:
++          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
++        run: pnpm staging:migration-manifest
++
++      - name: Upload migration manifest
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: migration-manifest
++          path: reports/staging/runtime-migration-manifest.json
++          if-no-files-found: warn
++
+       - name: Upload MySQL integration report
+         if: always()
+         uses: actions/upload-artifact@v4
+-- 
+2.43.0
+

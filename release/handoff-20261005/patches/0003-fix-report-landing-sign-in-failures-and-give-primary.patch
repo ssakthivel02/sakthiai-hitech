@@ -1,0 +1,98 @@
+From c1fbb2b6f16b1f0089b9625e1ba11830f4c4d685 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 4 Oct 2026 23:45:15 +0000
+Subject: [PATCH 3/4] fix: report landing sign-in failures and give primary
+ buttons a visible fill
+
+Observed on the deployed preview (7b240f7): clicking 'Sign in securely'
+did nothing. startLogin() rejects when OIDC is not configured or
+/api/oauth/begin fails, and the landing onClick dropped the rejection,
+so users got no feedback. The button also rendered transparent because
+the shadcn bg-primary utility had no --color-primary theme token.
+
+- Catch startLogin() on the landing CTA and show a role=alert message.
+- Define --color-primary / --color-primary-foreground from the existing
+  --deep palette token.
+- E2E regression: forced /api/oauth/begin 503 must surface an alert and
+  the CTA must have a non-transparent background (fails before the fix).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ADMGPDEiCj5xPwmjpf1nob
+---
+ client/src/index.css      |  1 +
+ client/src/pages/Home.tsx | 18 +++++++++++++++++-
+ e2e/specs/auth.spec.ts    | 11 +++++++++++
+ 3 files changed, 29 insertions(+), 1 deletion(-)
+
+diff --git a/client/src/index.css b/client/src/index.css
+index 1e52d7f..382f682 100644
+--- a/client/src/index.css
++++ b/client/src/index.css
+@@ -1,5 +1,6 @@
+ @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+ @import "tailwindcss";
++@theme inline{--color-primary:var(--deep);--color-primary-foreground:#ffffff}
+ :root{font-family:'Manrope',system-ui,sans-serif;color:#172119;background:#f5f7f2;--ink:#172119;--muted:#59645b;--line:#dfe5dc;--accent:#ccff5b;--deep:#173b2e}*{box-sizing:border-box}body{margin:0;min-width:320px}.loading-screen{min-height:100vh;display:grid;place-items:center;color:var(--muted)}button{cursor:pointer}.landing{min-height:100vh;padding:12vh 12vw;background:radial-gradient(circle at 80% 10%,#dcff9b,transparent 32%),#f5f7f2;max-width:1100px}.landing h1{font-size:clamp(3rem,8vw,7rem);line-height:.95;letter-spacing:-.08em;max-width:850px;margin:18px 0 30px}.landing p{max-width:620px;color:var(--muted);font-size:1.15rem;line-height:1.7;margin-bottom:28px}.eyebrow{font:500 .72rem 'DM Mono',monospace;letter-spacing:.13em;color:#59645b}.feature-row{display:flex;gap:18px;flex-wrap:wrap;margin-top:70px;color:#5b675d;font-size:.83rem}.feature-row span{display:flex;gap:7px;align-items:center}.app-shell{display:flex;min-height:100vh}.sidebar{background:var(--deep);color:#f3f7ef;width:260px;padding:28px 22px;display:flex;flex-direction:column;gap:26px}.brand-mark{width:38px;height:38px;border-radius:12px;background:var(--accent);color:var(--deep);display:grid;place-items:center;font-weight:800;position:absolute;right:22px;top:25px}.sidebar strong{font-size:.9rem;letter-spacing:.04em}.sidebar .eyebrow{color:#91ab98}.sidebar nav{display:grid;gap:8px;margin-top:35px}.sidebar nav a{display:flex;gap:11px;align-items:center;padding:12px 13px;border-radius:9px;color:#b8c8b9;font-size:.9rem}.sidebar nav a.active,.sidebar nav a:hover{background:#2b5945;color:#fff}.sidebar nav a .badge{margin-left:auto}.identity{border-top:1px solid #41624e;padding-top:18px;display:flex;align-items:center;gap:9px;margin-top:auto}.avatar{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:#d7eea2;color:var(--deep);font-weight:700}.identity small{display:block;color:#9eb2a1;font-size:.68rem;max-width:120px;overflow:hidden;text-overflow:ellipsis}.identity button{margin-left:auto;background:none;border:0;color:#b8c8b9}.workspace{flex:1;padding:38px 4vw;max-width:1500px;margin:auto;width:100%}.workspace header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px}.workspace h2{font-size:clamp(1.8rem,3vw,3rem);letter-spacing:-.06em;margin:7px 0 0}.workspace-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(300px,.8fr);gap:20px}.main-column,.right-column,.right-column>*,.workspace{min-width:0}.right-column{display:grid;gap:20px;align-content:start}.chat-card{min-height:650px;display:flex;flex-direction:column}.chat-card .card-content{display:flex;flex-direction:column;flex:1}.chat-title{display:flex;justify-content:space-between;align-items:center;gap:12px}.chat-title p{color:var(--muted);font-size:.82rem;margin:5px 0}.chat-title span{color:#afbbb0}.segmented{display:flex;background:#eff2ed;border-radius:8px;padding:3px}.segmented button{border:0;background:transparent;padding:7px 10px;border-radius:6px;font-size:.72rem}.segmented button.selected{background:#fff;box-shadow:0 1px 3px #ccd5c8}.answer-area{flex:1;min-height:380px;padding:15px 2px;color:#26332a;line-height:1.7}.answer-label{font:500 .68rem 'DM Mono',monospace;letter-spacing:.1em;color:#59645b;margin-bottom:10px}.empty-state{height:100%;min-height:330px;display:grid;place-items:center;align-content:center;text-align:center;color:#8b978c;gap:10px}.empty-state strong{color:#4d5d50}.empty-state p{max-width:320px;font-size:.86rem}.composer{display:flex;gap:10px;align-items:flex-end;border-top:1px solid var(--line);padding-top:18px}.composer textarea{min-height:80px;resize:vertical}.citation-list{border-top:1px solid var(--line);margin-top:24px;padding-top:18px}.citation{display:flex;gap:10px;background:#f7f9f5;padding:10px;border-radius:8px;margin-top:8px;font-size:.8rem}.citation>span{font:500 .75rem 'DM Mono';color:#607363}.citation strong{display:block}.citation small{display:block;color:#819080}.citation p{margin:5px 0 0;color:#657267;font-size:.75rem}.inline-form{display:flex;gap:7px}.list{display:grid;gap:8px;margin-top:14px}.list-row{border-top:1px solid var(--line);padding-top:9px}.list-row span{display:block;font-size:.84rem;font-weight:700;overflow:hidden;text-overflow:ellipsis}.list-row small{display:block;color:var(--muted);font-size:.7rem;margin-top:3px}.dropzone{display:grid;place-items:center;text-align:center;gap:6px;border:1px dashed #b8c5b8;border-radius:10px;padding:22px 10px;color:#617063;font-size:.82rem}.dropzone small{font-size:.7rem;color:#879488}.dropzone input{max-width:100%;font-size:.7rem}.upload-button{width:100%;margin-top:10px}.card{border-color:var(--line);box-shadow:0 12px 35px rgba(31,55,36,.05)}
+ :where(a,button,input,textarea,select,[tabindex]):focus-visible{outline:3px solid var(--accent);outline-offset:3px;box-shadow:0 0 0 2px var(--deep)}
+ @media(pointer:coarse){button,.sidebar nav a,.segmented button,input[type="file"]{min-height:44px}.segmented button{padding:10px 14px}.identity button{min-width:44px}}
+diff --git a/client/src/pages/Home.tsx b/client/src/pages/Home.tsx
+index 6cf9cc3..11baa34 100644
+--- a/client/src/pages/Home.tsx
++++ b/client/src/pages/Home.tsx
+@@ -23,6 +23,7 @@ import betaCapabilities from "../../../release/beta-capability-contract.json";
+ export default function Home() {
+   const { user, loading, isAuthenticated, logout } = useAuth();
+   const [workspaceId, setWorkspaceId] = useState<number>();
++  const [loginError, setLoginError] = useState<string>();
+   const [message, setMessage] = useState("");
+   const [language, setLanguage] = useState<"en" | "ta">("en");
+   const [conversationId, setConversationId] = useState<number>();
+@@ -102,7 +103,22 @@ export default function Home() {
+           Chat in English or Tamil inside tenant-scoped workspaces. New document ingestion remains
+           disabled until the malware-scanning runtime has passed controlled security acceptance.
+         </p>
+-        <Button onClick={() => startLogin()}>Sign in securely</Button>
++        <Button
++          onClick={() => {
++            setLoginError(undefined);
++            // startLogin rejects when OIDC is not configured or /api/oauth/begin fails; never fail silently.
++            startLogin().catch((error: unknown) =>
++              setLoginError(
++                error instanceof Error && error.message === "OIDC login is not configured"
++                  ? "Sign-in is not configured on this deployment yet."
++                  : "Sign-in could not be started. Please try again.",
++              ),
++            );
++          }}
++        >
++          Sign in securely
++        </Button>
++        {loginError ? <p role="alert" className="login-error">{loginError}</p> : null}
+         <div className="feature-row">
+           <span><ShieldCheck size={16}/> OAuth protected</span>
+           <span><FileText size={16}/> Safe ingestion gated</span>
+diff --git a/e2e/specs/auth.spec.ts b/e2e/specs/auth.spec.ts
+index ce71cf0..fc47a5f 100644
+--- a/e2e/specs/auth.spec.ts
++++ b/e2e/specs/auth.spec.ts
+@@ -17,6 +17,17 @@ test.describe("authentication, safe return destination, revocation", () => {
+     expect(cookies.some(c => c.name.includes("oauth_state") || c.name.includes("oauth_pkce"))).toBe(false);
+   });
+ 
++  test("landing sign-in is a visible primary control and a failed login start is reported, never silent", async ({ page }) => {
++    await page.route("**/api/oauth/begin", route => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"unavailable"}' }));
++    await page.goto("/");
++    const signIn = page.getByRole("button", { name: "Sign in securely" });
++    await expect(signIn).toBeVisible();
++    expect(await signIn.evaluate(e => getComputedStyle(e).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
++    await signIn.click();
++    await expect(page.getByRole("alert")).toHaveText("Sign-in could not be started. Please try again.");
++    await expect(page).toHaveURL(`${APP_ORIGIN}/`);
++  });
++
+   const callback = async (page: import("@playwright/test").Page, returnTo: string | undefined, who = newIdentity("rt")) => {
+     await page.goto("/");
+     const { state, challenge, nonce, verifier } = await page.evaluate(async rt => {
+-- 
+2.43.0
+

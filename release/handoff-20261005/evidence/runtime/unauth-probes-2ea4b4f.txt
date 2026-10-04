@@ -1,0 +1,81 @@
+
+== releasez
+HTTP 200
+{"service":"sakthiai","environment":"production","repository":"ssakthivel02/sakthiai-hitech","commit":"2ea4b4f6909dfc11f3084d8294e016531b96b1c5","exactCommitKnown":true}
+
+== healthz
+HTTP 200
+{"status":"alive","service":"sakthiai","environment":"production"}
+
+== readyz
+HTTP 503
+{"status":"not_ready","service":"sakthiai","dependencies":{"database":"unavailable","authentication":"missing_configuration","llm":"missing_configuration","storage":"missing_configuration","embeddings":{"status":"unavailable"},"taskWorker":{"enabled":false,"state":"disabled","concurrency":2,"inFlight":0,"processed":0,"consecutiveErrors":0,"lastError":null,"lastActivityAt":null,"healthy":true},"uploadCleanup":{"enabled":false,"state":"disabled","runs":0,"skippedBusy":0,"consecutiveErrors":0,"lastError":null,"lastRunAt":null,"lastDurationMs":null,"lastTruncated":false,"totals":{"expired":0,"reco
+
+== headers-root
+HTTP 200
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b1020" />
+    <meta name="description" content="SakthiAI — intelligent workspaces, grounded knowledge, documents and conversations." />
+    <title>SakthiAI</title>
+    <script type="module" crossorigin src="/assets/index-B99Vv2VU.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-6LLWbMGF.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+
+permissions-policy: camera=(), geolocation=(), payment=(), usb=()
+referrer-policy: strict-origin-when-cross-origin
+
+== trpc-auth.me
+HTTP 200
+{"result":{"data":{"json":null}}}
+
+== trpc-workspace.list-unauth
+HTTP 401
+{"error":{"json":{"message":"Please login (10001)","code":-32001,"data":{"code":"UNAUTHORIZED","httpStatus":401,"path":"workspace.list"}}}}
+
+== trpc-chat.history-unauth
+HTTP 401
+{"error":{"json":{"message":"Please login (10001)","code":-32001,"data":{"code":"UNAUTHORIZED","httpStatus":401,"path":"chat.history"}}}}
+
+== trpc-logout-unauth
+HTTP 401
+{"error":{"json":{"message":"Please login (10001)","code":-32001,"data":{"code":"UNAUTHORIZED","httpStatus":401,"path":"auth.logout"}}}}
+
+== trpc-forged-cookie
+HTTP 401
+{"error":{"json":{"message":"Please login (10001)","code":-32001,"data":{"code":"UNAUTHORIZED","httpStatus":401,"path":"workspace.list"}}}}
+
+== oauth-callback-nostate
+HTTP 400
+{"error":"code and state are required"}
+
+== oauth-callback-badstate
+HTTP 403
+{"error":"invalid oauth state"}
+
+== oauth-begin-offsite-redirect
+HTTP 400
+{"error":"valid PKCE challenge required"}
+
+== revoke-all-unauth
+HTTP 401
+{"error":"Valid session required"}
+
+== storage-unauth
+HTTP 401
+{"error":"Authentication required"}
+
+== storage-traversal
+HTTP 401
+{"error":"Authentication required"}
+
+== oversize-body
+HTTP 413
+{"error":"Request body too large"}
