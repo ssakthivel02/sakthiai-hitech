@@ -2,6 +2,11 @@ name: SakthiAI Preview DB Setup
 
 on:
   workflow_dispatch:
+    inputs:
+      recovery_point:
+        description: "Aiven backup/recovery point taken or confirmed for hitech-preview-mysql immediately before this run (UTC timestamp)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -59,11 +64,52 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Require an attested pre-migration recovery point
+        env:
+          RECOVERY_POINT: ${{ inputs.recovery_point }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "${RECOVERY_POINT:-}" =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2} ]]; then
+            echo "A UTC recovery-point timestamp (YYYY-MM-DDTHH:MM) is required before migrating the preview database."
+            exit 1
+          fi
+          echo "Recovery point attested: ${RECOVERY_POINT}"
+
       - name: Typecheck
         run: pnpm check
 
+      - name: Pre-migration journal and row-count guard (read-only)
+        run: node scripts/preview-migration-guard.mjs pre
+
       - name: Apply preview schema
         run: pnpm db:push
+
+      - name: Post-migration journal and data-preservation guard (read-only)
+        run: node scripts/preview-migration-guard.mjs post
+
+      - name: Migrator rerun is a no-op
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm db:push
+          node scripts/preview-migration-guard.mjs post
+
+      - name: Search-text backfill is complete and idempotent
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm db:backfill-search-text | tee /tmp/backfill-1.txt
+          pnpm db:backfill-search-text | tee /tmp/backfill-2.txt
+          grep -q 'BACKFILL_DONE updated=0' /tmp/backfill-2.txt
+
+      - name: Upload preview migration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-migration-evidence
+          path: reports/staging/preview-migration-*.json
+          if-no-files-found: warn
 
       - name: Verify database connectivity over trusted TLS
         shell: bash
