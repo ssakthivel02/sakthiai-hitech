@@ -20,23 +20,23 @@ async function tabTo(page: Page, matches: (info: NonNullable<Awaited<ReturnType<
   throw new Error("element never received keyboard focus");
 }
 
-async function criticalAxe(page: Page, label: string, testInfo: import("@playwright/test").TestInfo) {
+async function releaseAxe(page: Page, label: string, testInfo: import("@playwright/test").TestInfo) {
   const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
   await testInfo.attach(`axe-${label}.json`, { body: JSON.stringify(results.violations.map(v => ({ id: v.id, impact: v.impact, nodes: v.nodes.length, help: v.help })), null, 2), contentType: "application/json" });
-  const critical = results.violations.filter(v => v.impact === "critical");
-  expect(critical.map(v => `${v.id}: ${v.nodes.map(n => n.target.join(" ")).join(", ")}`), `critical axe violations on ${label}`).toEqual([]);
+  const blocking = results.violations.filter(v => v.impact === "critical" || v.impact === "serious");
+  expect(blocking.map(v => `${v.id}: ${v.nodes.map(n => n.target.join(" ")).join(", ")}`), `serious or critical axe violations on ${label}`).toEqual([]);
 }
 
-test.describe("keyboard, focus and critical accessibility", () => {
-  test("landing: keyboard reaches the sign-in control with a visible focus indicator; no critical axe violations", async ({ page }, testInfo) => {
+test.describe("keyboard, focus and release accessibility", () => {
+  test("landing: keyboard reaches the sign-in control with a visible focus indicator; no serious or critical axe violations", async ({ page }, testInfo) => {
     await page.goto("/");
     await expect(page.getByRole("button", { name: "Sign in securely" })).toBeVisible();
     const info = await tabTo(page, i => i.label.includes("Sign in securely"));
     expect(info.visible, "focus indicator must be visible on the sign-in button").toBe(true);
-    await criticalAxe(page, "landing", testInfo);
+    await releaseAxe(page, "landing", testInfo);
   });
 
-  test("workspace: keyboard-only navigation, language toggle, composing and sending; visible focus; no critical axe violations", async ({ page }, testInfo) => {
+  test("workspace: keyboard-only navigation, language toggle, composing and sending; visible focus; no serious or critical axe violations", async ({ page }, testInfo) => {
     await login(page, newIdentity("kbd"));
     // nav landmark + focusable links with visible focus
     await expect(page.getByRole("navigation", { name: "Workspace navigation" })).toBeVisible();
@@ -56,7 +56,7 @@ test.describe("keyboard, focus and critical accessibility", () => {
     await page.keyboard.press("Enter");
     await expect(page.locator(".answer-area")).toContainText("INSUFFICIENT_EVIDENCE");
 
-    await criticalAxe(page, "workspace", testInfo);
+    await releaseAxe(page, "workspace", testInfo);
   });
 
   test("layout stays usable at this viewport: no horizontal page scroll and primary controls are on-screen", async ({ page }) => {
