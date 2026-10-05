@@ -1,0 +1,13 @@
+# Local repro, built server dist/index.js (77de9f7 source), MySQL 8.0.46, fake config values, port 4999
+## DB at baseline 0000-0004 (preview-like)
+{"status":"not_ready","service":"sakthiai","dependencies":{"database":"schema_mismatch","databaseSchema":{"status":"behind","expectedTables":31,"missingTables":11,"missingColumns":1},"authentication":"configured","llm":"configured","storage":"configured","embeddings":{"status":"unavailable"},"taskWorker":{"enabled":false,"state"
+HTTP 503
+
+## server log line (captured from the same run's console)
+readiness: database schema behind this build; missing tables: durableTaskEffects,durableTasks,fileUploadChunks,fileUploadSessions,mcpConnectorAudit,mcpConnectors,oauthLoginTransactions,providerBreakerStates,providerUsageHolds,providerUsageWindows,providerWorkspacePolicies missing columns: 1
+
+## Before the fix (a9be03b source, same 0004 baseline; recorded earlier this session): HTTP 200 {"status":"ready", ... "database":"configured"}
+
+## Fresh DB migrated 0000-0010 (drizzle-kit migrate)
+{"status":"ready","service":"sakthiai","dependencies":{"database":"configured","databaseSchema":{"status":"current","expectedTables":31,"missingTables":0,"missingColumns":0},"authentication":"configured","llm":"configured","storage":"configured","embeddings":{"status":"unavailable"},"taskWorker":{"enabled":false,"state":"disable
+HTTP 200

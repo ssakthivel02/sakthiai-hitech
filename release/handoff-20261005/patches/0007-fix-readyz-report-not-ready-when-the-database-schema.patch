@@ -1,0 +1,239 @@
+From 77de9f73048ffbab1d48b450db522500a7e98095 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 5 Oct 2026 01:37:12 +0000
+Subject: [PATCH 7/7] fix(readyz): report not ready when the database schema is
+ behind this build
+
+/readyz returned 200 "ready" with database "configured" for any reachable
+database, including one still at migration 0004. Every procedure touching
+tables from 0005-0010 (provider policies, OAuth login transactions, durable
+tasks, MCP connectors, upload sessions) would then fail at request time.
+
+Readiness now compares information_schema.COLUMNS for the connected database
+against every table and column the Drizzle schema declares. A missing table
+or column gives 503 with database "schema_mismatch"; extra objects are
+allowed (forward-only additive migrations); a read failure is "unknown" and
+not ready. The unauthenticated response carries counts only; the missing
+table names go to the server log.
+
+Reproduced on a built server against MySQL 8 at baseline 0004: before 200
+ready, after 503 schema_mismatch (11 tables, 1 column missing); fully
+migrated database: 200 ready, schema current.
+
+Tests: unit (compare/expected/unknown), real-MySQL 0004-vs-current, and the
+E2E readiness spec now asserts the schema is current.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ADMGPDEiCj5xPwmjpf1nob
+---
+ e2e/specs/chat.spec.ts               |  2 +
+ server/_core/index.ts                | 14 +++++--
+ server/_core/readiness.mysql.test.ts | 28 ++++++++++++++
+ server/_core/readiness.test.ts       | 26 ++++++++++++-
+ server/_core/readiness.ts            | 58 +++++++++++++++++++++++++++-
+ 5 files changed, 123 insertions(+), 5 deletions(-)
+ create mode 100644 server/_core/readiness.mysql.test.ts
+
+diff --git a/e2e/specs/chat.spec.ts b/e2e/specs/chat.spec.ts
+index 0951469..02b9653 100644
+--- a/e2e/specs/chat.spec.ts
++++ b/e2e/specs/chat.spec.ts
+@@ -129,6 +129,8 @@ test("readiness reports configured dependencies and never claims the scanner or
+   expect(response.status()).toBe(200);
+   const body = await response.json();
+   expect(body.status).toBe("ready");
++  expect(body.dependencies.database).toBe("configured");
++  expect(body.dependencies.databaseSchema).toMatchObject({ status: "current", missingTables: 0, missingColumns: 0 });
+   expect(body.dependencies.scanner.liveProbe).toBe("not_checked");
+   expect(body.dependencies.llm).toBe("configured");
+ });
+diff --git a/server/_core/index.ts b/server/_core/index.ts
+index 1025a2b..46041e9 100644
+--- a/server/_core/index.ts
++++ b/server/_core/index.ts
+@@ -18,7 +18,7 @@ import { embeddingStatus } from "../embeddings";
+ import { malwareScannerConfigurationStatus } from "../security/malwareScanner";
+ import { ENV } from "./env";
+ import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
+-import { probeDatabaseReadiness } from "./readiness";
++import { probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
+ 
+ function isPortAvailable(port: number): Promise<boolean> {
+   return new Promise(resolve => {
+@@ -120,6 +120,11 @@ async function startServer() {
+ 
+   app.get("/readyz", async (_req, res) => {
+     const databaseReady = await probeDatabaseReadiness();
++    // Reachable is not enough: the schema must match this build, or every procedure touching a newer table fails.
++    const databaseSchema = databaseReady ? await probeSchemaReadiness() : null;
++    const schemaCurrent = databaseSchema?.status === "current";
++    // /readyz is unauthenticated: publish counts only; operators get the missing table names from the server log.
++    if (databaseSchema?.status === "behind") console.warn("readiness: database schema behind this build; missing tables:", databaseSchema.missingTables.join(","), "missing columns:", databaseSchema.missingColumns);
+     const authReady = configured(
+       ENV.cookieSecret,
+       ENV.oidcAuthorizationUrl,
+@@ -134,13 +139,16 @@ async function startServer() {
+       ENV.storageAccessKeyId,
+       ENV.storageSecretAccessKey,
+     );
+-    const ready = databaseReady && authReady && llmReady && storageReady;
++    const ready = databaseReady && schemaCurrent && authReady && llmReady && storageReady;
+ 
+     res.status(ready ? 200 : 503).json({
+       status: ready ? "ready" : "not_ready",
+       service: "sakthiai",
+       dependencies: {
+-        database: databaseReady ? "configured" : "unavailable",
++        database: !databaseReady ? "unavailable" : schemaCurrent ? "configured" : "schema_mismatch",
++        databaseSchema: databaseSchema
++          ? { status: databaseSchema.status, expectedTables: databaseSchema.expectedTables, missingTables: databaseSchema.missingTables.length, missingColumns: databaseSchema.missingColumns }
++          : { status: "not_checked" },
+         authentication: authReady ? "configured" : "missing_configuration",
+         llm: llmReady ? "configured" : "missing_configuration",
+         storage: storageReady ? "configured" : "missing_configuration",
+diff --git a/server/_core/readiness.mysql.test.ts b/server/_core/readiness.mysql.test.ts
+new file mode 100644
+index 0000000..0c357ec
+--- /dev/null
++++ b/server/_core/readiness.mysql.test.ts
+@@ -0,0 +1,28 @@
++// Real MySQL 8: /readyz schema readiness against a database stuck at the pre-0005 baseline vs. a fully migrated one.
++import { describe, expect, it } from "vitest";
++import { createTestDatabase, migrationStatements, skipMysqlSuite } from "../testing/mysqlTestDb";
++import { probeSchemaReadiness } from "./readiness";
++
++describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_000 }, () => {
++  const readColumns = (db: Awaited<ReturnType<typeof createTestDatabase>>) => async () =>
++    (await db.pool.promise().query("SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"))[0] as Array<{ t: string; c: string }>;
++
++  it("a reachable database at baseline 0004 is NOT ready: the tables of migrations 0005-0010 are reported missing", async () => {
++    const db = await createTestDatabase({ migrate: false });
++    try {
++      const all = migrationStatements();
++      for (const m of all.slice(0, all.findIndex(x => x.tag === "0004_creator_spend_control") + 1)) for (const s of m.statements) await db.pool.promise().query(s);
++      const state = await probeSchemaReadiness(readColumns(db));
++      expect(state.status).toBe("behind");
++      expect(state.missingTables).toEqual(expect.arrayContaining(["providerWorkspacePolicies", "oauthLoginTransactions", "durableTasks", "mcpConnectors", "fileUploadSessions"]));
++      expect(state.missingColumns).toBeGreaterThan(0); // documentChunks.searchText (0006) on an existing table
++    } finally { await db.close(); }
++  });
++
++  it("a fully migrated database is current", async () => {
++    const db = await createTestDatabase();
++    try {
++      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "current", missingTables: [], missingColumns: 0 });
++    } finally { await db.close(); }
++  });
++});
+diff --git a/server/_core/readiness.test.ts b/server/_core/readiness.test.ts
+index f2a2bdc..efde835 100644
+--- a/server/_core/readiness.test.ts
++++ b/server/_core/readiness.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, expect, it, vi } from "vitest";
+-import { probeDatabaseReadiness } from "./readiness";
++import { compareSchema, expectedSchema, probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
+ 
+ describe("database readiness", () => {
+   it("passes only when the live database query succeeds", async () => {
+@@ -16,3 +16,27 @@ describe("database readiness", () => {
+     expect(staleHandleProbe).toHaveBeenCalledOnce();
+   });
+ });
++
++describe("schema readiness", () => {
++  const expected = new Map([["users", ["id", "openId"]], ["fileUploadSessions", ["id", "workspaceId"]]]);
++
++  it("is current only when every declared table and column exists (extra objects are fine)", () => {
++    const present = [["users", "id"], ["users", "openId"], ["users", "legacyExtra"], ["fileUploadSessions", "id"], ["fileUploadSessions", "workspaceId"], ["other", "x"]].map(([t, c]) => ({ t, c }));
++    expect(compareSchema(expected, present)).toEqual({ status: "current", expectedTables: 2, missingTables: [], missingColumns: 0 });
++  });
++
++  it("reports a database missing newer migrations as behind, naming the missing tables", () => {
++    expect(compareSchema(expected, [{ t: "users", c: "id" }, { t: "users", c: "openId" }])).toEqual({ status: "behind", expectedTables: 2, missingTables: ["fileUploadSessions"], missingColumns: 0 });
++    expect(compareSchema(expected, [{ t: "users", c: "id" }, { t: "fileUploadSessions", c: "id" }, { t: "fileUploadSessions", c: "workspaceId" }])).toMatchObject({ status: "behind", missingTables: [], missingColumns: 1 });
++  });
++
++  it("derives the expectation from this build's Drizzle schema, including the tables and columns of migrations 0005-0010", () => {
++    const schema = expectedSchema();
++    for (const table of ["users", "workspaces", "documentChunks", "providerWorkspacePolicies", "oauthLoginTransactions", "durableTasks", "mcpConnectors", "fileUploadSessions"]) expect(schema.has(table)).toBe(true);
++    expect(schema.get("documentChunks")).toContain("searchText");
++  });
++
++  it("fails closed as unknown when the schema cannot be read", async () => {
++    await expect(probeSchemaReadiness(() => Promise.reject(new Error("ECONNRESET")))).resolves.toMatchObject({ status: "unknown" });
++  });
++});
+diff --git a/server/_core/readiness.ts b/server/_core/readiness.ts
+index 0ab321d..8b7b2a5 100644
+--- a/server/_core/readiness.ts
++++ b/server/_core/readiness.ts
+@@ -1,4 +1,6 @@
+-import { sql } from "drizzle-orm";
++import { is, sql } from "drizzle-orm";
++import { MySqlTable, getTableConfig } from "drizzle-orm/mysql-core";
++import * as schema from "../../drizzle/schema";
+ import { getDb } from "../db";
+ 
+ type LiveDatabaseProbe = () => Promise<unknown>;
+@@ -19,3 +21,57 @@ export async function probeDatabaseReadiness(liveProbe?: LiveDatabaseProbe): Pro
+     return false;
+   }
+ }
++
++export type SchemaReadiness = {
++  status: "current" | "behind" | "unknown";
++  expectedTables: number;
++  missingTables: string[];
++  missingColumns: number;
++};
++type ColumnRow = { t: string; c: string };
++
++/** Every table and column this build's Drizzle schema declares; the connected database must contain all of them. */
++export function expectedSchema(): Map<string, string[]> {
++  const tables = new Map<string, string[]>();
++  for (const value of Object.values(schema)) {
++    if (!is(value, MySqlTable)) continue;
++    const config = getTableConfig(value);
++    tables.set(config.name, config.columns.map(column => column.name));
++  }
++  return tables;
++}
++
++/** Additive forward-only migrations: extra objects are fine, any declared table or column that is absent means not ready. */
++export function compareSchema(expected: Map<string, string[]>, present: ColumnRow[]): SchemaReadiness {
++  const have = new Map<string, Set<string>>();
++  for (const { t, c } of present) (have.get(t) ?? have.set(t, new Set()).get(t)!).add(c);
++  const missingTables: string[] = [];
++  let missingColumns = 0;
++  for (const [table, columns] of expected) {
++    const found = have.get(table);
++    if (!found) { missingTables.push(table); continue; }
++    missingColumns += columns.filter(column => !found.has(column)).length;
++  }
++  return { status: missingTables.length || missingColumns ? "behind" : "current", expectedTables: expected.size, missingTables: missingTables.sort(), missingColumns };
++}
++
++/**
++ * A reachable database is not a ready one: the schema must match this build (e.g. migrations 0005-0010 applied).
++ * Reads information_schema only; any failure is reported as "unknown", which is not ready.
++ */
++export async function probeSchemaReadiness(readColumns?: () => Promise<ColumnRow[]>): Promise<SchemaReadiness> {
++  const expected = expectedSchema();
++  try {
++    let rows: ColumnRow[];
++    if (readColumns) rows = await readColumns();
++    else {
++      const db = await getDb();
++      if (!db) throw new Error("database unavailable");
++      const result = await db.execute(sql`SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()`);
++      rows = (Array.isArray(result) ? result[0] : result) as unknown as ColumnRow[];
++    }
++    return compareSchema(expected, rows);
++  } catch {
++    return { status: "unknown", expectedTables: expected.size, missingTables: [], missingColumns: 0 };
++  }
++}
+-- 
+2.43.0
+

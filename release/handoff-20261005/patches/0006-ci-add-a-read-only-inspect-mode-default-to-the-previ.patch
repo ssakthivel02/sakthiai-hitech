@@ -1,7 +1,7 @@
 From a9be03bc8f938c83deb4abcc8cb3c152950223a7 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 5 Oct 2026 01:08:06 +0000
-Subject: [PATCH 6/6] ci: add a read-only inspect mode (default) to the preview
+Subject: [PATCH 6/7] ci: add a read-only inspect mode (default) to the preview
  DB setup workflow
 
 There was no safe preflight for the non-disposable preview database: once

@@ -1,6 +1,6 @@
 # SakthiAI HI-TECH: 20-day continuation plan (PR #29 preview release)
 
-Start date: 5 October 2026. Planned work only: **nothing here is complete until its acceptance evidence exists.**
+Start date: 5 October 2026. **The active order is the four-day schedule below**; the Days 1–20 sections hold the detailed acceptance criteria. Planned work only: **nothing here is complete until its acceptance evidence exists.**
 
 Release scope: the existing preview (`sakthiai-hitech-preview`) running the CI-verified PR #29 head. Production deployment and merging to `main` are separate owner decisions (Days 19–20).
 
@@ -25,6 +25,62 @@ D1-3 OIDC configured [OWNER] ────────┘                        
 D3 LLM/storage availability [OWNER] ─> D10-12 model + storage ─> D13-15 controlled worker/uploads/MCP ───────┘
 ```
 
+## Active schedule: four dependency-driven days (updated 5 October 2026)
+
+This compresses the tracks below into four working days. The detailed acceptance tables in the Days 1–20 sections still apply; this section only sets the order and the gates. **Each day starts only when its prerequisite gate is met. If it is not met, the day does not start, and the blocker is recorded rather than worked around.** Nothing in this section is complete until its evidence exists in `SAKTHIAI_FINAL_RELEASE_READINESS.md`.
+
+New since the 20-day plan: from `77de9f7`, `/readyz` compares the live schema with the build. It reports `database: "schema_mismatch"` with `databaseSchema: {status:"behind", missingTables:<n>, missingColumns:<n>}` until the pending migrations are applied (live at `77de9f7`: 31/31 tables missing), and the table names appear in the Render log line `readiness: database schema behind this build`. That gives a secret-free, read-only before/after check for Day 1.
+
+### Day 1: secrets → inspect → migrate once
+
+| | |
+|---|---|
+| **Prerequisite (owner)** | Repo secrets `SAKTHIAI_PREVIEW_DATABASE_URL` and `AIVEN_MYSQL_CA_CERT_B64` exist (GitHub → Settings → Secrets and variables → Actions → Repository secrets). Aiven `hitech-preview-mysql` is RUNNING. The latest provider-listed backup timestamp is quoted verbatim (`2026-10-05T00:28:42.354867Z` unless the DB has been written since; if it has, take a new backup and use that) |
+| **Before** | `/releasez` = deployed head; `/readyz` `databaseSchema.status` = `behind`. **Observed at `77de9f7` (01:42 UTC): 31/31 tables missing**, so the DB is empty or its tables are invisible to the app user |
+| **Action 1** | Dispatch "SakthiAI Preview DB Setup", `mode=inspect`, same `recovery_point`. Read-only |
+| **Gate** | Secrets step, Aiven target guard, `attest` and `pre` all PASS. The applied journal is a valid hash-checked prefix (expected `applied=0/11` on an empty DB, proven locally), `rowsNewerThanRecoveryPoint = {}`, and the `preview-migration-pre.json` artifact exists. **Any FAIL: stop Day 1, do not dispatch `migrate`** |
+| **Action 2** | Dispatch `mode=migrate` with the same `recovery_point`, **once** |
+| **Gate (stop)** | If `pre` shows **tables or journal rows that the app's `/readyz` cannot see**, the Render `DATABASE_URL` user lacks grants. Stop: owner fixes the grants first, and no migration runs |
+| **Acceptance** | Pre/post/rerun guards PASS; all pending migrations applied in order (0000–0010 on an empty DB); backfill reports N, then 0; artifact uploaded. **Live `/readyz`: `database: "configured"`, `databaseSchema: {status:"current", missingTables:0, missingColumns:0}`**; no new error logs |
+| **Rollback** | Stop the app (suspend the preview), restore the recovery point into a **new** Aiven DB, verify row counts, and repoint `DATABASE_URL`. Schema downgrade is NOT_SUPPORTED. Never re-run `migrate` after a partial failure without a new recovery point |
+| **Restore drill** | Only if a $0 restore target exists; otherwise record UNTESTED. A listed backup is not a tested restore |
+
+### Day 2: OIDC, two test accounts, auth and isolation
+
+| | |
+|---|---|
+| **Prerequisite** | Day 1 accepted (schema `current`). Owner has entered the OIDC values in Render (runtime `JWT_SECRET`, `OIDC_*`, `OIDC_REDIRECT_URI`; build-time `VITE_OIDC_AUTHORIZATION_URL`, `VITE_OIDC_CLIENT_ID`), registered the redirect URI, and created **two disposable identities A and B**, held by the owner and never shared in chat |
+| **Action** | Redeploy the CI-verified head (VITE values are baked in at build). Confirm `/releasez` and `/readyz` `authentication: configured`. Owner signs in as A and B in the browser. **The owner runs** the existing live acceptance script in their own shell, so that session tokens never enter chat or Git: `SAKTHIAI_BASE_URL=https://sakthiai-hitech-preview.onrender.com SAKTHIAI_EXPECTED_SHA=<deployed sha> SAKTHIAI_USER_A_TOKEN=… SAKTHIAI_USER_B_TOKEN=… SAKTHIAI_USER_A_WORKSPACE_ID=… SAKTHIAI_USER_B_WORKSPACE_ID=… SAKTHIAI_USER_A_CONVERSATION_ID=… SAKTHIAI_USER_B_CONVERSATION_ID=… pnpm exec tsx scripts/core-runtime-security-acceptance.ts`. Revocation and write checks additionally need `SAKTHIAI_ALLOW_REVOCATION=true`, `SAKTHIAI_ALLOW_ACCEPTANCE_WRITES=true` and `SAKTHIAI_ACCEPTANCE_WORKSPACE_ID`, set on disposable accounts only. The owner shares only the PASS/FAIL output. Claude covers the browser-side rows of the Days 4–6 table: PKCE/state, safe `returnTo`, HttpOnly/SameSite cookie, logout and revoke-all replay rejected (401), B denied on A's workspace, project, document, chat, task and MCP IDs |
+| **Acceptance** | Every row of the Days 4–6 table has live evidence; axe 0 serious/critical on the authenticated workspace at 390 and 1440 px |
+| **Stop** | Any cross-tenant read or write, or an accepted replayed session, is a release blocker: fix with a regression test, run exact-head CI, redeploy, and re-run Day 2 |
+| **Rollback** | Remove the OIDC values in Render and redeploy; the landing then truthfully reports "Sign-in is not configured" |
+
+### Day 3: LLM, embeddings and storage (only zero-cost ones)
+
+| | |
+|---|---|
+| **Prerequisite** | Day 2 accepted. Owner confirms whether a **zero-cost** self-hosted OpenAI-compatible LLM (`LOCAL_LLM_API_URL`, `LOCAL_LLM_MODEL`), embeddings (`LOCAL_EMBEDDING_*`) and S3-compatible storage (`STORAGE_*`) already exist |
+| **If none exist** | Verify live that `chat.send` returns MODEL_UNAVAILABLE truthfully and that disabled-upload messages are truthful. Real-model quality, semantic retrieval and storage stay **UNVERIFIED**. No paid provider is used |
+| **If they exist** | Record the model and version. Run 20–30 human-reviewed grounded prompts (English, Tamil, mixed, Tanglish, insufficient-evidence, adversarial), with automated scores kept separate from human review. Workspace-scoped retrieval and citations; B cannot read A's storage objects; presigned URL scope |
+| **Rollback** | Unset the values in Render and redeploy |
+
+### Day 4: UX, accessibility, operations, final decision
+
+| | |
+|---|---|
+| **Prerequisite** | Days 1–3 accepted, or their gaps recorded as UNVERIFIED |
+| **Action** | Fix only defects demonstrated on Days 1–3, each with a regression test, exact-head CI, redeploy and requalification. Re-run the live boundary probes and axe on the final head. Check operational behaviour: cold start, `/healthz`, `/readyz` and `/releasez` agree; flags still OFF; logs carry no secrets. Optional bounded worker/upload/MCP windows (Days 13–15 criteria) only if their dependencies exist; flags back OFF afterwards |
+| **Decision** | Update `SAKTHIAI_FINAL_RELEASE_READINESS.md`: GO / CONDITIONAL GO / HOLD against preview scope, with exact remote, tested and deployed SHAs and the run, job and deploy IDs. **GO requires Days 1 and 2 accepted.** A real model is required for any claim of grounded-answer quality |
+
+### Owner time for the four days
+
+| Day | Owner action | Effort |
+|---|---|---|
+| 1 | Add 2 repo secrets; confirm the backup timestamp | ~15 min |
+| 2 | Render OIDC values, redirect URI, 2 identities, browser sign-ins | ~45 min |
+| 3 | Yes/no on zero-cost LLM, embeddings and storage; human review if an LLM exists | 15 min – 2 h |
+| 4 | Final decision | ~15 min |
+
 ## Days 1–2: preview database (highest priority)
 
 | Step | Who | Acceptance evidence |
@@ -32,8 +88,8 @@ D3 LLM/storage availability [OWNER] ─> D10-12 model + storage ─> D13-15 cont
 | **Add repo secrets `SAKTHIAI_PREVIEW_DATABASE_URL` and `AIVEN_MYSQL_CA_CERT_B64`** (inspect run `37250477782` showed both missing) | [OWNER] | A re-run of inspect gets past "Require preview database secrets" |
 | Dispatch "SakthiAI Preview DB Setup" in `mode=inspect` with the provider-listed recovery point | Claude | Run ID. Steps "Require preview database secrets" and "Validate isolated Aiven MySQL target" pass. `pre` is PASS, with an applied/pending journal list matching the expected baseline, `rowsNewerThanRecoveryPoint = {}`, and a `preview-migration-pre.json` artifact |
 | Recovery point: provider-listed `2026-10-05T00:28:42.354867Z` (owner-checked); take a newer backup if anything writes to the DB first | [OWNER] | Aiven backup timestamp (UTC with Z), quoted verbatim |
-| Dispatch `mode=migrate` with the same recovery point, **once** | Claude | Run ID. Pre/post/rerun guards PASS; migrations 0005–0010 applied in order (or `pending=none` if already applied); backfill reports N, then `updated=0`; evidence artifact |
-| Post-migration readiness | Claude | `/readyz` shows `database: configured`; `/releasez` matches the deployed head; no new error logs |
+| Dispatch `mode=migrate` with the same recovery point, **once** | Claude | Run ID. Pre/post/rerun guards PASS; pending migrations applied in order (0000–0010 if the DB is empty, as live `/readyz` suggests; `pending=none` if already applied); backfill reports N (0 on an empty DB), then `updated=0`; evidence artifact |
+| Post-migration readiness | Claude | `/readyz` shows `database: configured` and `databaseSchema.status: current` (from `77de9f7`; before the migration it shows `schema_mismatch`); `/releasez` matches the deployed head; no new error logs |
 
 **Stop conditions:**
 - Missing secret, wrong DB name, or a journal hash/order mismatch.

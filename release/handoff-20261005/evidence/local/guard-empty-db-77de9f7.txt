@@ -1,0 +1,10 @@
+# Guarded preview-migration sequence on an EMPTY MySQL 8.0.46 sakthiai_preview (local, 77de9f7 source), recovery_point=2026-10-05T00:28:42.354867Z
+## attest
+PREVIEW_MIGRATION_ATTEST PASS recovery=OWNER_ATTESTED:2026-10-05T00:28:42.354Z
+## pre
+PREVIEW_MIGRATION_PRE PASS engine=8.0.46-0ubuntu0.24.04.4 applied=0/11 pending=0000_marvelous_dreaming_celestial,0001_wonderful_nemesis,0002_semantic_rag_provenance,0003_creator_core,0004_creator_spend_control,0005_provider_policy_runtime,0006_retrieval_storage_indexes,0007_oauth_login_transactions,0008_durable_tasks,0009_mcp_connectors,0010_resumable_ingestion recovery=OWNER_ATTESTED:2026-10-05T00:28:42.354Z
+## post
+PREVIEW_MIGRATION_POST PASS engine=8.0.46-0ubuntu0.24.04.4 applied=11/11 pending=none
+## rerun
+PREVIEW_MIGRATION_RERUN PASS engine=8.0.46-0ubuntu0.24.04.4 applied=11/11 pending=none
+## backfill x2: updated=0, updated=0

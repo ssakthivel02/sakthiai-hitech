@@ -1,0 +1,5 @@
+# Render app log, srv-dao0vd8473hc73b1raag, instance srv-dao0vd8473hc73b1raag-k9w9t, deploy dep-db1g0449v7es73fctep0 (77de9f7)
+2026-10-05T01:42:38.378Z readiness: database schema behind this build; missing tables: conversations,creatorAssets,creatorCaptionCues,creatorExports,creatorGenerations,creatorProjects,creatorProviderJobs,creatorReferences,creatorReviews,creatorScenes,creatorShots,creatorTimelineItems,creatorTimelines,documentChunks,documents,durableTaskEffects,durableTasks,fileUploadChunks,fileUploadSessions,mcpConnectorAudit,mcpConnectors,messages,oauthLoginTransactions,projects,providerBreakerStates,providerUsageHolds,providerUsageWindows,providerWorkspacePolicies,users,workspaceMembers,workspaces missing columns: 0
+2026-10-05T01:42:38.380Z {"event":"http_request","method":"GET","routeClass":"/readyz","status":503,"latencyMs":1971}
+2026-10-05T01:43:31.600Z (same readiness line repeated on the probe-set /readyz request; identical table list)
+# 01:41:00-01:43:40 UTC: no error-level entries; healthz 200 every 5 s; probe-set statuses as in unauth-probes-77de9f7.txt

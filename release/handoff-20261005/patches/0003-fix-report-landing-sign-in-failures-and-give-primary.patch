@@ -1,7 +1,7 @@
 From c1fbb2b6f16b1f0089b9625e1ba11830f4c4d685 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 4 Oct 2026 23:45:15 +0000
-Subject: [PATCH 3/6] fix: report landing sign-in failures and give primary
+Subject: [PATCH 3/7] fix: report landing sign-in failures and give primary
  buttons a visible fill
 
 Observed on the deployed preview (7b240f7): clicking 'Sign in securely'
