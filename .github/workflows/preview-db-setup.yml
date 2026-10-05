@@ -7,6 +7,12 @@ on:
         description: "Owner-attested Aiven backup time for hitech-preview-mysql taken/confirmed before this run, UTC with Z (e.g. 2026-10-05T01:10:00Z). Recorded as OWNER_ATTESTED, not provider-verified."
         required: true
         type: string
+      mode:
+        description: "inspect = read-only preflight (secrets present, target name, verified TLS, recovery point, journal/hash/snapshot); writes nothing. migrate = apply pending migrations and backfill."
+        required: true
+        type: choice
+        options: [inspect, migrate]
+        default: inspect
 
 permissions:
   contents: read
@@ -78,12 +84,15 @@ jobs:
         run: node scripts/preview-migration-guard.mjs pre
 
       - name: Apply preview schema
+        if: inputs.mode == 'migrate'
         run: pnpm db:push
 
       - name: Post-migration journal and data-preservation guard (read-only)
+        if: inputs.mode == 'migrate'
         run: node scripts/preview-migration-guard.mjs post
 
       - name: Migrator rerun is a no-op
+        if: inputs.mode == 'migrate'
         shell: bash
         run: |
           set -euo pipefail
@@ -91,6 +100,7 @@ jobs:
           node scripts/preview-migration-guard.mjs rerun
 
       - name: Search-text backfill is complete and idempotent
+        if: inputs.mode == 'migrate'
         shell: bash
         run: |
           set -euo pipefail

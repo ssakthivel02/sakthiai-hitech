@@ -87,4 +87,15 @@ describe("preview-db-setup.yml wiring", () => {
     expect(wf.indexOf("guard.mjs pre")).toBeLessThan(wf.indexOf("Apply preview schema"));
     expect(wf).not.toMatch(/=~ \^20\[0-9\]/);
   });
+
+  it("defaults to a read-only inspect mode; every database-writing step runs only with mode=migrate", () => {
+    expect(wf).toMatch(/mode:[\s\S]*type: choice[\s\S]*options: \[inspect, migrate\][\s\S]*default: inspect/);
+    const steps = wf.split(/\n      - name: /).slice(1);
+    const writers = steps.filter(step => /pnpm db:push|db:backfill-search-text/.test(step));
+    expect(writers.length).toBe(3);
+    for (const step of writers) expect(step).toMatch(/\n        if: inputs\.mode == 'migrate'\n/);
+    const post = steps.find(step => step.startsWith("Post-migration"));
+    expect(post).toMatch(/if: inputs\.mode == 'migrate'/);
+    for (const step of steps.filter(step => /guard\.mjs (attest|pre)\b/.test(step))) expect(step).not.toMatch(/if: inputs\.mode/);
+  });
 });
