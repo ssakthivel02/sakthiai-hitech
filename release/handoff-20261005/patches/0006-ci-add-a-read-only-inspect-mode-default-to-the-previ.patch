@@ -1,0 +1,92 @@
+From a9be03bc8f938c83deb4abcc8cb3c152950223a7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 5 Oct 2026 01:08:06 +0000
+Subject: [PATCH 6/6] ci: add a read-only inspect mode (default) to the preview
+ DB setup workflow
+
+There was no safe preflight for the non-disposable preview database: once
+the read-only 'pre' guard passed, the workflow went straight to db:push, so
+it could not be dispatched just to confirm the two required repo secrets
+exist and to inspect the target's journal/schema before migrating.
+
+Add a required 'mode' choice input (inspect | migrate, default inspect).
+inspect runs only the existing read-only steps: secret presence, target
+name, recovery-point validation, verified-TLS 'pre' guard (journal hashes,
+rows newer than the recovery point, schema/row snapshot), evidence upload,
+TLS connectivity and unit tests. db:push, the post/rerun guards and the
+backfill run only with mode=migrate. Regression: the workflow wiring test
+asserts every db:push/backfill step is gated on mode=migrate and that
+attest/pre are not. Locally confirmed the workflow's unit-test step makes
+no connection to DATABASE_URL (MySQL general log: 0 test connections).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ADMGPDEiCj5xPwmjpf1nob
+---
+ .github/workflows/preview-db-setup.yml | 10 ++++++++++
+ tests/preview-migration-guard.test.mjs | 11 +++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/.github/workflows/preview-db-setup.yml b/.github/workflows/preview-db-setup.yml
+index c535b4e..6cc5bb0 100644
+--- a/.github/workflows/preview-db-setup.yml
++++ b/.github/workflows/preview-db-setup.yml
+@@ -7,6 +7,12 @@ on:
+         description: "Owner-attested Aiven backup time for hitech-preview-mysql taken/confirmed before this run, UTC with Z (e.g. 2026-10-05T01:10:00Z). Recorded as OWNER_ATTESTED, not provider-verified."
+         required: true
+         type: string
++      mode:
++        description: "inspect = read-only preflight (secrets present, target name, verified TLS, recovery point, journal/hash/snapshot); writes nothing. migrate = apply pending migrations and backfill."
++        required: true
++        type: choice
++        options: [inspect, migrate]
++        default: inspect
+ 
+ permissions:
+   contents: read
+@@ -78,12 +84,15 @@ jobs:
+         run: node scripts/preview-migration-guard.mjs pre
+ 
+       - name: Apply preview schema
++        if: inputs.mode == 'migrate'
+         run: pnpm db:push
+ 
+       - name: Post-migration journal and data-preservation guard (read-only)
++        if: inputs.mode == 'migrate'
+         run: node scripts/preview-migration-guard.mjs post
+ 
+       - name: Migrator rerun is a no-op
++        if: inputs.mode == 'migrate'
+         shell: bash
+         run: |
+           set -euo pipefail
+@@ -91,6 +100,7 @@ jobs:
+           node scripts/preview-migration-guard.mjs rerun
+ 
+       - name: Search-text backfill is complete and idempotent
++        if: inputs.mode == 'migrate'
+         shell: bash
+         run: |
+           set -euo pipefail
+diff --git a/tests/preview-migration-guard.test.mjs b/tests/preview-migration-guard.test.mjs
+index 4b15818..e6b31dd 100644
+--- a/tests/preview-migration-guard.test.mjs
++++ b/tests/preview-migration-guard.test.mjs
+@@ -87,4 +87,15 @@ describe("preview-db-setup.yml wiring", () => {
+     expect(wf.indexOf("guard.mjs pre")).toBeLessThan(wf.indexOf("Apply preview schema"));
+     expect(wf).not.toMatch(/=~ \^20\[0-9\]/);
+   });
++
++  it("defaults to a read-only inspect mode; every database-writing step runs only with mode=migrate", () => {
++    expect(wf).toMatch(/mode:[\s\S]*type: choice[\s\S]*options: \[inspect, migrate\][\s\S]*default: inspect/);
++    const steps = wf.split(/\n      - name: /).slice(1);
++    const writers = steps.filter(step => /pnpm db:push|db:backfill-search-text/.test(step));
++    expect(writers.length).toBe(3);
++    for (const step of writers) expect(step).toMatch(/\n        if: inputs\.mode == 'migrate'\n/);
++    const post = steps.find(step => step.startsWith("Post-migration"));
++    expect(post).toMatch(/if: inputs\.mode == 'migrate'/);
++    for (const step of steps.filter(step => /guard\.mjs (attest|pre)\b/.test(step))) expect(step).not.toMatch(/if: inputs\.mode/);
++  });
+ });
+-- 
+2.43.0
+

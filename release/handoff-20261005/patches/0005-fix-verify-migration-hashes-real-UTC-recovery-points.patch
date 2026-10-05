@@ -1,7 +1,7 @@
 From ca6c3693825300451d2c1510be8c96357d67054d Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Mon, 5 Oct 2026 00:09:05 +0000
-Subject: [PATCH 5/5] fix: verify migration hashes, real UTC recovery points
+Subject: [PATCH 5/6] fix: verify migration hashes, real UTC recovery points
  and exact rerun no-op in the preview DB guard
 
 Gaps in the guard added in 2ea4b4f, each reproduced against it:

@@ -1,7 +1,7 @@
 From 2ea4b4f6909dfc11f3084d8294e016531b96b1c5 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 4 Oct 2026 23:47:01 +0000
-Subject: [PATCH 4/5] ci: guard the existing preview DB migration workflow
+Subject: [PATCH 4/6] ci: guard the existing preview DB migration workflow
 
 preview-db-setup.yml ran 'pnpm db:push' against the non-disposable preview
 database with no recovery-point check, no journal check and no backfill.
