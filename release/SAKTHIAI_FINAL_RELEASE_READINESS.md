@@ -6,7 +6,7 @@ The CI-qualified candidate is now **deployed to the existing preview**, and its 
 
 Core runtime acceptance is still **not verified**: real login, session revocation, two-tenant isolation, retrieval, grounding and the real model. The preview database is unreachable, and OIDC, LLM and storage are unconfigured. Those can only be cleared by owner actions.
 
-Updated 5 October 2026, 00:00–02:35 UTC session. Scope: `ssakthivel02/sakthiai-hitech`, PR #29 combined candidate, release to the existing **preview** only. Production, merging to `main` and paid providers are out of scope.
+Updated 5 October 2026 (sessions 23:35–23:53 UTC and from 00:03 UTC). Scope: `ssakthivel02/sakthiai-hitech`, PR #29 combined candidate, release to the existing **preview** only. Production, merging to `main` and paid providers are out of scope.
 
 This file supersedes earlier versions: `bdb11a1` on this branch, and the copy inside `sakthiai-release-qualification-evidence.zip`.
 
@@ -14,9 +14,9 @@ This file supersedes earlier versions: `bdb11a1` on this branch, and the copy in
 
 | State | Item |
 |---|---|
-| COMPLETED | Reconciliation (no other writer; source and preview state matched the record). Controlled preview deploys of CI-qualified `7b240f7`, then `2ea4b4f`; `/releasez` provenance verified for both. Live unauthenticated security probes. Live axe/mobile landing scan. Demonstrated landing-page defects fixed with a regression test. Existing preview-DB migration workflow given recovery-point, journal, preservation, rerun and backfill guards, rehearsed on MySQL 8 |
-| IN PROGRESS | None. Changes are frozen at `2ea4b4f`, which is CI-verified, deployed and runtime-checked |
-| BLOCKED | Preview DB (Aiven: no access from this session, billing unknown); OIDC, LLM and storage configuration (secure owner entry required) |
+| COMPLETED | Reconciliation (no other writer; source and preview state matched the record). Controlled preview deploys of CI-qualified `7b240f7`, then `2ea4b4f`; `/releasez` provenance verified for both. Live unauthenticated security probes. Live axe/mobile landing scan. Demonstrated landing-page defects fixed with a regression test. Existing preview-DB migration workflow given recovery-point, journal, preservation, rerun and backfill guards, rehearsed on MySQL 8. **Session 3:** three demonstrated guard gaps fixed in `ca6c369` (invalid dates accepted; migration hashes unchecked; rerun not compared to a snapshot), with 30 new regression tests including 6 on real MySQL |
+| IN PROGRESS | None. Changes frozen at `ca6c369`; see Final state |
+| BLOCKED | Preview DB: owner reports Aiven `hitech-preview-mysql` in project `ssakthivel02-7661` is POWEROFF on plan `free-1-1gb` ($0), latest listed backup `2026-10-02T07:58:07.224822Z`. These are owner-reported via another assistant's connection; this session has no Aiven access and has not verified them. OIDC, LLM and storage configuration need secure owner entry |
 | PENDING | Preview DB migration 0005–0010 plus backfill; live login/logout/revocation/replay; two-user isolation; storage ownership; retrieval, citations and grounding states; Tamil/Tanglish live answers; MODEL_UNAVAILABLE and provider routing live; worker, uploads and MCP live |
 | OWNER ACTION REQUIRED | Three precise actions; see "Owner actions" |
 
@@ -39,6 +39,7 @@ Commits on top of the imported candidate. All were normal fast-forward pushes, e
 | `7b240f7` | test | Recovery suite gets the `{ timeout: 30_000 }` used by the other heavy SQL suites (shown flaky in run `37198546157`) |
 | `c1fbb2b` | fix | **Observed on the deployed preview:** "Sign in securely" did nothing (an unhandled `startLogin()` rejection) and rendered with no fill (no `--color-primary` theme token). Now shows a `role=alert` message; the primary token maps to the existing `--deep` colour. E2E regression added; **it fails before the fix on desktop and mobile** and passes after |
 | `2ea4b4f` | CI | Guards the existing `preview-db-setup.yml`: required recovery-point input; read-only journal-prefix pre-check; post-check for completeness and row preservation; rerun no-op; backfill run twice with the second updating 0; evidence upload |
+| `ca6c369` | fix | Closes three guard gaps, each reproduced against `2ea4b4f`. (1) `recovery_point` matched only a prefix, so `2026-02-30T10:00` was ACCEPTED; it now requires a real, non-future UTC instant with `Z`. It is recorded as **OWNER_ATTESTED** (`providerVerified: false`, never BACKUP_VERIFIED), and `pre` fails if any TIMESTAMP `createdAt`/`updatedAt` row is newer than that point. (2) The journal check ignored hashes, so a tampered `__drizzle_migrations.hash` PASSED; each applied row must now equal the Drizzle migrator format (`hash` = sha256 of `drizzle/<tag>.sql`, `created_at` = journal `when`). This was confirmed against rows written by `pnpm db:push` (drizzle-kit). (3) The rerun step only repeated the completeness/minimum-count check; the new `rerun` mode requires journal rows, tables, columns, indexes, constraints and row counts to equal the `post` snapshot exactly |
 
 ## CI evidence
 
@@ -95,6 +96,7 @@ These runtime checks verify the deployed artifact's identity and its unauthentic
 | Deploy provenance (`/releasez`), health, fail-closed readiness | Yes | Yes | Yes | **Yes** |
 | Unauthenticated denial, forged cookie/state, PKCE requirement, body limit, storage auth | Yes | Yes | Yes | **Yes (boundary only)** |
 | Landing accessibility and mobile layout | Yes | Yes | Yes | **Yes (landing only)** |
+| Preview-DB migration guard: attested recovery point, Drizzle hash/journal prefix, preservation, exact rerun no-op | Yes | Yes (30 tests; 6 on real MySQL 8.0.46) | Pending (exact-head run `37246358744`) | No: DB unreachable |
 | Real OIDC login, logout, revocation, replay rejection | Yes | Yes (fake OIDC) | Yes | No: OIDC unconfigured |
 | Two-user/workspace isolation, storage ownership | Yes | Yes | Yes | No: needs DB and login |
 | Migrations 0005–0010 and backfill on the preview DB | Yes | Yes | Yes | No: DB unreachable |
@@ -122,11 +124,16 @@ CONDITIONAL GO is not offered. No safely limited scope exists, because without a
 
 - **App:** Render dashboard → `sakthiai-hitech-preview` → Deploys → `dep-db1e6jpsrm7s73b9bdm0` (`7b240f7`) or `dep-dav0miaj7g8c73aakpg0` (`79fbe21`) → Rollback. The Render tooling in this session can only build the branch head, so a commit-specific rollback is a dashboard action. Never force-reset the branch.
 - **Database:** nothing was migrated in this session. When migrating, the guarded workflow requires a recovery point first. Migrations are forward-only and **schema downgrade is NOT_SUPPORTED**. On failure: stop the app and workers, restore the Aiven recovery point into a fresh database, verify row counts, then repoint `DATABASE_URL`.
-- **Source:** `c1fbb2b` and `2ea4b4f` can each be reverted with a normal revert commit.
+- **Source:** `c1fbb2b`, `2ea4b4f` and `ca6c369` can each be reverted with a normal revert commit.
 
 ## Owner actions (smallest set that unblocks runtime acceptance)
 
-1. **Aiven `hitech-preview-mysql`.** This session has no Aiven access. Confirm whether powering it on starts or increases billing; if it does, decide. Then power it on and take or confirm a backup. Ensure repo secrets `SAKTHIAI_PREVIEW_DATABASE_URL` and `AIVEN_MYSQL_CA_CERT_B64` are set, and Render env `DATABASE_URL`, `DATABASE_EXPECTED_NAME=sakthiai_preview` and `DATABASE_CA_CERT_B64`. Then run **Actions → "SakthiAI Preview DB Setup"** on the integration branch with `recovery_point=<backup UTC, e.g. 2026-10-05T01:10>`. The guards stop on any unexpected journal state.
+1. **Aiven `hitech-preview-mysql`** (project `ssakthivel02-7661`; owner-reported POWEROFF, `free-1-1gb`, $0).
+   - Power it on **without changing the plan**, and confirm in the Aiven console that the plan is still `free-1-1gb`.
+   - Recovery point: use a backup taken after the service is running if the plan allows one; otherwise use the latest listed automatic backup (owner-reported `2026-10-02T07:58:07.224822Z`).
+   - Run **Actions → "SakthiAI Preview DB Setup"** on the integration branch with `recovery_point` set to that exact time, e.g. `2026-10-02T07:58:07Z`.
+   - The guard records it as **OWNER_ATTESTED**. It refuses the run if any timestamped row is newer than that point, any applied migration's hash or order differs from the repository, or the target is not `sakthiai_preview` over verified TLS. It cannot see deletes or updates on tables without timestamps; that is why the evidence stays attested rather than verified.
+   - Prerequisites: repo secrets `SAKTHIAI_PREVIEW_DATABASE_URL` and `AIVEN_MYSQL_CA_CERT_B64`, and Render env `DATABASE_URL`, `DATABASE_EXPECTED_NAME=sakthiai_preview` and `DATABASE_CA_CERT_B64`.
 2. **OIDC, entered in the Render dashboard (never in chat):**
    - Runtime: `JWT_SECRET`, `OIDC_AUTHORIZATION_URL`, `OIDC_TOKEN_URL`, `OIDC_USERINFO_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_REDIRECT_URI=https://sakthiai-hitech-preview.onrender.com/api/oauth/callback`.
    - **Build-time:** `VITE_OIDC_AUTHORIZATION_URL` and `VITE_OIDC_CLIENT_ID`. Changing these requires a redeploy.
