@@ -129,6 +129,8 @@ test("readiness reports configured dependencies and never claims the scanner or 
   expect(response.status()).toBe(200);
   const body = await response.json();
   expect(body.status).toBe("ready");
+  expect(body.dependencies.database).toBe("configured");
+  expect(body.dependencies.databaseSchema).toMatchObject({ status: "current", missingTables: 0, missingColumns: 0 });
   expect(body.dependencies.scanner.liveProbe).toBe("not_checked");
   expect(body.dependencies.llm).toBe("configured");
 });

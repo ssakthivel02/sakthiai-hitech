@@ -18,7 +18,7 @@ import { embeddingStatus } from "../embeddings";
 import { malwareScannerConfigurationStatus } from "../security/malwareScanner";
 import { ENV } from "./env";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
-import { probeDatabaseReadiness } from "./readiness";
+import { probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -120,6 +120,11 @@ async function startServer() {
 
   app.get("/readyz", async (_req, res) => {
     const databaseReady = await probeDatabaseReadiness();
+    // Reachable is not enough: the schema must match this build, or every procedure touching a newer table fails.
+    const databaseSchema = databaseReady ? await probeSchemaReadiness() : null;
+    const schemaCurrent = databaseSchema?.status === "current";
+    // /readyz is unauthenticated: publish counts only; operators get the missing table names from the server log.
+    if (databaseSchema?.status === "behind") console.warn("readiness: database schema behind this build; missing tables:", databaseSchema.missingTables.join(","), "missing columns:", databaseSchema.missingColumns);
     const authReady = configured(
       ENV.cookieSecret,
       ENV.oidcAuthorizationUrl,
@@ -134,13 +139,16 @@ async function startServer() {
       ENV.storageAccessKeyId,
       ENV.storageSecretAccessKey,
     );
-    const ready = databaseReady && authReady && llmReady && storageReady;
+    const ready = databaseReady && schemaCurrent && authReady && llmReady && storageReady;
 
     res.status(ready ? 200 : 503).json({
       status: ready ? "ready" : "not_ready",
       service: "sakthiai",
       dependencies: {
-        database: databaseReady ? "configured" : "unavailable",
+        database: !databaseReady ? "unavailable" : schemaCurrent ? "configured" : "schema_mismatch",
+        databaseSchema: databaseSchema
+          ? { status: databaseSchema.status, expectedTables: databaseSchema.expectedTables, missingTables: databaseSchema.missingTables.length, missingColumns: databaseSchema.missingColumns }
+          : { status: "not_checked" },
         authentication: authReady ? "configured" : "missing_configuration",
         llm: llmReady ? "configured" : "missing_configuration",
         storage: storageReady ? "configured" : "missing_configuration",
