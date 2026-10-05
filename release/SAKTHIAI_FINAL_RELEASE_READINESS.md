@@ -16,7 +16,7 @@ This file supersedes earlier versions: `bdb11a1` on this branch, and the copy in
 |---|---|
 | COMPLETED | Reconciliation (no other writer; source and preview state matched the record). Controlled preview deploys of CI-qualified `7b240f7`, then `2ea4b4f`; `/releasez` provenance verified for both. Live unauthenticated security probes. Live axe/mobile landing scan. Demonstrated landing-page defects fixed with a regression test. Existing preview-DB migration workflow given recovery-point, journal, preservation, rerun and backfill guards, rehearsed on MySQL 8. **Session 3:** three demonstrated guard gaps fixed in `ca6c369` (invalid dates accepted; migration hashes unchecked; rerun not compared to a snapshot), with 30 new regression tests including 6 on real MySQL |
 | IN PROGRESS | None. Changes frozen at `ca6c369`; see Final state |
-| BLOCKED | Preview DB: owner reports Aiven `hitech-preview-mysql` in project `ssakthivel02-7661` is POWEROFF on plan `free-1-1gb` ($0), latest listed backup `2026-10-02T07:58:07.224822Z`. These are owner-reported via another assistant's connection; this session has no Aiven access and has not verified them. OIDC, LLM and storage configuration need secure owner entry |
+| BLOCKED | **Preview DB migration.** The owner powered on Aiven `hitech-preview-mysql` at 2026-10-05 00:25 UTC (plan `free-1-1gb` unchanged, initially REBUILDING). At 00:45 UTC the deployed app's `/readyz` reported `database: configured` (verified-TLS `SELECT 1` to `sakthiai_preview` succeeds; at 00:18 the same host returned ENOTFOUND). Per [Aiven docs](https://aiven.io/docs/platform/concepts/service-power-cycle), power-on **restores the latest backup**, so the live data is that backup's restore. This session has no Aiven access: it cannot list backups, confirm RUNNING directly, or read the schema. `preview-db-setup.yml` has **never run** (0 runs), so its repo secrets are unconfirmed. The migration was therefore **not run**. OIDC, LLM and storage still need secure owner entry |
 | PENDING | Preview DB migration 0005–0010 plus backfill; live login/logout/revocation/replay; two-user isolation; storage ownership; retrieval, citations and grounding states; Tamil/Tanglish live answers; MODEL_UNAVAILABLE and provider routing live; worker, uploads and MCP live |
 | OWNER ACTION REQUIRED | Three precise actions; see "Owner actions" |
 
@@ -87,6 +87,7 @@ Target identity: Render workspace `tea-danue82jnfac739th8lg`; service `sakthiai-
 | Landing axe (wcag2a/aa, 2.1a/aa) at 360, 390 and 1440 px | **0 violations**, no horizontal overflow; copy truthfully states ingestion is disabled |
 | Landing sign-in click (OIDC unconfigured) | On `7b240f7`: **defect** (no request, no message, transparent button). On `2ea4b4f`: **fixed live**. The button renders `rgb(23,59,46)` with white text, and clicking it shows `role=alert` "Sign-in is not configured on this deployment yet." |
 | Re-run on `2ea4b4f` | `/releasez` = `2ea4b4f…`; every probe above returns the identical status; axe 0 violations at 360, 390 and 1440 px |
+| `/readyz` after Aiven power-on (00:45 UTC, `ca6c369`) | 503 overall; **database `configured`**; authentication, llm and storage still `missing_configuration`; embeddings unavailable; scanner not configured; worker and cleanup `enabled: false`. **Known skew until the migration runs:** the app expects schema 0010, but the DB is presumably at the restored baseline. No authenticated path is reachable, and I made no DB-writing request (for example `/api/oauth/begin`, which would write `oauthLoginTransactions`) |
 | Re-run on `ca6c369` | `/releasez` = `ca6c369…`; all 16 probes return identical statuses; taskWorker and uploadCleanup still `enabled: false`. The runtime bundle is unchanged (the commit touches only CI, scripts and tests) |
 
 Raw evidence is in `release/evidence-20261005/runtime/`. Probe output contains no secrets.
@@ -98,6 +99,7 @@ These runtime checks verify the deployed artifact's identity and its unauthentic
 | Capability | SOURCE_IMPLEMENTED | LOCALLY_TESTED | CI_VERIFIED | RUNTIME_VERIFIED |
 |---|---|---|---|---|
 | Deploy provenance (`/releasez`), health, fail-closed readiness | Yes | Yes | Yes | **Yes** |
+| Preview DB connectivity (verified TLS, expected DB name) | Yes | Yes | Yes | **Yes, connectivity only** (`/readyz` `database: configured`, 2026-10-05 00:45 UTC). Schema, journal and data are not inspected |
 | Unauthenticated denial, forged cookie/state, PKCE requirement, body limit, storage auth | Yes | Yes | Yes | **Yes (boundary only)** |
 | Landing accessibility and mobile layout | Yes | Yes | Yes | **Yes (landing only)** |
 | Preview-DB migration guard: attested recovery point, Drizzle hash/journal prefix, preservation, exact rerun no-op | Yes | Yes (30 tests; 6 on real MySQL 8.0.46) | Yes (exact-head `37246358744`: MySQL 159/159) | No: DB unreachable |
@@ -132,12 +134,14 @@ CONDITIONAL GO is not offered. No safely limited scope exists, because without a
 
 ## Owner actions (smallest set that unblocks runtime acceptance)
 
-1. **Aiven `hitech-preview-mysql`** (project `ssakthivel02-7661`; owner-reported POWEROFF, `free-1-1gb`, $0).
-   - Power it on **without changing the plan**, and confirm in the Aiven console that the plan is still `free-1-1gb`.
-   - Recovery point: use a backup taken after the service is running if the plan allows one; otherwise use the latest listed automatic backup (owner-reported `2026-10-02T07:58:07.224822Z`).
-   - Run **Actions → "SakthiAI Preview DB Setup"** on the integration branch with `recovery_point` set to that exact time, e.g. `2026-10-02T07:58:07Z`.
-   - The guard records it as **OWNER_ATTESTED**. It refuses the run if any timestamped row is newer than that point, any applied migration's hash or order differs from the repository, or the target is not `sakthiai_preview` over verified TLS. It cannot see deletes or updates on tables without timestamps; that is why the evidence stays attested rather than verified.
-   - Prerequisites: repo secrets `SAKTHIAI_PREVIEW_DATABASE_URL` and `AIVEN_MYSQL_CA_CERT_B64`, and Render env `DATABASE_URL`, `DATABASE_EXPECTED_NAME=sakthiai_preview` and `DATABASE_CA_CERT_B64`.
+1. **Preview database: confirm the recovery point, then migrate.**
+   - The service is powered on and reachable. In the Aiven console, confirm it shows **RUNNING** on `free-1-1gb`.
+   - Under **Backups**, read the newest backup timestamp:
+     - If a backup **taken after the 00:25 UTC power-on** is listed, use that one.
+     - Otherwise confirm which backup the power-on restored (owner-reported `2026-10-02T07:58:07Z`). Because power-on restores that backup, it equals the current data, as long as nothing has written to the DB since.
+   - Confirm repo secrets `SAKTHIAI_PREVIEW_DATABASE_URL` (`…/sakthiai_preview`) and `AIVEN_MYSQL_CA_CERT_B64` exist.
+   - Then run **Actions → "SakthiAI Preview DB Setup"** on the integration branch with `recovery_point` set to that backup's UTC time, or tell me the timestamp and I will dispatch it.
+   - The guard (`ca6c369`) records it as OWNER_ATTESTED and refuses on any journal/hash mismatch, rows newer than that point, data loss, or a change during the rerun.
 2. **OIDC, entered in the Render dashboard (never in chat):**
    - Runtime: `JWT_SECRET`, `OIDC_AUTHORIZATION_URL`, `OIDC_TOKEN_URL`, `OIDC_USERINFO_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and `OIDC_REDIRECT_URI=https://sakthiai-hitech-preview.onrender.com/api/oauth/callback`.
    - **Build-time:** `VITE_OIDC_AUTHORIZATION_URL` and `VITE_OIDC_CLIENT_ID`. Changing these requires a redeploy.
