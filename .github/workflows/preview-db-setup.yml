@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       recovery_point:
-        description: "Aiven backup/recovery point taken or confirmed for hitech-preview-mysql immediately before this run (UTC timestamp)"
+        description: "Owner-attested Aiven backup time for hitech-preview-mysql taken/confirmed before this run, UTC with Z (e.g. 2026-10-05T01:10:00Z). Recorded as OWNER_ATTESTED, not provider-verified."
         required: true
         type: string
 
@@ -64,22 +64,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Require an attested pre-migration recovery point
+      - name: Require a valid owner-attested pre-migration recovery point
         env:
           RECOVERY_POINT: ${{ inputs.recovery_point }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! [[ "${RECOVERY_POINT:-}" =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2} ]]; then
-            echo "A UTC recovery-point timestamp (YYYY-MM-DDTHH:MM) is required before migrating the preview database."
-            exit 1
-          fi
-          echo "Recovery point attested: ${RECOVERY_POINT}"
+        run: node scripts/preview-migration-guard.mjs attest
 
       - name: Typecheck
         run: pnpm check
 
-      - name: Pre-migration journal and row-count guard (read-only)
+      - name: Pre-migration journal, hash, recovery-point and snapshot guard (read-only, verified TLS)
+        env:
+          RECOVERY_POINT: ${{ inputs.recovery_point }}
         run: node scripts/preview-migration-guard.mjs pre
 
       - name: Apply preview schema
@@ -93,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm db:push
-          node scripts/preview-migration-guard.mjs post
+          node scripts/preview-migration-guard.mjs rerun
 
       - name: Search-text backfill is complete and idempotent
         shell: bash
