@@ -1,7 +1,7 @@
 From 7b240f7e40118982792f9cfaf03b248129042943 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 4 Oct 2026 11:25:46 +0000
-Subject: [PATCH 2/4] test: give the recovery rehearsal suite the MySQL suite
+Subject: [PATCH 2/5] test: give the recovery rehearsal suite the MySQL suite
  timeout
 
 'refuses unsafe restores' builds up to seven fully migrated scratch

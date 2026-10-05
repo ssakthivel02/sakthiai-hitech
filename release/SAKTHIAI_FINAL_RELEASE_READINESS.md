@@ -24,9 +24,11 @@ This file supersedes earlier versions: `bdb11a1` on this branch, and the copy in
 
 | Item | Value |
 |---|---|
-| Remote integration head = tested head | `2ea4b4f6909dfc11f3084d8294e016531b96b1c5` |
-| Deployed preview (`/releasez`) | **`2ea4b4f6909dfc11f3084d8294e016531b96b1c5`**, deploy `dep-db1ecfnavr4c73bh0qg0` (live 23:52:20 UTC) |
+| Remote integration head = tested head | `ca6c3693825300451d2c1510be8c96357d67054d` |
+| Deployed preview (`/releasez`) | **`ca6c3693825300451d2c1510be8c96357d67054d`**, deploy `dep-db1eoefavr4c73bilfug` (verified 00:17:56 UTC) |
+| Previous deploy | `2ea4b4f`, `dep-db1ecfnavr4c73bh0qg0` |
 | Previous verified deploy | `7b240f7e40118982792f9cfaf03b248129042943`, deploy `dep-db1e6jpsrm7s73b9bdm0` (live from 23:39:28 UTC) |
+| Previous verified deploys | `2ea4b4f` `dep-db1ecfnavr4c73bh0qg0` |
 | Rollback target (pre-session) | `79fbe21d4289782ceba88c604fc0984a37d5632a`, deploy `dep-dav0miaj7g8c73aakpg0` |
 | PR #29 | Open, **draft**, base `main` = `71614dfb2adc7b496d365d458fa5dab1a7f90c8c` (unchanged, not merged) |
 | Imported qualified candidate | `bf2835bba3d65ee255501cbf8bcf4e045456a3af` (tree `53526012…`), unchanged |
@@ -48,14 +50,15 @@ Commits on top of the imported candidate. All were normal fast-forward pushes, e
 | `7b240f7` | `37198715132` PASS | `37198715877` PASS | 11/11 PASS |
 | `c1fbb2b` | `37244899822` PASS | `37244897590` PASS | 11/11 PASS |
 | `2ea4b4f` | `37245003799` **PASS** (release evidence `CI_VERIFIED_THIS_RUN`, `ciShaBinding=PASS`, E2E 48/48) | `37245003699` PASS | 11/11 PASS, plus Preview Deployment Preflight `37245000384` PASS |
+| `ca6c369` | `37246358744` **PASS**: unit 559 passed / 153 skipped (712); MySQL **159/159** (14 files, including the 6 new guard cases); E2E 48/48; recovery 9/9; `ciShaBinding=PASS` | `37246359738` PASS | 11/11 PASS, plus Preview Deployment Preflight `37246355836` PASS |
 
 Exact-head gate contents, as established at `7b240f7` and re-run on every later head:
 
 | Gate | Result |
 |---|---|
 | Frozen install, typecheck, build, neutrality | PASS |
-| Unit suite | 682 tests: 535 passed, 147 skipped. The skipped tests are MySQL-gated and run in `mysql-integration`; they are not double-counted |
-| Real MySQL 8.0.46 | 153/153, including recovery rehearsal 9/9 |
+| Unit suite | 682 tests (535 passed, 147 skipped) through `2ea4b4f`; **712 at `ca6c369`** (559 passed, 153 skipped). Skipped tests are MySQL-gated and run in `mysql-integration`; they are not double-counted |
+| Real MySQL 8.0.46 | 153/153 through `2ea4b4f`; **159/159 at `ca6c369`** (+6 preview-guard cases); recovery rehearsal 9/9 |
 | Migration manifest | 7/7: baseline 0004 → 0010; rerun no-op; data preserved; fresh-schema parity; backfill 2 → 0; search works |
 | E2E | 46/46 at `7b240f7`; **48/48 at `2ea4b4f`** (adds the landing regression on desktop + mobile); serious/critical axe enforced |
 | Contract evals / golden benchmark | 28/28 and 47/47 with 1 known gap (cross-lingual retrieval needs real embeddings). Not real-model evidence |
@@ -84,6 +87,7 @@ Target identity: Render workspace `tea-danue82jnfac739th8lg`; service `sakthiai-
 | Landing axe (wcag2a/aa, 2.1a/aa) at 360, 390 and 1440 px | **0 violations**, no horizontal overflow; copy truthfully states ingestion is disabled |
 | Landing sign-in click (OIDC unconfigured) | On `7b240f7`: **defect** (no request, no message, transparent button). On `2ea4b4f`: **fixed live**. The button renders `rgb(23,59,46)` with white text, and clicking it shows `role=alert` "Sign-in is not configured on this deployment yet." |
 | Re-run on `2ea4b4f` | `/releasez` = `2ea4b4f…`; every probe above returns the identical status; axe 0 violations at 360, 390 and 1440 px |
+| Re-run on `ca6c369` | `/releasez` = `ca6c369…`; all 16 probes return identical statuses; taskWorker and uploadCleanup still `enabled: false`. The runtime bundle is unchanged (the commit touches only CI, scripts and tests) |
 
 Raw evidence is in `release/evidence-20261005/runtime/`. Probe output contains no secrets.
 
@@ -96,7 +100,7 @@ These runtime checks verify the deployed artifact's identity and its unauthentic
 | Deploy provenance (`/releasez`), health, fail-closed readiness | Yes | Yes | Yes | **Yes** |
 | Unauthenticated denial, forged cookie/state, PKCE requirement, body limit, storage auth | Yes | Yes | Yes | **Yes (boundary only)** |
 | Landing accessibility and mobile layout | Yes | Yes | Yes | **Yes (landing only)** |
-| Preview-DB migration guard: attested recovery point, Drizzle hash/journal prefix, preservation, exact rerun no-op | Yes | Yes (30 tests; 6 on real MySQL 8.0.46) | Pending (exact-head run `37246358744`) | No: DB unreachable |
+| Preview-DB migration guard: attested recovery point, Drizzle hash/journal prefix, preservation, exact rerun no-op | Yes | Yes (30 tests; 6 on real MySQL 8.0.46) | Yes (exact-head `37246358744`: MySQL 159/159) | No: DB unreachable |
 | Real OIDC login, logout, revocation, replay rejection | Yes | Yes (fake OIDC) | Yes | No: OIDC unconfigured |
 | Two-user/workspace isolation, storage ownership | Yes | Yes | Yes | No: needs DB and login |
 | Migrations 0005–0010 and backfill on the preview DB | Yes | Yes | Yes | No: DB unreachable |

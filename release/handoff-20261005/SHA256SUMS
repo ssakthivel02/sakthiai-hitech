@@ -1,6 +1,7 @@
-1b35df2995ac753b944355fbb6f8de0851cbaa563f65a469ef3fe65a26490d12  ./RESUME.md
-763431a19e8caeb5f75ba6c03b0419984abed681edd85ef252ce540a6922e820  ./SAKTHIAI_FINAL_RELEASE_READINESS.md
+f47a672e2b9988954198e1f4bcaa29fba51546d87dc7792c1e269652844359d8  ./RESUME.md
+281817c39da166d0563c7c2dc772cc15d2e91d26e962532cef46964276083f37  ./SAKTHIAI_FINAL_RELEASE_READINESS.md
 976e3f20ca5002d85bab01ee57d3a6c786180624ec5db9d7d7a974671d7df2ec  ./evidence/release-evidence-2ea4b4f.json
+f39da5e0f6b654be122e2551f850bf617d89bd5480c7e9145fc6a3e985771504  ./evidence/release-evidence-ca6c369.json
 39096b6206356e4e33cb1609946bef6e815926c0461e93c87ee9e7aa5c73b2c1  ./evidence/runtime/live-axe.mjs
 5a5aa46212a1428894aa8810b576ab2aabcf1049b594dfb97f8b38d3b3e051ef  ./evidence/runtime/live-desktop-1440-2ea4b4f.png
 b1adfb5ac3d26f3ea5b1878f21a2daf32989442a11858648b4f28469283ad220  ./evidence/runtime/live-desktop-1440.png
@@ -13,8 +14,10 @@ d917b9c13fd480924885155a0f579914d6b305b1de2b9e5416a97d9e7d865f1a  ./evidence/run
 8f2d636990168a9e39ce5fc6459de2cecce0fb91df25df39c81e850a61a91f34  ./evidence/runtime/live-signin.mjs
 fd87eabf589725ca939f3a2a7e395871dbb7bc1c5573c68c174a6e540c344aaf  ./evidence/runtime/unauth-probes-2ea4b4f.txt
 eb634b1ad1b56913a9c7e7344bbaafdd750f6dfdd5f4b8ed6b157dcbae294b6c  ./evidence/runtime/unauth-probes-7b240f7.txt
-44111dec32b064b284d855b0b0a9ede550bc198bf075a50d700f66bb9e9a5f55  ./patches/0001-ci-run-the-existing-migration-manifest-in-the-MySQL-.patch
-e438fc96c87cd16b733247f54fd048fd2469b71f859e1f8b90497b9947037e6a  ./patches/0002-test-give-the-recovery-rehearsal-suite-the-MySQL-sui.patch
-4084dee9d81660730e29ecf75d745a42dfe57e19d170072d2fce0bf734b525fd  ./patches/0003-fix-report-landing-sign-in-failures-and-give-primary.patch
-17cef54d0aff0d87c05ef33916ddb475152401c9f4a4a8df342f0b8f956b6b8d  ./patches/0004-ci-guard-the-existing-preview-DB-migration-workflow.patch
-5a3811cb806cf536f2d0af6e3df6a6f744c1e391a5b747d7ea0ad5a3308b00e6  ./sakthiai-integration-delta.bundle
+d6e0f43826c890f739842ac664a7cbc69bd47ac3b08e37390773521379cfda21  ./evidence/runtime/unauth-probes-ca6c369.txt
+90b13e06aa423d4a3afa4c4676546697c7a2688059943521821c0cd74760a25f  ./patches/0001-ci-run-the-existing-migration-manifest-in-the-MySQL-.patch
+1ff10c9fffe9c1fc8d95294bbc36ffe8b96ceeba6fabc426c487d5d47a41a2e6  ./patches/0002-test-give-the-recovery-rehearsal-suite-the-MySQL-sui.patch
+d42a2d92b745f0ba967dedc38ca0637c7bb30878631f7c52775ca194f69e95e2  ./patches/0003-fix-report-landing-sign-in-failures-and-give-primary.patch
+38461a2c682160b1c15b2a41ce1559fd465dc3db5bef2838a59de1d97df6d5e2  ./patches/0004-ci-guard-the-existing-preview-DB-migration-workflow.patch
+7b705ea2c6308fbae68bd33f59105288ae03136f644dfbf303296cbd5abf02ed  ./patches/0005-fix-verify-migration-hashes-real-UTC-recovery-points.patch
+67b0f92822af02957033311fb4b1932f6def98077c80df5c96c9f7fa7eec3319  ./sakthiai-integration-delta.bundle

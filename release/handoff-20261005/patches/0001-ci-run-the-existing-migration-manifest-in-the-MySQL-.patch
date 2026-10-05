@@ -1,7 +1,7 @@
 From aa0ee1c1613353d376c2bd5a8eb07fe20e6e61fa Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 4 Oct 2026 11:22:46 +0000
-Subject: [PATCH 1/4] ci: run the existing migration manifest in the MySQL 8
+Subject: [PATCH 1/5] ci: run the existing migration manifest in the MySQL 8
  job
 
 The 0005-0010 migration rehearsal (scripts/migration-manifest.ts) was only

@@ -1,0 +1,522 @@
+From ca6c3693825300451d2c1510be8c96357d67054d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 5 Oct 2026 00:09:05 +0000
+Subject: [PATCH 5/5] fix: verify migration hashes, real UTC recovery points
+ and exact rerun no-op in the preview DB guard
+
+Gaps in the guard added in 2ea4b4f, each reproduced against it:
+- recovery_point only matched a timestamp prefix: '2026-02-30T10:00'
+  passed. Now a strict UTC instant with Z, a real calendar date/time and
+  not in the future. It is recorded as OWNER_ATTESTED (providerVerified:
+  false), never as a verified backup; pre also fails if any TIMESTAMP
+  createdAt/updatedAt row is newer than the attested point.
+- the journal check compared created_at only: a tampered
+  __drizzle_migrations hash passed. Now each applied row must match the
+  Drizzle migrator format exactly (hash = sha256 of drizzle/<tag>.sql,
+  created_at = journal 'when'); verified against rows written by
+  drizzle-kit migrate (pnpm db:push).
+- the 'rerun is a no-op' step re-ran the post check (completeness and
+  minimum row counts). A new 'rerun' mode now requires journal rows,
+  tables, columns, indexes, constraints and row counts to equal the
+  post snapshot exactly.
+
+Regression: tests/preview-migration-guard.test.mjs (24: malformed and
+future dates, wrong hash/created_at, out-of-order and extra journal
+rows, snapshot diffs, workflow wiring) and
+tests/preview-migration-guard.mysql.test.mjs (6, real MySQL 8 with the
+Drizzle migrator: full guarded sequence, rows newer than the recovery
+point, tampered hash, missing/extra journal rows, schema/journal/data
+change during the rerun, row loss, wrong database name).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01ADMGPDEiCj5xPwmjpf1nob
+---
+ .github/workflows/preview-db-setup.yml       |  19 +-
+ scripts/preview-migration-guard.mjs          | 194 +++++++++++++++----
+ tests/preview-migration-guard.mysql.test.mjs | 116 +++++++++++
+ tests/preview-migration-guard.test.mjs       |  90 +++++++++
+ 4 files changed, 370 insertions(+), 49 deletions(-)
+ create mode 100644 tests/preview-migration-guard.mysql.test.mjs
+ create mode 100644 tests/preview-migration-guard.test.mjs
+
+diff --git a/.github/workflows/preview-db-setup.yml b/.github/workflows/preview-db-setup.yml
+index 82f3a83..c535b4e 100644
+--- a/.github/workflows/preview-db-setup.yml
++++ b/.github/workflows/preview-db-setup.yml
+@@ -4,7 +4,7 @@ on:
+   workflow_dispatch:
+     inputs:
+       recovery_point:
+-        description: "Aiven backup/recovery point taken or confirmed for hitech-preview-mysql immediately before this run (UTC timestamp)"
++        description: "Owner-attested Aiven backup time for hitech-preview-mysql taken/confirmed before this run, UTC with Z (e.g. 2026-10-05T01:10:00Z). Recorded as OWNER_ATTESTED, not provider-verified."
+         required: true
+         type: string
+ 
+@@ -64,22 +64,17 @@ jobs:
+       - name: Install dependencies
+         run: pnpm install --frozen-lockfile
+ 
+-      - name: Require an attested pre-migration recovery point
++      - name: Require a valid owner-attested pre-migration recovery point
+         env:
+           RECOVERY_POINT: ${{ inputs.recovery_point }}
+-        shell: bash
+-        run: |
+-          set -euo pipefail
+-          if ! [[ "${RECOVERY_POINT:-}" =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}[T\ ][0-9]{2}:[0-9]{2} ]]; then
+-            echo "A UTC recovery-point timestamp (YYYY-MM-DDTHH:MM) is required before migrating the preview database."
+-            exit 1
+-          fi
+-          echo "Recovery point attested: ${RECOVERY_POINT}"
++        run: node scripts/preview-migration-guard.mjs attest
+ 
+       - name: Typecheck
+         run: pnpm check
+ 
+-      - name: Pre-migration journal and row-count guard (read-only)
++      - name: Pre-migration journal, hash, recovery-point and snapshot guard (read-only, verified TLS)
++        env:
++          RECOVERY_POINT: ${{ inputs.recovery_point }}
+         run: node scripts/preview-migration-guard.mjs pre
+ 
+       - name: Apply preview schema
+@@ -93,7 +88,7 @@ jobs:
+         run: |
+           set -euo pipefail
+           pnpm db:push
+-          node scripts/preview-migration-guard.mjs post
++          node scripts/preview-migration-guard.mjs rerun
+ 
+       - name: Search-text backfill is complete and idempotent
+         shell: bash
+diff --git a/scripts/preview-migration-guard.mjs b/scripts/preview-migration-guard.mjs
+index ad9d44d..ea3c269 100644
+--- a/scripts/preview-migration-guard.mjs
++++ b/scripts/preview-migration-guard.mjs
+@@ -1,48 +1,168 @@
+ #!/usr/bin/env node
+-// Read-only guard around `pnpm db:push` for the preview database (used by preview-db-setup.yml).
+-//   pre:  the applied __drizzle_migrations rows must be an exact, in-order prefix of drizzle/meta/_journal.json;
+-//         records per-table row counts to reports/staging/preview-migration-pre.json.
+-//   post: every journal entry must be applied, in order, and no table may have lost rows since `pre`.
++// Read-only guard around `pnpm db:push` for the non-disposable preview database (used by preview-db-setup.yml).
++//   attest: RECOVERY_POINT must be a real, non-future UTC instant (YYYY-MM-DDTHH:MM[:SS[.ffffff]]Z). No database access.
++//   pre:    applied __drizzle_migrations rows must be an exact in-order prefix of the journal, matching the Drizzle
++//           migrator's own format (hash = sha256 of drizzle/<tag>.sql, created_at = journal `when`); no row may be newer
++//           than the attested recovery point; snapshot schema + journal + row counts.
++//   post:   every journal entry applied (same check); no table, column or row lost since `pre`; snapshot.
++//   rerun:  after a second `db:push`, journal rows, schema and row counts must be identical to the `post` snapshot.
++// Recovery evidence is OWNER_ATTESTED: a typed timestamp is never treated as a provider-verified backup.
+ // Never writes to the database. TLS is verified whenever DATABASE_CA_CERT_B64 is set (the workflow requires it).
++import { createHash } from "node:crypto";
+ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
++import path from "node:path";
++import { pathToFileURL } from "node:url";
+ import mysql from "mysql2/promise";
+ 
+-const mode = process.argv[2];
+-if (mode !== "pre" && mode !== "post") { console.error("usage: preview-migration-guard.mjs pre|post"); process.exit(2); }
+-const url = new URL(process.env.DATABASE_URL ?? "");
+-const database = decodeURIComponent(url.pathname.replace(/^\//, ""));
+-if (database !== (process.env.DATABASE_EXPECTED_NAME ?? "sakthiai_preview")) { console.error(`GUARD_FAIL: unexpected database ${database || "<none>"}`); process.exit(1); }
+-const ca = process.env.DATABASE_CA_CERT_B64;
+-const conn = await mysql.createConnection({
+-  host: url.hostname, port: url.port ? Number(url.port) : 3306, user: decodeURIComponent(url.username), password: decodeURIComponent(url.password), database,
+-  ...(ca ? { ssl: { ca: Buffer.from(ca, "base64").toString("utf8"), rejectUnauthorized: true, minVersion: "TLSv1.2" } } : {}),
+-});
+-try {
+-  const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")).entries;
+-  const [tables] = await conn.query("SELECT TABLE_NAME t FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME", [database]);
+-  const names = tables.map(r => r.t);
+-  const applied = names.includes("__drizzle_migrations")
+-    ? (await conn.query("SELECT created_at FROM `__drizzle_migrations` ORDER BY id"))[0].map(r => Number(r.created_at))
++export const RECOVERY_EVIDENCE_CLASS = "OWNER_ATTESTED";
++const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
++const RECOVERY_POINT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?Z$/;
++
++/** Strict UTC instant: real calendar date, valid clock time, explicit Z, not in the future. */
++export function parseRecoveryPoint(text, now = new Date()) {
++  const m = RECOVERY_POINT.exec(String(text ?? "").trim());
++  if (!m) return { ok: false, problems: ["recovery_point must be a UTC timestamp like 2026-10-05T01:10:00Z"] };
++  const [y, mo, d, h, mi, s = "0", frac = "0"] = m.slice(1);
++  const ms = Number(frac.padEnd(3, "0").slice(0, 3));
++  const epochMs = Date.UTC(+y, +mo - 1, +d, +h, +mi, +s, ms);
++  const back = new Date(epochMs);
++  if (back.getUTCFullYear() !== +y || back.getUTCMonth() !== +mo - 1 || back.getUTCDate() !== +d || back.getUTCHours() !== +h || back.getUTCMinutes() !== +mi || back.getUTCSeconds() !== +s) {
++    return { ok: false, problems: [`recovery_point ${text} is not a real UTC date/time`] };
++  }
++  if (epochMs > now.getTime() + MAX_CLOCK_SKEW_MS) return { ok: false, problems: [`recovery_point ${text} is in the future`] };
++  return { ok: true, epochMs, iso: back.toISOString(), problems: [] };
++}
++
++/** The journal exactly as the Drizzle migrator records it. */
++export function expectedJournal(root = process.cwd()) {
++  const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8"));
++  return journal.entries.map(e => ({
++    tag: e.tag,
++    when: Number(e.when),
++    hash: createHash("sha256").update(readFileSync(path.join(root, "drizzle", `${e.tag}.sql`)).toString()).digest("hex"),
++  }));
++}
++
++/** Applied rows (ordered by id) must be an exact prefix of the expected journal; `complete` also requires all of it. */
++export function checkJournal(applied, expected, { complete = false } = {}) {
++  const problems = [];
++  if (applied.length > expected.length) problems.push(`${applied.length} applied migrations but the journal has only ${expected.length}`);
++  applied.forEach((row, i) => {
++    const want = expected[i];
++    if (!want) return;
++    if (Number(row.created_at) !== want.when) problems.push(`applied migration #${i + 1} has created_at ${row.created_at}; journal ${want.tag} expects ${want.when}`);
++    if (row.hash !== want.hash) problems.push(`applied migration #${i + 1} (${want.tag}) hash ${String(row.hash).slice(0, 12)}… does not match the repository SQL ${want.hash.slice(0, 12)}…`);
++  });
++  if (complete && applied.length !== expected.length) problems.push(`expected ${expected.length} applied migrations, found ${applied.length}`);
++  return problems;
++}
++
++const q = async (conn, sql, params = []) => (await conn.query(sql, params))[0];
++
++/** Journal rows, columns, indexes, constraints and row counts: everything a no-op rerun must leave untouched. */
++export async function snapshotDatabase(conn, database) {
++  const tables = (await q(conn, "SELECT TABLE_NAME t FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME", [database])).map(r => r.t);
++  const journal = tables.includes("__drizzle_migrations")
++    ? (await q(conn, "SELECT id, hash, created_at FROM `__drizzle_migrations` ORDER BY id")).map(r => ({ id: Number(r.id), hash: r.hash, created_at: Number(r.created_at) }))
+     : [];
+-  const prefixOk = applied.length <= journal.length && applied.every((when, i) => when === journal[i].when);
++  const columns = (await q(conn, "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME, ORDINAL_POSITION", [database]))
++    .map(r => `${r.TABLE_NAME}.${r.COLUMN_NAME} ${r.COLUMN_TYPE} null=${r.IS_NULLABLE} default=${r.COLUMN_DEFAULT ?? "∅"} ${r.EXTRA}`.trim());
++  const indexes = (await q(conn, "SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX", [database]))
++    .map(r => `${r.TABLE_NAME}.${r.INDEX_NAME}#${r.SEQ_IN_INDEX}=${r.COLUMN_NAME} unique=${Number(r.NON_UNIQUE) === 0}`);
++  const constraints = (await q(conn, "SELECT tc.TABLE_NAME, tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, k.COLUMN_NAME, k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME FROM information_schema.TABLE_CONSTRAINTS tc LEFT JOIN information_schema.KEY_COLUMN_USAGE k ON k.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND k.TABLE_NAME = tc.TABLE_NAME AND k.CONSTRAINT_NAME = tc.CONSTRAINT_NAME WHERE tc.CONSTRAINT_SCHEMA = ? ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME, k.ORDINAL_POSITION", [database]))
++    .map(r => `${r.TABLE_NAME}.${r.CONSTRAINT_NAME} ${r.CONSTRAINT_TYPE} ${r.COLUMN_NAME ?? ""}${r.REFERENCED_TABLE_NAME ? ` -> ${r.REFERENCED_TABLE_NAME}.${r.REFERENCED_COLUMN_NAME}` : ""}`.trim());
+   const counts = {};
+-  for (const t of names.filter(n => n !== "__drizzle_migrations")) counts[t] = Number((await conn.query(`SELECT COUNT(*) n FROM \`${t}\``))[0][0].n);
+-  const [[version]] = await conn.query("SELECT VERSION() v");
+-  const summary = {
+-    mode, engine: version.v, database, applied: applied.length, journal: journal.length,
+-    appliedTags: journal.slice(0, applied.length).map(e => e.tag), pendingTags: journal.slice(applied.length).map(e => e.tag), counts,
+-  };
+-  mkdirSync("reports/staging", { recursive: true });
+-  writeFileSync(`reports/staging/preview-migration-${mode}.json`, `${JSON.stringify(summary, null, 2)}\n`);
++  for (const t of tables.filter(n => n !== "__drizzle_migrations")) counts[t] = Number((await q(conn, `SELECT COUNT(*) n FROM \`${t}\``))[0].n);
++  const [{ v: engine }] = await q(conn, "SELECT VERSION() v");
++  return { engine, database, tables, journal, columns, indexes, constraints, counts };
++}
++
++/** Rows whose TIMESTAMP createdAt/updatedAt is later than the recovery point would not be covered by that backup. */
++export async function rowsNewerThan(conn, database, epochMs) {
++  await conn.query("SET time_zone = '+00:00'");
++  const cols = await q(conn, "SELECT TABLE_NAME t, COLUMN_NAME c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND DATA_TYPE = 'timestamp' AND COLUMN_NAME IN ('createdAt','updatedAt') ORDER BY TABLE_NAME, COLUMN_NAME", [database]);
++  const newer = {};
++  for (const { t, c } of cols) {
++    const n = Number((await q(conn, `SELECT COUNT(*) n FROM \`${t}\` WHERE \`${c}\` > FROM_UNIXTIME(?)`, [epochMs / 1000]))[0].n);
++    if (n) newer[`${t}.${c}`] = n;
++  }
++  return newer;
++}
++
++/** pre -> post: migrations are additive, so no table, column or row may disappear. */
++export function checkPreservation(pre, post) {
++  const problems = [];
++  for (const t of pre.tables) if (!post.tables.includes(t)) problems.push(`table ${t} disappeared`);
++  const postCols = new Set(post.columns.map(c => c.split(" ")[0]));
++  for (const c of pre.columns.map(x => x.split(" ")[0])) if (!postCols.has(c)) problems.push(`column ${c} disappeared`);
++  for (const [t, n] of Object.entries(pre.counts)) if ((post.counts[t] ?? -1) < n) problems.push(`table ${t} lost rows: ${n} -> ${post.counts[t] ?? "missing"}`);
++  return problems;
++}
++
++/** post -> rerun: a no-op must leave journal, schema and row counts exactly as they were. */
++export function compareSnapshots(before, after) {
+   const problems = [];
+-  if (!prefixOk) problems.push("applied migrations are not an in-order prefix of the journal; reconcile manually before migrating");
+-  if (mode === "post") {
+-    if (applied.length !== journal.length) problems.push(`expected ${journal.length} applied migrations, found ${applied.length}`);
+-    const pre = JSON.parse(readFileSync("reports/staging/preview-migration-pre.json", "utf8")).counts;
+-    for (const [t, n] of Object.entries(pre)) if ((counts[t] ?? -1) < n) problems.push(`table ${t} lost rows: ${n} -> ${counts[t] ?? "missing"}`);
++  for (const key of ["journal", "tables", "columns", "indexes", "constraints", "counts"]) {
++    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) problems.push(`${key} changed during the claimed no-op rerun`);
+   }
+-  console.log(`PREVIEW_MIGRATION_${mode.toUpperCase()} ${problems.length ? "FAIL" : "PASS"} engine=${version.v} applied=${applied.length}/${journal.length} pending=${summary.pendingTags.join(",") || "none"}`);
++  return problems;
++}
++
++async function connect(urlText) {
++  const url = new URL(urlText);
++  const ca = process.env.DATABASE_CA_CERT_B64;
++  return mysql.createConnection({
++    host: url.hostname, port: url.port ? Number(url.port) : 3306, user: decodeURIComponent(url.username), password: decodeURIComponent(url.password),
++    database: decodeURIComponent(url.pathname.replace(/^\//, "")),
++    ...(ca ? { ssl: { ca: Buffer.from(ca, "base64").toString("utf8"), rejectUnauthorized: true, minVersion: "TLSv1.2" } } : {}),
++  });
++}
++
++/** One guard step. Returns { problems, report }; writes preview-migration-<mode>.json under reportDir. */
++export async function runGuard(mode, { databaseUrl, expectedDatabase = "sakthiai_preview", recoveryPoint, root = process.cwd(), reportDir = "reports/staging", now = new Date() }) {
++  const problems = [];
++  const write = report => { mkdirSync(reportDir, { recursive: true }); writeFileSync(path.join(reportDir, `preview-migration-${mode}.json`), `${JSON.stringify(report, null, 2)}\n`); return { problems, report }; };
++  if (!["attest", "pre", "post", "rerun"].includes(mode)) { problems.push(`unknown mode ${mode}`); return { problems, report: { mode, problems } }; }
++  const recovery = mode === "attest" || mode === "pre" ? parseRecoveryPoint(recoveryPoint, now) : null;
++  if (recovery) problems.push(...recovery.problems);
++  const recoveryEvidence = recovery?.ok ? { class: RECOVERY_EVIDENCE_CLASS, attestedRecoveryPoint: recovery.iso, providerVerified: false } : undefined;
++  if (mode === "attest") return write({ mode, recoveryEvidence, problems });
++
++  const database = decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//, ""));
++  if (database !== expectedDatabase) { problems.push(`unexpected database ${database || "<none>"}; expected ${expectedDatabase}`); return write({ mode, problems }); }
++  const expected = expectedJournal(root);
++  const conn = await connect(databaseUrl);
++  try {
++    const snap = await snapshotDatabase(conn, database);
++    const report = { mode, generatedAt: now.toISOString(), recoveryEvidence, snapshot: snap, applied: snap.journal.length, journalEntries: expected.length, pendingTags: expected.slice(snap.journal.length).map(e => e.tag) };
++    if (mode === "pre") {
++      problems.push(...checkJournal(snap.journal, expected));
++      if (recovery?.ok) {
++        report.rowsNewerThanRecoveryPoint = await rowsNewerThan(conn, database, recovery.epochMs);
++        for (const [col, n] of Object.entries(report.rowsNewerThanRecoveryPoint)) problems.push(`${n} row(s) in ${col} are newer than the recovery point; take a fresh backup first`);
++      }
++    } else if (mode === "post") {
++      problems.push(...checkJournal(snap.journal, expected, { complete: true }));
++      problems.push(...checkPreservation(JSON.parse(readFileSync(path.join(reportDir, "preview-migration-pre.json"), "utf8")).snapshot, snap));
++    } else {
++      problems.push(...checkJournal(snap.journal, expected, { complete: true }));
++      problems.push(...compareSnapshots(JSON.parse(readFileSync(path.join(reportDir, "preview-migration-post.json"), "utf8")).snapshot, snap));
++    }
++    report.problems = problems;
++    return write(report);
++  } finally {
++    await conn.end();
++  }
++}
++
++if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
++  const mode = process.argv[2];
++  if (!["attest", "pre", "post", "rerun"].includes(mode)) { console.error("usage: preview-migration-guard.mjs attest|pre|post|rerun"); process.exit(2); }
++  const { problems, report } = await runGuard(mode, {
++    databaseUrl: process.env.DATABASE_URL ?? "", expectedDatabase: process.env.DATABASE_EXPECTED_NAME ?? "sakthiai_preview", recoveryPoint: process.env.RECOVERY_POINT,
++  });
++  const detail = report.snapshot ? ` engine=${report.snapshot.engine} applied=${report.applied}/${report.journalEntries} pending=${report.pendingTags.join(",") || "none"}` : "";
++  const evidence = report.recoveryEvidence ? ` recovery=${report.recoveryEvidence.class}:${report.recoveryEvidence.attestedRecoveryPoint}` : "";
++  console.log(`PREVIEW_MIGRATION_${mode.toUpperCase()} ${problems.length ? "FAIL" : "PASS"}${detail}${evidence}`);
+   if (problems.length) { console.error(problems.join("\n")); process.exitCode = 1; }
+-} finally {
+-  await conn.end();
+ }
+diff --git a/tests/preview-migration-guard.mysql.test.mjs b/tests/preview-migration-guard.mysql.test.mjs
+new file mode 100644
+index 0000000..e7c2734
+--- /dev/null
++++ b/tests/preview-migration-guard.mysql.test.mjs
+@@ -0,0 +1,116 @@
++// Real MySQL 8: the preview-db-setup guard sequence (pre -> migrate -> post -> migrate again -> rerun) against throwaway
++// databases built with the real Drizzle migrator, so __drizzle_migrations has exactly the format drizzle-kit writes.
++import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import path from "node:path";
++import mysql from "mysql2/promise";
++import { drizzle } from "drizzle-orm/mysql2";
++import { migrate } from "drizzle-orm/mysql2/migrator";
++import { afterAll, describe, expect, it } from "vitest";
++import { createScratchDatabase, dropScratchDatabase } from "../server/recovery/rehearsal";
++import { mysqlTestUrl, skipMysqlSuite } from "../server/testing/mysqlTestDb";
++import { runGuard } from "../scripts/preview-migration-guard.mjs";
++
++const root = path.resolve(import.meta.dirname, "..");
++const BASELINE = "0004_creator_spend_control";
++
++describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { timeout: 60_000 }, () => {
++  const base = mysqlTestUrl();
++  const cleanup = [];
++  afterAll(async () => { for (const fn of cleanup.reverse()) await fn(); });
++
++  const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8"));
++  /** A migrations folder holding the journal up to `tag` (inclusive), for drizzle's own migrator. */
++  const folderUpTo = tag => {
++    const dir = mkdtempSync(path.join(tmpdir(), "guard-mig-")); mkdirSync(path.join(dir, "meta"));
++    const entries = journal.entries.slice(0, journal.entries.findIndex(e => e.tag === tag) + 1);
++    for (const e of entries) cpSync(path.join(root, "drizzle", `${e.tag}.sql`), path.join(dir, `${e.tag}.sql`));
++    writeFileSync(path.join(dir, "meta/_journal.json"), JSON.stringify({ ...journal, entries }));
++    cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
++    return dir;
++  };
++  const drizzleMigrate = async (url, folder) => { const pool = mysql.createPool(url); try { await migrate(drizzle(pool), { migrationsFolder: folder }); } finally { await pool.end(); } };
++  const exec = async (url, ...statements) => { const c = await mysql.createConnection(url); try { for (const s of statements) await c.query(s); } finally { await c.end(); } };
++
++  /** Baseline 0000-0004 with legacy data, exactly as the live preview is expected to look before migrating. */
++  async function baselineDatabase() {
++    const s = await createScratchDatabase(base, "sakthi_rr"); cleanup.push(() => dropScratchDatabase(base, s.name));
++    await drizzleMigrate(s.url, folderUpTo(BASELINE));
++    await exec(s.url,
++      "INSERT INTO users (openId, name) VALUES ('legacy','L')",
++      "INSERT INTO workspaces (ownerUserId, name, slug) VALUES (1,'Legacy','legacy')",
++      `INSERT INTO documents (workspaceId, filename, mimeType, extractedText, contentHash, pageCount) VALUES (1,'old.txt','text/plain','x','${"9".repeat(64)}',1)`,
++      "INSERT INTO documentChunks (documentId, workspaceId, chunkIndex, content) VALUES (1,1,0,'முருகன் கோவில் பழநியில் உள்ளது'),(1,1,1,'palani murugan kovil')");
++    const reportDir = mkdtempSync(path.join(tmpdir(), "guard-report-")); cleanup.push(async () => rmSync(reportDir, { recursive: true, force: true }));
++    // the owner's backup was taken after the last write; one second of margin for TIMESTAMP rounding
++    const recoveryPoint = new Date(Date.now() + 1000).toISOString();
++    const guard = (mode, extra = {}) => runGuard(mode, { databaseUrl: s.url, expectedDatabase: s.name, recoveryPoint, root, reportDir, ...extra });
++    return { ...s, guard };
++  }
++
++  it("full guarded sequence passes: pre (6 pending) -> migrate -> post -> second migrate -> rerun is an exact no-op", async () => {
++    const db = await baselineDatabase();
++    const pre = await db.guard("pre");
++    expect(pre.problems).toEqual([]);
++    expect(pre.report.applied).toBe(5);
++    expect(pre.report.pendingTags).toEqual(journal.entries.slice(5).map(e => e.tag));
++    expect(pre.report.recoveryEvidence).toMatchObject({ class: "OWNER_ATTESTED", providerVerified: false });
++    expect(pre.report.rowsNewerThanRecoveryPoint).toEqual({});
++    await drizzleMigrate(db.url, path.join(root, "drizzle"));
++    const post = await db.guard("post");
++    expect(post.problems).toEqual([]);
++    expect(post.report.applied).toBe(journal.entries.length);
++    await drizzleMigrate(db.url, path.join(root, "drizzle"));
++    expect((await db.guard("rerun")).problems).toEqual([]);
++  });
++
++  it("refuses to migrate when rows were written after the attested recovery point", async () => {
++    const db = await baselineDatabase();
++    const { problems, report } = await db.guard("pre", { recoveryPoint: new Date(Date.now() - 3_600_000).toISOString() });
++    expect(Object.keys(report.rowsNewerThanRecoveryPoint)).toEqual(expect.arrayContaining(["users.createdAt", "workspaces.createdAt"]));
++    expect(problems.join("\n")).toMatch(/newer than the recovery point; take a fresh backup first/);
++  });
++
++  it("refuses an applied migration whose recorded hash differs from the repository SQL", async () => {
++    const db = await baselineDatabase();
++    await exec(db.url, `UPDATE __drizzle_migrations SET hash = '${"a".repeat(64)}' WHERE id = 3`);
++    expect((await db.guard("pre")).problems.join("\n")).toMatch(/#3 \(0002_semantic_rag_provenance\) hash .* does not match/);
++  });
++
++  it("refuses unexpected journal state: a missing middle entry or an unknown extra entry", async () => {
++    const gap = await baselineDatabase();
++    await exec(gap.url, "DELETE FROM __drizzle_migrations WHERE id = 2");
++    expect((await gap.guard("pre")).problems.length).toBeGreaterThan(0);
++    const extra = await baselineDatabase();
++    await exec(extra.url, `INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('${"b".repeat(64)}', 9999999999999)`);
++    expect((await extra.guard("pre")).problems.join("\n")).toMatch(/has created_at 9999999999999/);
++  });
++
++  it("detects any change during the claimed no-op rerun: schema, journal or data", async () => {
++    const db = await baselineDatabase();
++    expect((await db.guard("pre")).problems).toEqual([]);
++    await drizzleMigrate(db.url, path.join(root, "drizzle"));
++    expect((await db.guard("post")).problems).toEqual([]);
++    const mutations = [
++      ["CREATE INDEX guard_probe_idx ON users (openId)", "DROP INDEX guard_probe_idx ON users", /indexes changed/],
++      ["ALTER TABLE users ADD COLUMN guardProbe int NULL", "ALTER TABLE users DROP COLUMN guardProbe", /columns changed/],
++      [`INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('${"c".repeat(64)}', 9999999999998)`, "DELETE FROM __drizzle_migrations WHERE created_at = 9999999999998", /journal changed/],
++      ["INSERT INTO workspaces (ownerUserId, name, slug) VALUES (1,'Probe','probe')", "DELETE FROM workspaces WHERE slug = 'probe'", /counts changed/],
++    ];
++    for (const [apply, revert, reason] of mutations) {
++      await exec(db.url, apply);
++      expect((await db.guard("rerun")).problems.join("\n")).toMatch(reason);
++      await exec(db.url, revert);
++    }
++    expect((await db.guard("rerun")).problems).toEqual([]);
++  });
++
++  it("detects row loss between pre and post, and refuses a non-preview database name before connecting", async () => {
++    const db = await baselineDatabase();
++    expect((await db.guard("pre")).problems).toEqual([]);
++    await exec(db.url, "DELETE FROM documentChunks WHERE chunkIndex = 1");
++    await drizzleMigrate(db.url, path.join(root, "drizzle"));
++    expect((await db.guard("post")).problems.join("\n")).toMatch(/table documentChunks lost rows: 2 -> 1/);
++    expect((await db.guard("pre", { expectedDatabase: "sakthiai_preview" })).problems.join("\n")).toMatch(/unexpected database/);
++  });
++});
+diff --git a/tests/preview-migration-guard.test.mjs b/tests/preview-migration-guard.test.mjs
+new file mode 100644
+index 0000000..4b15818
+--- /dev/null
++++ b/tests/preview-migration-guard.test.mjs
+@@ -0,0 +1,90 @@
++import { mkdtempSync, readFileSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import path from "node:path";
++import { describe, expect, it } from "vitest";
++import { RECOVERY_EVIDENCE_CLASS, checkJournal, compareSnapshots, expectedJournal, parseRecoveryPoint, runGuard } from "../scripts/preview-migration-guard.mjs";
++
++const root = path.resolve(import.meta.dirname, "..");
++const NOW = new Date("2026-10-05T01:00:00Z");
++const journal = expectedJournal(root);
++const applied = n => journal.slice(0, n).map((e, i) => ({ id: i + 1, hash: e.hash, created_at: e.when }));
++
++describe("preview migration guard: owner-attested recovery point", () => {
++  it.each(["2026-10-02T07:58:07.224822Z", "2026-10-05T00:10Z", "2026-10-05T00:10:00Z", "2024-02-29T23:59:59Z"])("accepts the real UTC instant %s", text => {
++    const r = parseRecoveryPoint(text, NOW);
++    expect(r.problems).toEqual([]);
++    expect(r.ok).toBe(true);
++  });
++
++  it.each([
++    ["2026-02-30T10:00:00Z", /not a real/], ["2026-13-01T00:00Z", /not a real/], ["2026-10-05T24:00Z", /not a real/], ["2026-10-05T10:60Z", /not a real/],
++    ["2025-02-29T00:00Z", /not a real/], ["2026-10-04T23:59:60Z", /not a real/],
++    ["2026-10-05 00:10", /UTC timestamp/], ["2026-10-05T00:10", /UTC timestamp/], ["2026-10-05T00:10+05:30", /UTC timestamp/], ["yesterday", /UTC timestamp/], ["", /UTC timestamp/], [undefined, /UTC timestamp/],
++    ["2026-10-05T02:00:00Z", /future/],
++  ])("rejects %s", (text, reason) => {
++    const r = parseRecoveryPoint(text, NOW);
++    expect(r.ok).toBe(false);
++    expect(r.problems.join("\n")).toMatch(reason);
++  });
++
++  it("records a typed timestamp as owner-attested evidence, never as a verified backup", async () => {
++    const dir = mkdtempSync(path.join(tmpdir(), "guard-attest-"));
++    const { problems, report } = await runGuard("attest", { recoveryPoint: "2026-10-02T07:58:07Z", now: NOW, reportDir: dir });
++    rmSync(dir, { recursive: true, force: true });
++    expect(problems).toEqual([]);
++    expect(report.recoveryEvidence).toEqual({ class: RECOVERY_EVIDENCE_CLASS, attestedRecoveryPoint: "2026-10-02T07:58:07.000Z", providerVerified: false });
++    expect(RECOVERY_EVIDENCE_CLASS).toBe("OWNER_ATTESTED");
++    expect(readFileSync(path.join(root, "scripts/preview-migration-guard.mjs"), "utf8")).not.toMatch(/BACKUP_VERIFIED/);
++  });
++});
++
++describe("preview migration guard: journal matches the Drizzle migrator format", () => {
++  it("expected hashes are sha256 of each drizzle/<tag>.sql and created_at is the journal `when`", () => {
++    expect(journal.length).toBeGreaterThanOrEqual(11);
++    for (const e of journal) { expect(e.hash).toMatch(/^[0-9a-f]{64}$/); expect(Number.isInteger(e.when)).toBe(true); }
++    expect(new Set(journal.map(e => e.hash)).size).toBe(journal.length);
++  });
++
++  it("accepts an exact in-order prefix and, when complete, only the full journal", () => {
++    expect(checkJournal(applied(5), journal)).toEqual([]);
++    expect(checkJournal([], journal)).toEqual([]);
++    expect(checkJournal(applied(journal.length), journal, { complete: true })).toEqual([]);
++    expect(checkJournal(applied(5), journal, { complete: true }).join()).toMatch(/expected \d+ applied migrations, found 5/);
++  });
++
++  it("rejects an applied migration whose hash differs from the repository SQL", () => {
++    const rows = applied(5); rows[2] = { ...rows[2], hash: "0".repeat(64) };
++    expect(checkJournal(rows, journal).join()).toMatch(/#3 \(0002_semantic_rag_provenance\) hash .* does not match/);
++  });
++
++  it("rejects unexpected journal state: wrong timestamp, out-of-order rows and more rows than the journal", () => {
++    const shifted = applied(5); shifted[1] = { ...shifted[1], created_at: shifted[1].created_at + 1 };
++    expect(checkJournal(shifted, journal).join()).toMatch(/#2 has created_at/);
++    const swapped = applied(5); [swapped[3], swapped[4]] = [swapped[4], swapped[3]];
++    expect(checkJournal(swapped, journal).length).toBeGreaterThanOrEqual(2);
++    const extra = [...applied(journal.length), { id: 99, hash: "f".repeat(64), created_at: 9_999_999_999_999 }];
++    expect(checkJournal(extra, journal).join()).toMatch(/but the journal has only/);
++  });
++});
++
++describe("preview migration guard: rerun must be an exact no-op", () => {
++  const base = { journal: applied(3), tables: ["a", "b"], columns: ["a.id int"], indexes: ["a.PRIMARY#1=id unique=true"], constraints: ["a.PRIMARY PRIMARY KEY id"], counts: { a: 1, b: 0 } };
++  it("passes only when journal, schema and row counts are identical", () => {
++    expect(compareSnapshots(base, structuredClone(base))).toEqual([]);
++    expect(compareSnapshots(base, { ...base, indexes: [...base.indexes, "a.x#1=y unique=false"] })).toEqual(["indexes changed during the claimed no-op rerun"]);
++    expect(compareSnapshots(base, { ...base, counts: { a: 2, b: 0 } })).toEqual(["counts changed during the claimed no-op rerun"]);
++    expect(compareSnapshots(base, { ...base, journal: applied(4) })).toEqual(["journal changed during the claimed no-op rerun"]);
++  });
++});
++
++describe("preview-db-setup.yml wiring", () => {
++  const wf = readFileSync(path.join(root, ".github/workflows/preview-db-setup.yml"), "utf8");
++  it("validates the attested recovery point with the guard and checks the second db:push against the post snapshot", () => {
++    expect(wf).toMatch(/recovery_point:[\s\S]*required: true/);
++    expect(wf).toMatch(/RECOVERY_POINT: \$\{\{ inputs\.recovery_point \}\}\n\s+run: node scripts\/preview-migration-guard\.mjs attest/);
++    expect(wf).toMatch(/RECOVERY_POINT: \$\{\{ inputs\.recovery_point \}\}\n\s+run: node scripts\/preview-migration-guard\.mjs pre/);
++    expect(wf).toMatch(/pnpm db:push\n\s+node scripts\/preview-migration-guard\.mjs rerun/);
++    expect(wf.indexOf("guard.mjs pre")).toBeLessThan(wf.indexOf("Apply preview schema"));
++    expect(wf).not.toMatch(/=~ \^20\[0-9\]/);
++  });
++});
+-- 
+2.43.0
+
