@@ -1,0 +1,11 @@
+# SakthiAI Preview DB Setup, run 37452499298 (job 112232141500), 2026-10-06T10:51Z
+sha:            77de9f73048ffbab1d48b450db522500a7e98095 (integration branch, re-read before dispatch)
+inputs:         mode=inspect, recovery_point=2026-10-06T10:20:51.062938Z (parser: ok, iso 2026-10-06T10:20:51.062Z, not in the future)
+result:         FAILURE at step 3 "Require preview database secrets"
+log (values, not secrets):
+  DATABASE_URL:            <empty>
+  DATABASE_EXPECTED_NAME:  sakthiai_preview
+  DATABASE_CA_CERT_B64:    <empty>
+  SAKTHIAI_PREVIEW_DATABASE_URL is not configured.
+steps 4-14, 16, 17: skipped. No connection to the database was attempted. No artifact produced.
+read-only audit of the inspect path (source at 77de9f7): guard SQL is SELECT-only (information_schema, __drizzle_migrations, COUNT(*), VERSION()) plus session SET time_zone; db:push, post, rerun, backfill are gated on mode=migrate.

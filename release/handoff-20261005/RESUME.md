@@ -8,7 +8,7 @@ Remote already contains 77de9f73048ffbab1d48b450db522500a7e98095; this bundle is
 Redeploy preview (autoDeploy OFF): Render → sakthiai-hitech-preview → Manual Deploy → latest commit; confirm /releasez == 77de9f73048ffbab1d48b450db522500a7e98095.
 Rollback: Render → Deploys → dep-db1fjrpsrm7s73bf8lf0 (a9be03b), dep-db1e6jpsrm7s73b9bdm0 (7b240f7) or dep-dav0miaj7g8c73aakpg0 (79fbe21, pre-session) → Rollback.
 Preview DB migration (four-day plan, Day 1): owner first adds repo secrets SAKTHIAI_PREVIEW_DATABASE_URL and AIVEN_MYSQL_CA_CERT_B64.
-Then Actions → "SakthiAI Preview DB Setup" (ref: integration branch) with mode=inspect, recovery_point=2026-10-05T12:28:44.420027Z
+Then Actions → "SakthiAI Preview DB Setup" (ref: integration branch) with mode=inspect, recovery_point=2026-10-06T10:20:51.062938Z
 (the provider-listed backup; use a newer backup timestamp if the DB was written since; never the old 2026-10-02 backup).
 Only if every inspect step passes: the same dispatch once with mode=migrate. Recorded as OWNER_ATTESTED, never provider-verified; a listed backup is not a tested restore.
 Guard refuses a wrong DB name, Drizzle hash/order mismatch, rows newer than the recovery point, row/column/table loss, and any change during the rerun.

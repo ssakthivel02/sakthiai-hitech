@@ -1,6 +1,6 @@
-1332099679b974fd5baa0b7c50e5c25b8c250b67f62aae9bf727b892ab0949af  ./RESUME.md
-d17936104f57395f33359a95144df2bdcc30e433dfd71c3aecc6bb0a39d86371  ./SAKTHIAI_20_DAY_CONTINUATION_PLAN.md
-83194a6fd4b8715b12cd44e1d566e0387c769bcb0ac6882034982ae324cf92c0  ./SAKTHIAI_FINAL_RELEASE_READINESS.md
+2915cfe3bc5b7cbd84c87aaf29fa5df29d2907444f509c344196952deaf68e31  ./RESUME.md
+ac7ea22f20b59ac76cd9e93e4d7c822476e386189bfb0166765db6284c6c6d5a  ./SAKTHIAI_20_DAY_CONTINUATION_PLAN.md
+f7995731aa82d0c3d709ce12df931332f3725555a91bcf449552871b03f303ae  ./SAKTHIAI_FINAL_RELEASE_READINESS.md
 069f4b30994a9c9d98778f663ceebfb9fafcbec42d5e68179fef01123015eaf3  ./evidence/local/guard-empty-db-77de9f7.txt
 cbc4a889edaeb8b4714b8834aef44cb7d638195fa951d1790b181b56cc3b6d27  ./evidence/local/readyz-schema-repro-77de9f7.txt
 976e3f20ca5002d85bab01ee57d3a6c786180624ec5db9d7d7a974671d7df2ec  ./evidence/release-evidence-2ea4b4f.json
@@ -18,6 +18,7 @@ f8b846dc0ff71957291c0473b8d8658d2abbc2f041df509b48048d5af45f5b37  ./evidence/run
 d917b9c13fd480924885155a0f579914d6b305b1de2b9e5416a97d9e7d865f1a  ./evidence/runtime/live-signin-390-2ea4b4f.png
 142fab414f9fc07f9868a0b2fc2a5e12edc718f56415cca3e2c0374598b1f3be  ./evidence/runtime/live-signin-390-7b240f7-before-fix.png
 8f2d636990168a9e39ce5fc6459de2cecce0fb91df25df39c81e850a61a91f34  ./evidence/runtime/live-signin.mjs
+8fdfd57ee40229743c48736694521d819af757b69e2b29848370644c1406d3b6  ./evidence/runtime/preview-db-inspect-run-37452499298.txt
 eab06fa1af8afbb81e074c41d5876b1e58abe967763b89bfcb4825954ce8b60c  ./evidence/runtime/readyz-77de9f7.txt
 e5c30009460f8de092aa6caaec5125ca123dffeaf730c1b2bddafbf90181927a  ./evidence/runtime/readyz-a9be03b-before-77de9f7-deploy.txt
 c6621fa2511bd86dcb3f89a111456b38bdb5714e3c6b7f9cf7b643d40327fbef  ./evidence/runtime/readyz-a9be03b.json
