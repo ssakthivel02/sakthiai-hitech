@@ -26,6 +26,29 @@ This file supersedes earlier versions: `bdb11a1` on this branch, and the copy in
 | PENDING | Preview DB inspect + migration 0005–0010 + backfill (blocked on secrets); live login/logout/revocation/replay; two-user isolation; storage ownership; retrieval, citations and grounding; Tamil/Tanglish; MODEL_UNAVAILABLE live; worker, uploads and MCP. See `SAKTHIAI_20_DAY_CONTINUATION_PLAN.md` |
 | OWNER ACTION REQUIRED | Three precise actions; see "Owner actions" |
 
+## Production qualification ledger (6 October 2026, 10:35–10:50 UTC; candidate `77de9f7`)
+
+Tags: VERIFIED / FAILED / BLOCKED / UNVERIFIED / INFERRED. **Decision: HOLD.** No code, DB, Render or Aiven mutation was made in this pass.
+
+| Area | State |
+|---|---|
+| CURRENT CANDIDATE | VERIFIED: PR #29 open + draft + unmerged; head `77de9f73…` (remote re-read before and after); `main` `71614df…` unchanged; no other writer (no run or commit newer than 5 Oct 01:37 UTC); local tree clean |
+| DEPLOYMENT | VERIFIED: Render `sakthiai-hitech-preview` live on `dep-db1g0449v7es73fctep0`, `autoDeploy: no`, `autoDeployTrigger: off`, `healthCheckPath: /healthz`, not suspended, no later deploy. `/releasez` **body** = full SHA `77de9f73048ffbab1d48b450db522500a7e98095`, `exactCommitKnown: true` |
+| CI | VERIFIED (exact SHA, reused, not re-run): Quality Gate `37252140753` and PR gate `37252140651` PASS; unit 564/719, MySQL 161/161, E2E 48/48, audit 0 critical / 0 high, `ciShaBinding` PASS; 11 further PR workflows PASS. All workflows `permissions: contents: read`; no `pull_request_target` |
+| DATABASE | **BLOCKED-WAITING-FOR-AIVEN-CONFIRMATION.** This session has no Aiven access, so the service state is not VERIFIED. INFERRED reachable: live `/readyz` (10:36 UTC) still gets past the DB probe and reports `schema_mismatch`, 31/31 tables missing. That is **not** proof of an empty database: a service mid-restore could answer with an empty schema, so no migration may be reasoned from it. The only `Preview DB Setup` run is the 5 Oct secrets-missing failure; no later dispatch, so repo-secret presence is UNVERIFIED. Inspect was **not** dispatched: the owner's rule is to wait for Aiven to report RUNNING. Classification A–H: **not yet possible** |
+| READINESS | VERIFIED: `/healthz` 200; `/readyz` 503 `schema_mismatch`, counts only; `no-store` and `noindex` on `/readyz` and `/releasez`. UNVERIFIED: the `current` → 200 path live |
+| AUTH | BLOCKED: `authentication: missing_configuration` (OIDC not entered). Nothing run |
+| TENANT SECURITY | BLOCKED: needs DB + OIDC + two disposable users. Only the unauthenticated boundary is VERIFIED (16 probes, `unauth-probes-77de9f7.txt`) |
+| STORAGE | BLOCKED: `storage: missing_configuration`; no upload/download/delete canary possible |
+| CREATOR | UNVERIFIED live. VERIFIED in CI only: video routing, shot regeneration, assembly, seam and release contracts, source neutrality (no hidden Manus dependency in the shipped bundle). No provider is configured, so no spend is possible |
+| BROWSER/A11Y | VERIFIED (CI, exact SHA): E2E 48/48 desktop + mobile, axe serious/critical enforced. VERIFIED live (5 Oct, `2ea4b4f`; runtime bundle unchanged since): landing axe 0 violations at 360/390/1440. UNVERIFIED: authenticated workspace, chat, provenance |
+| SECURITY | VERIFIED live at `77de9f7`: HSTS, `nosniff`, `X-Frame-Options: SAMEORIGIN`, referrer and permissions policies; **no `X-Powered-By`**. **FAILED / P1: CSP is `report-only` and allows `'unsafe-inline'` and `'unsafe-eval'` in `script-src`.** UNVERIFIED: branch protection and rulesets (not readable with this session's tools) |
+| ROLLBACK | VERIFIED targets exist (`dep-db1fjrpsrm7s73bf8lf0` `a9be03b`, `dep-db1e6jpsrm7s73b9bdm0`, `dep-dav0miaj7g8c73aakpg0`). Restore from the Aiven backup is UNTESTED |
+| UNVERIFIED | Aiven state; recovery-point freshness; secrets; DB journal, schema and data; login; revocation and replay; two-tenant isolation; storage; retrieval and grounding; real LLM; Creator live; authenticated browser flows; branch protection |
+| P0 BLOCKERS | (1) Preview DB not migrated (31/31 tables missing) and its state is unverified. (2) No auth configuration. (3) No LLM or storage. (4) Tenant isolation and revocation have no live evidence |
+| P1 FOLLOW-UPS | Enforce CSP and drop `'unsafe-eval'`; restore drill; observability review once traffic exists; "W25 RECOVERY" landing eyebrow; >500 kB client chunk |
+| FINAL DECISION | **HOLD** |
+
 ## Final state (exact SHAs)
 
 | Item | Value |
@@ -82,7 +105,7 @@ Local checks this session (Node 22, MySQL 8.0.46): auth and a11y E2E 32/32 with 
 | Item | Observed |
 |---|---|
 | Aiven service | `hitech-preview-mysql`, project `ssakthivel02-7661`: **RUNNING** on `free-1-1gb` ($0), owner-checked in the console. This session has no Aiven access |
-| Recovery point | Provider-listed backup `2026-10-05T00:28:42.354867Z`, after the 00:25 power-on. Passed **verbatim** as `recovery_point`, and GitHub records the raw input on the run. The guard compares at millisecond precision (`00:28:42.354Z`), 867 µs before the backup instant, which can only make the "rows newer than recovery point" check stricter. Evidence class: OWNER_ATTESTED / provider-listed. **Restore not tested** |
+| Recovery point (**superseded 6 Oct**: the owner reports a newer Aiven backup, `2026-10-05T12:28:44.420027Z`; use that, OWNER_ATTESTED until the console is checked for anything newer) | Earlier provider-listed backup `2026-10-05T00:28:42.354867Z`, after the 00:25 power-on. Passed **verbatim** as `recovery_point`, and GitHub records the raw input on the run. The guard compares at millisecond precision (`00:28:42.354Z`), 867 µs before the backup instant, which can only make the "rows newer than recovery point" check stricter. Evidence class: OWNER_ATTESTED / provider-listed. **Restore not tested** |
 | Old 2026-10-02 backup | Not used |
 | App connectivity | Verified-TLS `SELECT 1` succeeds against the expected `sakthiai_preview`. Through `a9be03b` that alone was reported as `database: configured`, the defect fixed in `77de9f7` |
 | Guarded workflow, inspect | Run `37250477782` (job `111576895733`, SHA `a9be03b`) **failed at "Require preview database secrets"**: `SAKTHIAI_PREVIEW_DATABASE_URL` and `AIVEN_MYSQL_CA_CERT_B64` are both empty for this workflow. The target, `pre` guard and snapshot steps were skipped; no evidence artifact was produced |
@@ -163,7 +186,7 @@ CONDITIONAL GO is not offered. No safely limited scope exists, because without a
 1. **Add the two repository secrets** (GitHub → Settings → Secrets and variables → Actions → *Repository secrets*; not environment-scoped, since the workflow declares no `environment:`):
    - `SAKTHIAI_PREVIEW_DATABASE_URL`: `mysql://<user>:<password>@hitech-preview-mysql-ssakthivel02-7661.h.aivencloud.com:<port>/sakthiai_preview`. Use the same service that the Render `DATABASE_URL` uses. The path must be `sakthiai_preview`.
    - `AIVEN_MYSQL_CA_CERT_B64`: the Aiven project CA certificate, base64-encoded, the same value as Render's `DATABASE_CA_CERT_B64`.
-   - Then dispatch **"SakthiAI Preview DB Setup"** on the integration branch with `mode=inspect`, `recovery_point=2026-10-05T00:28:42.354867Z`, or ask Claude to. Only if every step passes, dispatch once more with `mode=migrate` and the same recovery point.
+   - Then dispatch **"SakthiAI Preview DB Setup"** on the integration branch with `mode=inspect`, `recovery_point=2026-10-05T12:28:44.420027Z`, or ask Claude to. Only if every step passes, Claude produces a pre-migration evidence block; `mode=migrate` is dispatched once, after your explicit written approval, with the same recovery point.
    - If a write happens before the migration (for example someone logs in), take a newer Aiven backup and use its timestamp instead; the guard refuses rows newer than the recovery point.
    - **Expect an empty schema.** Live `/readyz` shows 0/31 tables. If you expected existing preview data in `sakthiai_preview`, say so before `migrate`. Then the inspect output decides: tables in the workflow's `pre` snapshot but invisible to the app means the Render `DATABASE_URL` user needs grants. An empty snapshot means a from-scratch 0000–0010 migration.
 2. **OIDC, entered in the Render dashboard (never in chat):**

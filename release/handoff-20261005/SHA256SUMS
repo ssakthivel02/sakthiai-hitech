@@ -1,6 +1,6 @@
-bb483431bbcd1c757cedce6b838e54277c7846dc218e8ea98702ec172c91933f  ./RESUME.md
-29a95578f53344bdc983275785a66105c02ad2ca3f803d8101da1364ef3daec7  ./SAKTHIAI_20_DAY_CONTINUATION_PLAN.md
-348b019725b04964117419ad7d18f0d517e52bf2d090f453056fdd40c1490a61  ./SAKTHIAI_FINAL_RELEASE_READINESS.md
+1332099679b974fd5baa0b7c50e5c25b8c250b67f62aae9bf727b892ab0949af  ./RESUME.md
+d17936104f57395f33359a95144df2bdcc30e433dfd71c3aecc6bb0a39d86371  ./SAKTHIAI_20_DAY_CONTINUATION_PLAN.md
+83194a6fd4b8715b12cd44e1d566e0387c769bcb0ac6882034982ae324cf92c0  ./SAKTHIAI_FINAL_RELEASE_READINESS.md
 069f4b30994a9c9d98778f663ceebfb9fafcbec42d5e68179fef01123015eaf3  ./evidence/local/guard-empty-db-77de9f7.txt
 cbc4a889edaeb8b4714b8834aef44cb7d638195fa951d1790b181b56cc3b6d27  ./evidence/local/readyz-schema-repro-77de9f7.txt
 976e3f20ca5002d85bab01ee57d3a6c786180624ec5db9d7d7a974671d7df2ec  ./evidence/release-evidence-2ea4b4f.json
@@ -14,6 +14,7 @@ b1adfb5ac3d26f3ea5b1878f21a2daf32989442a11858648b4f28469283ad220  ./evidence/run
 1689d46a8f428507633ff7c39ab89a6af9858ecdbd97ad203c2e8a5fb8d81326  ./evidence/runtime/live-mobile-360.png
 6529504d639386e728f1a8eb3776d20109123699c3642c387f0012a98bae5e84  ./evidence/runtime/live-mobile-390-2ea4b4f.png
 142fab414f9fc07f9868a0b2fc2a5e12edc718f56415cca3e2c0374598b1f3be  ./evidence/runtime/live-mobile-390.png
+f8b846dc0ff71957291c0473b8d8658d2abbc2f041df509b48048d5af45f5b37  ./evidence/runtime/live-reconciliation-20261006-77de9f7.txt
 d917b9c13fd480924885155a0f579914d6b305b1de2b9e5416a97d9e7d865f1a  ./evidence/runtime/live-signin-390-2ea4b4f.png
 142fab414f9fc07f9868a0b2fc2a5e12edc718f56415cca3e2c0374598b1f3be  ./evidence/runtime/live-signin-390-7b240f7-before-fix.png
 8f2d636990168a9e39ce5fc6459de2cecce0fb91df25df39c81e850a61a91f34  ./evidence/runtime/live-signin.mjs
