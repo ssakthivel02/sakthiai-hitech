@@ -458,3 +458,29 @@ export const fileUploadChunks = mysqlTable("fileUploadChunks", {
   sha256: char("sha256", { length: 64 }).notNull(),
   data: mediumBlob("data").notNull(),
 }, table => ({ pk: primaryKey({ columns: [table.uploadId, table.chunkIndex] }) }));
+
+/** Creator paid-generation spend counters (scopes: `global`, `workspace:<id>`, `user:<id>`), one row per UTC day. */
+export const creatorSpendWindows = mysqlTable("creatorSpendWindows", {
+  scope: varchar("scope", { length: 64 }).notNull(),
+  windowStart: date("windowStart", { mode: "string" }).notNull(),
+  generations: int("generations").default(0).notNull(),
+  cost: decimal("cost", { precision: 18, scale: 6 }).default("0").notNull(),
+}, table => [primaryKey({ columns: [table.scope, table.windowStart] })]);
+
+/** One row per paid submission (keyed by workspace + idempotency key): reservation, settlement and spend audit trail. */
+export const creatorSpendHolds = mysqlTable("creatorSpendHolds", {
+  id: varchar("id", { length: 96 }).primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  userId: int("userId").notNull(),
+  generationId: int("generationId"),
+  kind: varchar("kind", { length: 16 }).notNull(),
+  model: varchar("model", { length: 128 }).notNull(),
+  windowStart: date("windowStart", { mode: "string" }).notNull(),
+  cost: decimal("cost", { precision: 18, scale: 6 }).default("0").notNull(),
+  state: mysqlEnum("state", ["HELD", "COMMITTED", "RELEASED"]).default("HELD").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  settledAt: timestamp("settledAt"),
+}, table => [
+  index("creatorSpendHolds_state_createdAt_idx").on(table.state, table.createdAt),
+  index("creatorSpendHolds_workspaceId_createdAt_idx").on(table.workspaceId, table.createdAt),
+]);

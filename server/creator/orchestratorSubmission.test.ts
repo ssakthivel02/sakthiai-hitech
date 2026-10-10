@@ -48,12 +48,21 @@ const request = {
   durationSeconds: 8 as const,
 };
 
+const spend = {
+  price: vi.fn(),
+  reserve: vi.fn(async () => ({ created: true })),
+  commit: vi.fn(async () => undefined),
+  release: vi.fn(async () => undefined),
+  markUnknown: vi.fn(async () => undefined),
+};
+
 const input = {
   workspaceId: 1,
   creatorProjectId: 2,
   shotId: 3,
   idempotencyKey: "123e4567-e89b-12d3-a456-426614174000",
   request,
+  spend,
 };
 
 describe("Creator paid submission spend control", () => {
@@ -141,5 +150,33 @@ describe("Creator paid submission spend control", () => {
     );
     expect(mocks.markGenerationFailed).not.toHaveBeenCalled();
     expect(mocks.providerSubmit).toHaveBeenCalledTimes(1);
+    // The provider accepted the job: spend is committed, never released.
+    expect(spend.commit).toHaveBeenCalledWith(9);
+    expect(spend.release).not.toHaveBeenCalled();
+  });
+
+  it("a reused idempotency key never reserves or settles spend", async () => {
+    mocks.createQueuedGeneration.mockResolvedValue({ generationId: 7, created: false });
+    mocks.getGenerationExecutionContext.mockResolvedValue({ generation: { id: 7, provider: "google-veo", status: "SUBMITTED" }, providerJob: null });
+    await submitCreatorGeneration(input);
+    expect(spend.reserve).not.toHaveBeenCalled();
+    expect(spend.release).not.toHaveBeenCalled();
+    expect(spend.commit).not.toHaveBeenCalled();
+  });
+
+  it("a denied reservation never reaches the provider and records the denial", async () => {
+    mocks.createQueuedGeneration.mockResolvedValue({ generationId: 10, created: true });
+    spend.reserve.mockRejectedValueOnce(new Error("CREATOR_BUDGET_EXHAUSTED:global"));
+    await expect(submitCreatorGeneration(input)).rejects.toThrow("CREATOR_BUDGET_EXHAUSTED:global");
+    expect(mocks.beginProviderSubmission).not.toHaveBeenCalled();
+    expect(mocks.providerSubmit).not.toHaveBeenCalled();
+    expect(mocks.markGenerationFailed).toHaveBeenCalledWith(expect.objectContaining({ generationId: 10, failureClass: "QUOTA" }));
+  });
+
+  it("an unpriced model is rejected before any generation row is written", async () => {
+    spend.price.mockImplementationOnce(() => { throw new Error("CREATOR_MODEL_NOT_PRICED:x"); });
+    await expect(submitCreatorGeneration(input)).rejects.toThrow("CREATOR_MODEL_NOT_PRICED");
+    expect(mocks.createQueuedGeneration).not.toHaveBeenCalled();
+    expect(mocks.providerSubmit).not.toHaveBeenCalled();
   });
 });

@@ -11,7 +11,25 @@ import {
 } from "./persistence";
 import { getCreatorProvider, selectCreatorProvider } from "./providerRegistry";
 import { generationStateAfterProviderState } from "./lifecycle";
+import type { CreatorPaidKind } from "./paidPolicy";
+import { paidKindOf } from "./paidPolicy";
 import type { CreatorFailureClass, CreatorJobState, CreatorMediaRequest } from "./types";
+
+/**
+ * Mandatory spend control for paid submission (no default: a caller cannot reach a provider without one).
+ * - `price` runs before any row is written and throws when the resolved model has no server-side price.
+ * - `reserve` runs only in the request that created the generation row (the only one that calls the provider),
+ *   before the provider call; it throws to deny. Concurrent duplicates of the same idempotency key get `reused`
+ *   and never reserve or settle, so a reservation can never be released while its provider call proceeds.
+ * - Settlement methods never throw (an unsettled hold stays HELD = counted).
+ */
+export type CreatorSpendHook = {
+  price(input: { kind: CreatorPaidKind; model: string; request: CreatorMediaRequest }): void;
+  reserve(input: { kind: CreatorPaidKind; model: string; request: CreatorMediaRequest }): Promise<{ created: boolean }>;
+  commit(generationId: number): Promise<void>;
+  release(): Promise<void>;
+  markUnknown(generationId: number): Promise<void>;
+};
 
 const RETRYABLE_FAILURES = new Set<CreatorFailureClass>([
   "QUOTA",
@@ -71,10 +89,14 @@ export async function submitCreatorGeneration(input: {
   shotId: number;
   idempotencyKey: string;
   request: CreatorMediaRequest;
+  spend: CreatorSpendHook;
 }) {
   const provider = selectCreatorProvider(input.request);
   const providerStatus = provider.status();
   const model = input.request.model ?? providerStatus.defaultModel;
+  const spendInput = { kind: paidKindOf(input.request.kind), model, request: input.request };
+  input.spend.price(spendInput);
+
   const queued = await createQueuedGeneration({
     workspaceId: input.workspaceId,
     creatorProjectId: input.creatorProjectId,
@@ -103,32 +125,39 @@ export async function submitCreatorGeneration(input: {
     };
   }
 
-  await beginProviderSubmission({
-    workspaceId: input.workspaceId,
-    creatorProjectId: input.creatorProjectId,
-    generationId,
-  });
-
   try {
-    const submission = await provider.submit(input.request);
-    await recordProviderSubmission({
+    await input.spend.reserve(spendInput);
+  } catch (error) {
+    // Denied or ledger unavailable: the generation never reaches the provider; record why (same key stays reused).
+    await markGenerationFailed({
       workspaceId: input.workspaceId,
       creatorProjectId: input.creatorProjectId,
       generationId,
-      submission,
-    });
-    return {
+      failureClass: "QUOTA",
+      errorMessage: errorMessage(error),
+    }).catch(() => undefined);
+    throw error;
+  }
+
+  try {
+    await beginProviderSubmission({
+      workspaceId: input.workspaceId,
+      creatorProjectId: input.creatorProjectId,
       generationId,
-      provider: provider.id,
-      providerState: submission.state,
-      state: generationStateAfterProviderState(submission.state),
-      outputAssetId: null,
-      reused: false as const,
-      productionApproved: false,
-    };
+    });
+  } catch (error) {
+    await input.spend.release();
+    throw error;
+  }
+
+  let submission: Awaited<ReturnType<typeof provider.submit>>;
+  try {
+    submission = await provider.submit(input.request);
   } catch (error) {
     const failureClass = provider.classifyFailure(error);
     if (AMBIGUOUS_SUBMISSION_FAILURES.has(failureClass)) {
+      // The provider may have accepted (and billed) the job: keep the reservation counted.
+      await input.spend.markUnknown(generationId);
       await markGenerationSubmissionUnknown({
         workspaceId: input.workspaceId,
         creatorProjectId: input.creatorProjectId,
@@ -137,6 +166,7 @@ export async function submitCreatorGeneration(input: {
         errorMessage: errorMessage(error),
       }).catch(() => undefined);
     } else {
+      await input.spend.release();
       await markGenerationFailed({
         workspaceId: input.workspaceId,
         creatorProjectId: input.creatorProjectId,
@@ -147,6 +177,36 @@ export async function submitCreatorGeneration(input: {
     }
     throw error;
   }
+
+  // Accepted by the provider: the spend is final, whatever happens to local bookkeeping next.
+  await input.spend.commit(generationId);
+  try {
+    await recordProviderSubmission({
+      workspaceId: input.workspaceId,
+      creatorProjectId: input.creatorProjectId,
+      generationId,
+      submission,
+    });
+  } catch (error) {
+    // Accepted but not persisted: reconciliation only, never resubmitted, never marked FAILED.
+    await markGenerationSubmissionUnknown({
+      workspaceId: input.workspaceId,
+      creatorProjectId: input.creatorProjectId,
+      generationId,
+      failureClass: "UNKNOWN",
+      errorMessage: errorMessage(error),
+    }).catch(() => undefined);
+    throw error;
+  }
+  return {
+    generationId,
+    provider: provider.id,
+    providerState: submission.state,
+    state: generationStateAfterProviderState(submission.state),
+    outputAssetId: null,
+    reused: false as const,
+    productionApproved: false,
+  };
 }
 
 export async function pollCreatorGeneration(input: { workspaceId: number; generationId: number }) {
@@ -286,8 +346,12 @@ export async function pollCreatorGeneration(input: { workspaceId: number; genera
   }
 }
 
-export async function retryCreatorGeneration(input: { workspaceId: number; generationId: number }) {
+export async function retryCreatorGeneration(
+  input: { workspaceId: number; generationId: number },
+  authorize: (kind: CreatorPaidKind) => Promise<void>,
+) {
   const { generation, providerJob } = await getGenerationExecutionContext(input.workspaceId, input.generationId);
+  await authorize(paidKindOf(generation.kind));
   const retryMode = resolveCreatorRetryMode({
     generationState: generation.status as CreatorJobState,
     failureClass: generation.failureClass as CreatorFailureClass | null,

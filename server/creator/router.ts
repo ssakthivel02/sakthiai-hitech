@@ -15,6 +15,7 @@ import {
   retryCreatorGeneration,
   submitCreatorGeneration,
 } from "./orchestrator";
+import { createCreatorSpendHook, requireCreatorWorkspaceOwner, requirePaidCreatorAccess } from "./paidGeneration";
 import { listCreatorProviderStatuses } from "./providerRegistry";
 import { verifyCreatorRuntimeAcceptance } from "./runtimeAcceptance";
 import { buildCreatorRuntimePreflight } from "./runtimePreflight";
@@ -152,7 +153,8 @@ export const creatorRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireWorkspace(ctx.user.id, input.workspaceId);
+      // Authorization and spend policy before readiness probes (storage canary), references or provider.
+      const paidConfig = await requirePaidCreatorAccess(ctx.user, input.workspaceId, "IMAGE");
       await requirePaidGenerationReady();
       try {
         const references = await lockedReferencesOrFallback({
@@ -166,6 +168,7 @@ export const creatorRouter = router({
           creatorProjectId: input.creatorProjectId,
           shotId: input.shotId,
           idempotencyKey: input.idempotencyKey,
+          spend: createCreatorSpendHook({ user: ctx.user, workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, config: paidConfig }),
           request: {
             kind: input.kind,
             prompt: input.prompt,
@@ -205,7 +208,7 @@ export const creatorRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      await requireWorkspace(ctx.user.id, input.workspaceId);
+      const paidConfig = await requirePaidCreatorAccess(ctx.user, input.workspaceId, "VIDEO");
       await requirePaidGenerationReady();
       try {
         const references = await lockedReferencesOrFallback({
@@ -233,6 +236,7 @@ export const creatorRouter = router({
           creatorProjectId: input.creatorProjectId,
           shotId: input.shotId,
           idempotencyKey: input.idempotencyKey,
+          spend: createCreatorSpendHook({ user: ctx.user, workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, config: paidConfig }),
           request: {
             kind: "VIDEO",
             prompt: input.prompt,
@@ -262,14 +266,18 @@ export const creatorRouter = router({
   retryGeneration: protectedProcedure.input(generationInput).mutation(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
     try {
-      return await retryCreatorGeneration(input);
+      // Retry continues paid provider work: same switch, owner and kind-specific authorization as submission.
+      return await retryCreatorGeneration(input, async kind => {
+        await requirePaidCreatorAccess(ctx.user, input.workspaceId, kind);
+      });
     } catch (error) {
       creatorError(error);
     }
   }),
 
   cancelGeneration: protectedProcedure.input(generationInput).mutation(async ({ ctx, input }) => {
-    await requireWorkspace(ctx.user.id, input.workspaceId);
+    // Cancelling stops spend, so it stays available when paid generation is switched OFF, but only to the owner.
+    await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
     try {
       return await cancelCreatorGeneration(input);
     } catch (error) {

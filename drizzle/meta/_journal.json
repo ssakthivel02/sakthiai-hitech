@@ -78,6 +78,13 @@
       "when": 1790467200000,
       "tag": "0010_resumable_ingestion",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1790553600000,
+      "tag": "0011_creator_spend_ledger",
+      "breakpoints": true
     }
   ]
 }
