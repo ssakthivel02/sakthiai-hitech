@@ -26,6 +26,17 @@ This file supersedes earlier versions: `bdb11a1` on this branch, and the copy in
 | PENDING | Preview DB inspect + migration 0005–0010 + backfill (blocked on secrets); live login/logout/revocation/replay; two-user isolation; storage ownership; retrieval, citations and grounding; Tamil/Tanglish; MODEL_UNAVAILABLE live; worker, uploads and MCP. See `SAKTHIAI_20_DAY_CONTINUATION_PLAN.md` |
 | OWNER ACTION REQUIRED | Three precise actions; see "Owner actions" |
 
+## 10 October reconciliation: the candidate moved (STOP; decision HOLD)
+
+| Item | State |
+|---|---|
+| Branch head | **CHANGED.** `integration/pr7-pr25-runtime-qualification-20260925` is now `fb8122434327031d331f07368e525a06592d7f1f` (was `77de9f7`). Three commits by **another Claude session** (`session_01XygsMdsUP2PX9xrKxRCYyc`, pushed 13:47 UTC, PR #29 still open/draft/unmerged, `main` unchanged): `547c2e7` preview-db workflow (environment-scoped credentials, principal-privilege `grants` guard, schema classification EMPTY / CONSISTENT_PREFIX / ORPHAN_OR_PARTIAL / DRIFT_MISSING), `0b18fcd` `/readyz` model-gateway readiness, `fb81224` Creator acceptance harness exit. Not made by this session. **All `77de9f7` acceptance evidence applies to `77de9f7` only, not to `fb81224`.** |
+| Deployed | VERIFIED 13:51 UTC: Render still serves `77de9f73…` (`/releasez` body), `/healthz` 200. Render tooling was disconnected this session, so autoDeploy was not re-read (last VERIFIED off, 6 Oct) |
+| CI at `fb81224` | In progress at 13:48 UTC. 11 workflows PASS; `Quality Gate / validate` **FAILED** at "Production dependency advisories (no critical/high)", which skips every later validate step |
+| **NEW P0 gate failure** | **FAILED, time-dependent, not caused by the 3 commits:** `pnpm audit --prod` reports **1 critical**, `proxy-addr` 2.0.7 (< 2.0.8, "IP spoofing via IPv4-mapped IPv6 trust subnet", advisory published 5 Oct) via `express@4.22.3`. `package.json` and `pnpm-lock.yaml` are **byte-identical** at `77de9f7` and `fb81224`, so the earlier "0 critical / 0 high" at `77de9f7` was true on 5 Oct and is **stale**: that SHA now fails the same gate. Exposure as configured: INFERRED low (the server never sets `trust proxy`; `req.ip` is used only by the OAuth-begin flood limiter). The gate still fails, and I do not weaken it. Fix verified in a scratch copy only, **not pushed**: `pnpm update proxy-addr --lockfile-only --depth 5` → `proxy-addr@2.0.8`, audit critical 1 → 0, 34 lockfile lines changed |
+| Owner secret setup CHANGED | The new workflow reads **environment** secrets, not the repository secrets requested earlier. Needs GitHub environments `sakthiai-preview-db-inspect` (SELECT-only DB principal) and `sakthiai-preview-db-migrate` (required reviewers), each with variable `SAKTHIAI_PREVIEW_DB_ROLE` = `inspect` / `migrate` and secrets `SAKTHIAI_PREVIEW_DB_URL`, `SAKTHIAI_PREVIEW_DB_CA_B64`. The old names `SAKTHIAI_PREVIEW_DATABASE_URL` / `AIVEN_MYSQL_CA_CERT_B64` are no longer read. A branch dispatch now runs the new file |
+| Actions this pass | Read-only only. No dispatch, no push to the integration branch, no Render or Aiven action, no migration. Handoff bundle left at `77de9f7` (not rebuilt, to avoid mixing candidates) |
+
 ## Production qualification ledger (6 October 2026, 10:35–10:50 UTC; candidate `77de9f7`)
 
 Tags: VERIFIED / FAILED / BLOCKED / UNVERIFIED / INFERRED. **Decision: HOLD.** No code, DB, Render or Aiven mutation was made in this pass.
