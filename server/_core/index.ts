@@ -18,6 +18,7 @@ import { serveStatic, setupVite } from "./vite";
 import { embeddingStatus } from "../embeddings";
 import { malwareScannerConfigurationStatus } from "../security/malwareScanner";
 import { ENV } from "./env";
+import { deploymentTier, runtimeMode } from "./deploymentTier";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
 import { probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
 
@@ -52,7 +53,8 @@ function releaseIdentity() {
   const commit = process.env.RENDER_GIT_COMMIT?.trim() || process.env.GIT_COMMIT?.trim() || "unknown";
   return {
     service: "sakthiai",
-    environment: process.env.NODE_ENV || "unknown",
+    environment: deploymentTier(),
+    runtimeMode: runtimeMode(),
     repository: process.env.RENDER_GIT_REPO_SLUG?.trim() || "ssakthivel02/sakthiai-hitech",
     commit,
     exactCommitKnown: commit !== "unknown",
@@ -113,7 +115,8 @@ async function startServer() {
     res.status(200).json({
       status: "alive",
       service: "sakthiai",
-      environment: process.env.NODE_ENV || "unknown",
+      environment: deploymentTier(),
+      runtimeMode: runtimeMode(),
     }),
   );
 
