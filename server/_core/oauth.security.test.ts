@@ -3,7 +3,7 @@ import { OAUTH_PKCE_COOKIE, OAUTH_STATE_COOKIE, encodeOAuthState } from "@shared
 import express from "express";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Behavioural tests for GET /api/oauth/callback. The real Express route, the real
@@ -373,5 +373,46 @@ describe("provider failure", () => {
     expect(r.status).toBe(500);
     expect(JSON.parse(r.body)).toEqual({ error: "Authentication callback failed" });
     expect(sessionIssued(r)).toBe(false);
+  });
+});
+
+describe("login access policy (preview-user restriction)", () => {
+  const sub = "user-123"; // what the fake provider's userinfo returns (email present, NOT verified)
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("production runtime with no allowlist: login refused before any user row is written", async () => {
+    vi.stubEnv("NODE_ENV", "production"); // policy default only; the callback URL rules still use the test ENV
+    for (const k of ["AUTH_OPEN_SIGNUP", "AUTH_ALLOWED_SUBJECTS", "AUTH_ALLOWED_EMAILS", "OWNER_OPEN_ID"]) vi.stubEnv(k, "");
+    const login = beginLogin();
+    const r = await callback({ code: login.code, state: login.state }, login.cookie);
+    expect(r.status).toBe(403);
+    expect(JSON.parse(r.body)).toEqual({ error: "account not authorized" });
+    expect(sessionIssued(r)).toBe(false);
+    expect(dbMock.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("subject on the allowlist: login succeeds", async () => {
+    vi.stubEnv("AUTH_ALLOWED_SUBJECTS", sub);
+    const login = beginLogin();
+    const r = await callback({ code: login.code, state: login.state }, login.cookie);
+    expect(r.status).toBe(302);
+    expect(sessionIssued(r)).toBe(true);
+  });
+
+  it("unverified email matching the email allowlist is NOT enough", async () => {
+    vi.stubEnv("AUTH_ALLOWED_EMAILS", "t@example.invalid");
+    const login = beginLogin();
+    const r = await callback({ code: login.code, state: login.state }, login.cookie);
+    expect(r.status).toBe(403);
+    expect(dbMock.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("another subject on the allowlist: this identity is refused", async () => {
+    vi.stubEnv("AUTH_ALLOWED_SUBJECTS", "someone-else");
+    const login = beginLogin();
+    const r = await callback({ code: login.code, state: login.state }, login.cookie);
+    expect(r.status).toBe(403);
+    expect(sessionIssued(r)).toBe(false);
+    expect(dbMock.upsertUser).not.toHaveBeenCalled();
   });
 });

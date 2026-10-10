@@ -1,3 +1,4 @@
+import { isIdentityAllowed, loginAccessPolicy } from "./authAccess";
 import {
   COOKIE_NAME,
   ONE_YEAR_MS,
@@ -120,6 +121,14 @@ export function registerOAuthRoutes(app: Express, injectedStore?: LoginTransacti
     try {
       const tokenResponse = await sdk.exchangeCodeForToken(code, { redirectUri, codeVerifier });
       const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
+
+      // Preview/beta access restriction: decided before any user row or session exists.
+      if (!isIdentityAllowed(loginAccessPolicy(), userInfo)) {
+        console.warn("[OIDC] Sign-in refused: identity not on the access allowlist");
+        res.setHeader("Cache-Control", "no-store, max-age=0");
+        res.status(403).json({ error: "account not authorized" });
+        return;
+      }
 
       await db.upsertUser({
         openId: userInfo.openId,

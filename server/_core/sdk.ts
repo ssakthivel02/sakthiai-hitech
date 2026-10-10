@@ -7,6 +7,7 @@ import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
+import { isSessionUserAllowed, loginAccessPolicy } from "./authAccess";
 import { isSessionGenerationCurrent } from "./sessionRevocation";
 
 const isNonEmptyString = (value: unknown): value is string =>
@@ -28,6 +29,8 @@ export type AuthUserInfo = {
   openId: string;
   name: string | null;
   email: string | null;
+  /** Only an explicit `email_verified: true` from the provider counts. */
+  emailVerified: boolean;
   loginMethod: string;
 };
 
@@ -97,6 +100,7 @@ class OidcService {
           ? payload.preferred_username
           : null,
       email: isNonEmptyString(payload.email) ? payload.email : null,
+      emailVerified: payload.email_verified === true,
       loginMethod: ENV.oidcProviderName,
     };
   }
@@ -227,6 +231,9 @@ class SDKServer {
     if (!user) throw ForbiddenError("User not found");
     if (!isSessionGenerationCurrent(session.sessionGeneration, user.lastSignedIn)) {
       throw ForbiddenError("Session revoked");
+    }
+    if (!isSessionUserAllowed(loginAccessPolicy(), user)) {
+      throw ForbiddenError("Account not authorized");
     }
 
     return user;
