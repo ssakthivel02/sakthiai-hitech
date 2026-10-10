@@ -1,3 +1,4 @@
+import { getProviderGateway, type GatewayReadiness } from "../gateway";
 import "dotenv/config";
 import { getTaskRuntime } from "../tasks/shared";
 import { runtimeConfigFromEnv } from "../tasks/runtime";
@@ -132,8 +133,16 @@ async function startServer() {
       ENV.oidcUserInfoUrl,
       ENV.oidcClientId,
     );
-    // "configured" only: a local/self-hosted endpoint counts, but reachability is never claimed here (see gateway runtime states).
-    const llmReady = configured(ENV.llmApiUrl, ENV.llmModel) || configured(process.env.LOCAL_LLM_API_URL, process.env.LOCAL_LLM_MODEL);
+    // Infrastructure readiness, not model health: "configured" only when the gateway's own routing + policy + default
+    // budget would let it TRY at least one provider for a conversation. Static: no provider call, no spend.
+    // Whether a provider has actually answered is reported separately as llmGateway.operational.
+    let gateway: GatewayReadiness;
+    try {
+      gateway = getProviderGateway().readiness();
+    } catch {
+      gateway = { state: "no_provider_configured", configuredProviders: 0, eligibleProviders: 0, operational: "unverified" };
+    }
+    const llmReady = gateway.state === "eligible";
     const storageReady = configured(
       ENV.storageBucket,
       ENV.storageAccessKeyId,
@@ -151,6 +160,7 @@ async function startServer() {
           : { status: "not_checked" },
         authentication: authReady ? "configured" : "missing_configuration",
         llm: llmReady ? "configured" : "missing_configuration",
+        llmGateway: gateway,
         storage: storageReady ? "configured" : "missing_configuration",
         embeddings: embeddingStatus(),
         taskWorker: getTaskRuntime().status(),

@@ -20,6 +20,13 @@ import {
   type RuntimeState,
 } from "./types";
 
+export type GatewayReadiness = {
+  state: "eligible" | "no_provider_configured" | "not_permitted_by_policy" | "default_budget_denies_metered";
+  configuredProviders: number;
+  eligibleProviders: number;
+  operational: "verified" | "unverified";
+};
+
 export interface WorkspacePolicyResolver {
   resolve(workspaceId: number): Promise<WorkspaceBudgetPolicy>;
 }
@@ -176,6 +183,38 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     }
   }
 
+  /** The policy-permitted candidates for a request, in routing order. Shared by invoke() and readiness(). */
+  function routedProfiles(request: Pick<GatewayRequest, "intents" | "requiredCapabilities" | "optionalCapabilities">): ModelProfile[] {
+    const routing: RoutingRequest = {
+      intents: request.intents ?? ["conversation"],
+      requiredCapabilities: request.requiredCapabilities ?? ["chat"],
+      optionalCapabilities: request.optionalCapabilities ?? ["multilingual"],
+      allowExternalProviders: config.policy.allowExternal,
+      allowMeteredBilling: config.policy.allowMetered,
+      preferLocal: true, // local/self-hosted first; external only as a policy-permitted fallback
+    };
+    const decision = routeModel(runtimeModels(), routing);
+    return [decision.selected, ...decision.alternatives].filter((c): c is NonNullable<typeof c> => !!c).map(c => c.model);
+  }
+
+  /**
+   * Static readiness for a default conversation request: no provider call, no budget reservation, no spend.
+   * "eligible" means policy and the DEFAULT budget policy would let at least one configured provider be tried;
+   * it does NOT mean a provider has answered (operational stays "unverified" until a real success or probe).
+   * Per-workspace budget policies stored in the database may differ from the defaults.
+   */
+  function readiness(): GatewayReadiness {
+    const configured = config.bindings.length;
+    const permitted = routedProfiles({}).map(p => bindingByProfile.get(p.id)).filter((b): b is ProviderBinding => !!b);
+    const usable = permitted.filter(b => b.kind !== "external" || b.billingMode !== "metered_api" || (!!budgetStore && hasAnyBudgetLimit(config.budget.defaults)));
+    const state: GatewayReadiness["state"] = !configured ? "no_provider_configured"
+      : !permitted.length ? "not_permitted_by_policy"
+      : !usable.length ? "default_budget_denies_metered"
+      : "eligible";
+    const verified = usable.some(b => runtime.get(b.providerId)?.verified);
+    return { state, configuredProviders: configured, eligibleProviders: usable.length, operational: verified ? "verified" : "unverified" };
+  }
+
   async function invokeInner(request: GatewayRequest): Promise<GatewayOutcome> {
     const startedAt = now();
     const attempts: AttemptRecord[] = [];
@@ -195,16 +234,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     const failed = (reason: Extract<GatewayOutcome, { status: "failed" }>["reason"]): GatewayOutcome =>
       finish({ status: "failed", reason, attempts, latencyMs: now() - startedAt });
 
-    const routing: RoutingRequest = {
-      intents: request.intents ?? ["conversation"],
-      requiredCapabilities: request.requiredCapabilities ?? ["chat"],
-      optionalCapabilities: request.optionalCapabilities ?? ["multilingual"],
-      allowExternalProviders: config.policy.allowExternal,
-      allowMeteredBilling: config.policy.allowMetered,
-      preferLocal: true, // local/self-hosted first; external only as a policy-permitted fallback
-    };
-    const decision = routeModel(runtimeModels(), routing);
-    const ordered = [decision.selected, ...decision.alternatives].filter((c): c is NonNullable<typeof c> => !!c).map(c => c.model);
+    const ordered = routedProfiles(request);
     if (!ordered.length) return failed("no_eligible_provider");
 
     const maxOutputTokens = request.maxOutputTokens ?? config.budget.defaultMaxOutputTokens;
@@ -359,7 +389,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     return Promise.all([...ids].map(statusOf));
   }
 
-  return { invoke, probe, status, breaker, budgetStore };
+  return { invoke, probe, status, readiness, breaker, budgetStore };
 }
 
 export type ProviderGateway = ReturnType<typeof createProviderGateway>;
