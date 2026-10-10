@@ -25,7 +25,10 @@ async function main() {
   console.log("This evidence does not imply production approval or publication approval.");
 }
 
-main().catch(error => {
-  console.error("FAIL CREATOR_RUNTIME_ACCEPTANCE:", error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+main()
+  .catch(error => {
+    console.error("FAIL CREATOR_RUNTIME_ACCEPTANCE:", error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  })
+  // The probe opens the shared MySQL pool, which keeps the event loop alive; exit with the verdict instead of hanging.
+  .finally(() => process.exit(process.exitCode ?? 0));
