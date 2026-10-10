@@ -1,18 +1,26 @@
+import { getProviderGateway, type GatewayReadiness } from "../gateway";
 import "dotenv/config";
+import { getTaskRuntime } from "../tasks/shared";
+import { runtimeConfigFromEnv } from "../tasks/runtime";
+import { getUploadCleanupRunner } from "../ingestion/shared";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { randomUUID } from "node:crypto";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
+import { registerEdgeBodyParsers } from "./bodyLimits";
 import { registerOAuthRoutes } from "./oauth";
+import { sdk } from "./sdk";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
-import { getDb } from "../db";
 import { embeddingStatus } from "../embeddings";
+import { malwareScannerConfigurationStatus } from "../security/malwareScanner";
 import { ENV } from "./env";
+import { deploymentTier, runtimeMode } from "./deploymentTier";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
+import { probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -29,6 +37,14 @@ async function findAvailablePort(startPort = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+function parsePort(value: string | undefined, fallback: number): number {
+  const port = Number.parseInt(value || String(fallback), 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid PORT value: ${value ?? "<unset>"}`);
+  }
+  return port;
+}
+
 function configured(...values: Array<string | undefined>) {
   return values.every(value => typeof value === "string" && value.trim().length > 0);
 }
@@ -37,7 +53,8 @@ function releaseIdentity() {
   const commit = process.env.RENDER_GIT_COMMIT?.trim() || process.env.GIT_COMMIT?.trim() || "unknown";
   return {
     service: "sakthiai",
-    environment: process.env.NODE_ENV || "unknown",
+    environment: deploymentTier(),
+    runtimeMode: runtimeMode(),
     repository: process.env.RENDER_GIT_REPO_SLUG?.trim() || "ssakthivel02/sakthiai-hitech",
     commit,
     exactCommitKnown: commit !== "unknown",
@@ -92,22 +109,26 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  registerEdgeBodyParsers(app, { authenticate: req => sdk.authenticateRequest(req) });
 
   app.get("/healthz", (_req, res) =>
     res.status(200).json({
       status: "alive",
       service: "sakthiai",
-      environment: process.env.NODE_ENV || "unknown",
+      environment: deploymentTier(),
+      runtimeMode: runtimeMode(),
     }),
   );
 
   app.get("/releasez", (_req, res) => res.status(200).json(releaseIdentity()));
 
   app.get("/readyz", async (_req, res) => {
-    const db = await getDb();
-    const databaseReady = Boolean(db);
+    const databaseReady = await probeDatabaseReadiness();
+    // Reachable is not enough: the schema must match this build, or every procedure touching a newer table fails.
+    const databaseSchema = databaseReady ? await probeSchemaReadiness() : null;
+    const schemaCurrent = databaseSchema?.status === "current";
+    // /readyz is unauthenticated: publish counts only; operators get the missing table names from the server log.
+    if (databaseSchema?.status === "behind") console.warn("readiness: database schema behind this build; missing tables:", databaseSchema.missingTables.join(","), "missing columns:", databaseSchema.missingColumns);
     const authReady = configured(
       ENV.cookieSecret,
       ENV.oidcAuthorizationUrl,
@@ -115,43 +136,80 @@ async function startServer() {
       ENV.oidcUserInfoUrl,
       ENV.oidcClientId,
     );
-    const llmReady = configured(ENV.llmApiUrl, ENV.llmModel);
+    // Infrastructure readiness, not model health: "configured" only when the gateway's own routing + policy + default
+    // budget would let it TRY at least one provider for a conversation. Static: no provider call, no spend.
+    // Whether a provider has actually answered is reported separately as llmGateway.operational.
+    let gateway: GatewayReadiness;
+    try {
+      gateway = getProviderGateway().readiness();
+    } catch {
+      gateway = { state: "no_provider_configured", configuredProviders: 0, eligibleProviders: 0, operational: "unverified" };
+    }
+    const llmReady = gateway.state === "eligible";
     const storageReady = configured(
       ENV.storageBucket,
       ENV.storageAccessKeyId,
       ENV.storageSecretAccessKey,
     );
-    const ready = databaseReady && authReady && llmReady && storageReady;
+    const ready = databaseReady && schemaCurrent && authReady && llmReady && storageReady;
 
     res.status(ready ? 200 : 503).json({
       status: ready ? "ready" : "not_ready",
       service: "sakthiai",
       dependencies: {
-        database: databaseReady ? "configured" : "unavailable",
+        database: !databaseReady ? "unavailable" : schemaCurrent ? "configured" : "schema_mismatch",
+        databaseSchema: databaseSchema
+          ? { status: databaseSchema.status, expectedTables: databaseSchema.expectedTables, missingTables: databaseSchema.missingTables.length, missingColumns: databaseSchema.missingColumns }
+          : { status: "not_checked" },
         authentication: authReady ? "configured" : "missing_configuration",
         llm: llmReady ? "configured" : "missing_configuration",
+        llmGateway: gateway,
         storage: storageReady ? "configured" : "missing_configuration",
         embeddings: embeddingStatus(),
-        scanner: "SCANNER_NOT_CONFIGURED",
+        taskWorker: getTaskRuntime().status(),
+        uploadCleanup: getUploadCleanupRunner().status(),
+        scanner: {
+          configuration: malwareScannerConfigurationStatus(),
+          liveProbe: "not_checked",
+          requiredForCurrentReadiness: false,
+          fileIngestion: "coming_soon",
+        },
       },
     });
   });
 
   registerStorageProxy(app);
   registerOAuthRoutes(app);
-  app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext }));
+  app.use("/api/trpc", createExpressMiddleware({ router: appRouter, createContext, maxBodySize: 50 * 1024 * 1024 }));
 
   if (process.env.NODE_ENV === "development") await setupVite(app, server);
   else serveStatic(app);
 
-  const preferredPort = parseInt(process.env.PORT || "3000", 10);
-  const port = await findAvailablePort(preferredPort);
+  const preferredPort = parsePort(process.env.PORT, 3000);
+  const port = process.env.NODE_ENV === "production" ? preferredPort : await findAvailablePort(preferredPort);
   if (port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
-  server.listen(port, "0.0.0.0", () =>
-    console.log(`Server running on http://0.0.0.0:${port}/`),
-  );
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${port}/`);
+    // Default OFF (TASK_WORKER_ENABLED). A worker failure is contained inside the runtime and never crashes the HTTP app.
+    try { getUploadCleanupRunner().start(); } catch (error) { console.error("upload cleanup failed to start", error instanceof Error ? error.message : error); }
+    try { getTaskRuntime().start(); } catch (error) { console.error("task runtime failed to start", error instanceof Error ? error.message : error); }
+  });
+
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal} received: stopping task runtime, then HTTP server`);
+    const force = setTimeout(() => process.exit(1), runtimeConfigFromEnv().shutdownGraceMs + 10_000);
+    force.unref?.();
+    Promise.all([getUploadCleanupRunner().stop(5_000).catch(() => undefined), getTaskRuntime().stop().catch(() => undefined)])
+      .then(() => new Promise<void>(resolve => server.close(() => resolve())))
+      .then(() => process.exit(0));
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 startServer().catch(console.error);

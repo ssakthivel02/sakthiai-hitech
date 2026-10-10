@@ -7,7 +7,7 @@
     "provider": "render",
     "serviceName": "sakthiai-hitech-preview",
     "autoDeploy": false,
-    "healthPath": "/readyz",
+    "healthPath": "/healthz",
     "sourcePolicy": "exact-commit-only-after-green-gates"
   },
   "database": {

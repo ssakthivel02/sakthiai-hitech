@@ -9,6 +9,9 @@ export const ENV = {
   oidcAuthorizationUrl: process.env.OIDC_AUTHORIZATION_URL ?? "",
   oidcTokenUrl: process.env.OIDC_TOKEN_URL ?? "",
   oidcUserInfoUrl: process.env.OIDC_USERINFO_URL ?? "",
+  // Optional exact callback URL registered with the provider. When unset the callback must be
+  // https://<this request's host>/api/oauth/callback (http only for localhost outside production).
+  oidcRedirectUri: process.env.OIDC_REDIRECT_URI ?? "",
   oidcClientId: process.env.OIDC_CLIENT_ID ?? process.env.VITE_APP_ID ?? "sakthiai",
   oidcClientSecret: process.env.OIDC_CLIENT_SECRET ?? "",
   oidcScopes: process.env.OIDC_SCOPES ?? "openid profile email",

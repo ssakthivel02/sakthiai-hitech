@@ -1,0 +1,637 @@
+{
+  "schema": "sakthiai.capability-implementation-map/v1",
+  "purpose": "Product truth artifact. Distinguishes source/test evidence from runtime evidence. Nothing here is RUNTIME_VERIFIED: that requires live-environment evidence that unit/contract tests cannot provide.",
+  "baseCommit": "79fbe21d4289782ceba88c604fc0984a37d5632a",
+  "vocabulary": {
+    "status": [
+      "IMPLEMENTED_SOURCE",
+      "TESTED_LOCAL",
+      "CI_PENDING",
+      "RUNTIME_UNVERIFIED",
+      "RUNTIME_VERIFIED"
+    ],
+    "truthModel": [
+      "IMPLEMENTED",
+      "PARTIAL",
+      "DESIGN_ONLY",
+      "RESEARCHED",
+      "MISSING"
+    ],
+    "rules": [
+      "status=TESTED_LOCAL means automated tests pass locally; it is not runtime evidence.",
+      "ci is CI_PENDING until a GitHub run on the exact commit is observed.",
+      "runtimeQualification is RUNTIME_VERIFIED only with live-environment evidence recorded in the repository."
+    ]
+  },
+  "capabilities": [
+    {
+      "capability": "authentication",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "OIDC auth-code flow with S256 PKCE, single-use state/PKCE cookies, nonce ledger: /api/oauth/*; server-issued login transactions persisted in MySQL (POST /api/oauth/begin, atomic single-use consume)",
+      "sourceFiles": [
+        "server/_core/oauth.ts",
+        "server/_core/oauthSafety.ts",
+        "server/_core/sdk.ts",
+        "client/src/const.ts",
+        "server/_core/loginTransactions.ts"
+      ],
+      "tests": [
+        "server/_core/oauth.security.test.ts",
+        "server/auth.logout.test.ts",
+        "e2e/specs/auth.spec.ts",
+        "server/_core/loginTransactions.test.ts",
+        "server/_core/loginTransactions.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Verified only against an in-process fake OIDC provider; no live identity provider exercised. Login transactions are persisted and consumed atomically in MySQL (multi-instance safe; verified on MariaDB 10.11, MySQL 8 CI_PENDING); without DATABASE_URL a process-local store is used (development only). Requires migration 0007. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "session_revocation",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Session generation check in request context (server/_core/context.ts)",
+      "sourceFiles": [
+        "server/_core/sessionRevocation.ts",
+        "server/_core/context.ts"
+      ],
+      "tests": [
+        "server/_core/sessionRevocation.test.ts",
+        "server/_core/sessionRevocation.integration.test.ts",
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/auth.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/session-cookie-security.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Exercised end-to-end on real SQL (local MariaDB 10.11): revoke-all, concurrent generation advances, and login-upsert monotonicity (a defect found and fixed). MySQL 8 CI job and a live IdP/Aiven run are pending. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "tenant_isolation",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Workspace membership check on every workspace-scoped tRPC procedure + tenant-scoped retrieval",
+      "sourceFiles": [
+        "server/routers.ts",
+        "server/db.ts"
+      ],
+      "tests": [
+        "server/authTenantIsolation.test.ts",
+        "server/tenant-isolation.regression.test.ts",
+        "server/evals/contract.eval.test.ts",
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Proven through tRPC on real SQL (local MariaDB 10.11): membership matrix, cross-tenant FORBIDDEN, conversation ownership, retrieval scoping. MySQL 8 CI job pending; no production database exercised. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "storage_authorization",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Authorized storage-proxy key resolution: /api/storage proxy",
+      "sourceFiles": [
+        "drizzle/0006_retrieval_storage_indexes.sql",
+        "server/_core/storageProxy.ts",
+        "server/storage.ts",
+        "server/storageAccess.ts"
+      ],
+      "tests": [
+        "server/retrievalStore.mysql.test.ts",
+        "server/storage.test.ts",
+        "server/storageAccess.test.ts",
+        "server/storageProxy.security.test.ts",
+        "server/mysql.integration.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Object ownership resolved against real SQL (documents and creator assets, binary-exact keys) on local MariaDB; object-store backend, scoped credentials and bucket policy remain unverified. storageKey lookups use prefix indexes (plans verified on MariaDB only)."
+    },
+    {
+      "capability": "file_ingestion",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "tRPC files.upload -> extraction -> chunking -> tenant storage",
+      "sourceFiles": [
+        "server/routers.ts",
+        "server/provenance.ts",
+        "server/_core/bodyLimits.ts"
+      ],
+      "tests": [
+        "server/fileIngestion.acceptance.test.ts",
+        "server/_core/bodyLimits.test.ts",
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/file-ingestion-acceptance.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Upload exercised on real SQL with a real clamd INSTREAM protocol server (clean, infected, scanner down) on local MariaDB; object storage is faked and no real scanner daemon was run. Authenticated 17 MiB limit proven in-process. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "malware_gate",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "INSTREAM scanner client; uploads quarantined unless scanner reports clean",
+      "sourceFiles": [
+        "server/security/malwareScanner.ts"
+      ],
+      "tests": [
+        "server/security/malwareScanner.test.ts",
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Fail-closed behaviour verified over the real INSTREAM protocol against an in-process clamd stand-in (clean/infected/unavailable); no real ClamAV daemon configured or contacted; deployment default is not_configured and blocks uploads. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "english_lexical_retrieval",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "db.searchChunks -> retrievalStore (SQL workspace-scoped lexical/legacy/semantic candidates over searchText) -> rankChunkCandidates",
+      "sourceFiles": [
+        "drizzle/0006_retrieval_storage_indexes.sql",
+        "server/db.ts",
+        "server/retrieval.ts",
+        "server/retrievalStore.ts"
+      ],
+      "tests": [
+        "server/evals/contract.eval.test.ts",
+        "server/retrieval.acceptance.test.ts",
+        "server/retrieval.determinism.test.ts",
+        "server/retrievalStore.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Verified on real SQL only against local MariaDB 10.11 (1,200+ chunk workspace); MySQL 8 CI job and live Aiven pending. LIKE-based prefilter scans a workspace's rows inside the DB (index narrows by workspace only): fine for tens of thousands of chunks per workspace, not millions (no FULLTEXT/ANN index). Migration 0006 and `pnpm db:backfill-search-text` must be run for pre-existing rows (they stay searchable through a capped legacy path meanwhile). Tamil matching is lexical/Unicode-normalised only. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "tamil_lexical_retrieval",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "db.searchChunks -> retrievalStore (SQL workspace-scoped lexical/legacy/semantic candidates over searchText) -> rankChunkCandidates",
+      "sourceFiles": [
+        "drizzle/0006_retrieval_storage_indexes.sql",
+        "server/retrieval.ts",
+        "server/retrievalStore.ts"
+      ],
+      "tests": [
+        "server/evals/contract.eval.test.ts",
+        "server/retrieval.determinism.test.ts",
+        "server/retrieval.unicode.test.ts",
+        "server/retrievalStore.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Verified on real SQL only against local MariaDB 10.11 (1,200+ chunk workspace); MySQL 8 CI job and live Aiven pending. LIKE-based prefilter scans a workspace's rows inside the DB (index narrows by workspace only): fine for tens of thousands of chunks per workspace, not millions (no FULLTEXT/ANN index). Migration 0006 and `pnpm db:backfill-search-text` must be run for pre-existing rows (they stay searchable through a capped legacy path meanwhile). Tamil matching is lexical/Unicode-normalised only. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "semantic_retrieval",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Embedding gateway (self-hosted OpenAI-compatible /v1/embeddings first, optional opt-in external) -> same-model cosine hybrid scoring; lexical fallback on any failure",
+      "sourceFiles": [
+        "server/db.ts",
+        "server/embedding/gateway.ts",
+        "server/embeddings.ts",
+        "server/retrieval.ts",
+        "server/retrievalStore.ts"
+      ],
+      "tests": [
+        "server/chat.grounding.test.ts",
+        "server/embedding/gateway.test.ts",
+        "server/retrieval.acceptance.test.ts",
+        "server/retrievalStore.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "No real embedding server (Ollama/vLLM/llama.cpp) has been run: only an in-process fake transport. No vector index; semantic scoring is brute-force over the DB-prefiltered candidate set. Vectors from a different or unrecorded embedding model are ignored (lexical only), so existing rows need re-embedding after a model change. External embeddings require EMBEDDING_ALLOW_EXTERNAL=true. Semantic candidates are a bounded brute-force window (RETRIEVAL_SEMANTIC_SCAN_LIMIT, default 1000 newest same-model rows per workspace), not an ANN index."
+    },
+    {
+      "capability": "grounded_response",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "chat.send -> retrieval -> gateway -> resolveGroundedOutcome (citations persisted)",
+      "sourceFiles": [
+        "server/routers.ts",
+        "server/grounding.ts",
+        "server/retrieval.ts"
+      ],
+      "tests": [
+        "server/chat.grounding.test.ts",
+        "server/evals/contract.eval.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals",
+        ".github/workflows/grounding-answer-acceptance.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Contract behaviour only: no real model has produced an answer through this path; answer quality is NOT_MEASURED. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "model_unavailable_truthfulness",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "MODEL_UNAVAILABLE grounding state; evidence preserved, no fabricated answer",
+      "sourceFiles": [
+        "server/grounding.ts",
+        "server/routers.ts"
+      ],
+      "tests": [
+        "server/chat.grounding.test.ts",
+        "server/evals/contract.eval.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Failure injection is simulated via replayed transport responses. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "capability_router",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "routeModel(): catalog/capability/compute/billing filters with preferLocal",
+      "sourceFiles": [
+        "server/model-fabric/router.ts",
+        "server/model-fabric/types.ts"
+      ],
+      "tests": [
+        "server/model-fabric/router.test.ts",
+        "server/gateway/gateway.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Routes over a static catalog; no live performance or health feedback into scoring."
+    },
+    {
+      "capability": "provider_gateway",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "getProviderGateway().invoke(): routing, breaker, budget, OpenAI-compatible adapter",
+      "sourceFiles": [
+        "server/gateway/gateway.ts",
+        "server/gateway/openaiCompatible.ts",
+        "server/gateway/circuitBreaker.ts",
+        "server/gateway/config.ts",
+        "server/gateway/mysqlStores.ts"
+      ],
+      "tests": [
+        "server/gateway/gateway.test.ts",
+        "server/gateway/units.test.ts",
+        "server/gateway/boundary.test.ts",
+        "server/gateway/mysqlStores.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "node scripts/validate-grounding-answer-contract.mjs"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Distributed breaker/budget/policy state exists (GATEWAY_STATE_STORE=mysql, compare-and-set breaker, fail-closed external / fail-open self-hosted) but is verified only on local MariaDB; the default configuration is still the in-memory SINGLE_INSTANCE store."
+    },
+    {
+      "capability": "local_self_host_path",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "LOCAL_LLM_API_URL/LOCAL_LLM_MODEL -> local-openai-compatible provider (local-first routing)",
+      "sourceFiles": [
+        "server/gateway/config.ts",
+        "server/gateway/gateway.ts"
+      ],
+      "tests": [
+        "server/gateway/gateway.test.ts",
+        "server/evals/contract.eval.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "SELF_HOST_RUNTIME_NOT_LIVE_QUALIFIED: exercised only against fake loopback/in-process servers; no real self-hosted model server has been run. Local embeddings: same limitation (fake transport only). Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "external_provider_path",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "LLM_API_URL external provider behind explicit opt-in (GATEWAY_ALLOW_EXTERNAL)",
+      "sourceFiles": [
+        "server/gateway/config.ts",
+        "server/gateway/gateway.ts"
+      ],
+      "tests": [
+        "server/gateway/gateway.test.ts",
+        "server/evals/contract.eval.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Deny-by-default and never called in tests; no real external provider or credential has been exercised (no paid call made). Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "budget_controls",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Per-workspace policy (providerWorkspacePolicies) + atomic daily budget (providerUsageWindows/Holds) for metered external providers; GATEWAY_STATE_STORE=mysql shares it across instances (memory store remains the default)",
+      "sourceFiles": [
+        "server/gateway/budget.ts",
+        "server/gateway/gateway.ts",
+        "server/gateway/mysqlStores.ts",
+        "drizzle/0005_provider_policy_runtime.sql"
+      ],
+      "tests": [
+        "server/gateway/gateway.test.ts",
+        "server/gateway/units.test.ts",
+        "server/evals/contract.eval.test.ts",
+        "server/gateway/mysqlStores.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "MySQL store tested only against a local MariaDB 10.11 (MySQL 8 CI job pending, no Aiven run). Default remains the in-memory store (single-instance only) until GATEWAY_STATE_STORE=mysql is set and migration 0005 is applied. Stale HELD reservations from crashed instances stay counted (conservative). No admin API/UI to edit workspace policy yet (SQL/upsert helper only)."
+    },
+    {
+      "capability": "creator_provider_path",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "creator.submitImage/submitVideo -> providerRegistry (Google image/Veo adapters) -> render pipeline",
+      "sourceFiles": [
+        "server/creator/providerRegistry.ts",
+        "server/creator/googleImage.ts",
+        "server/creator/googleVeoAdapter.ts",
+        "server/creator/orchestrator.ts"
+      ],
+      "tests": [
+        "server/creator/googleImage.test.ts",
+        "server/creator/googleVeoAdapter.test.ts",
+        "server/creator/orchestrator.test.ts",
+        "server/creator/runtimeAcceptance.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/generative-media-integrity.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Not routed through the Provider Gateway; no paid generation executed; provider adapters tested with fakes only."
+    },
+    {
+      "capability": "readiness_liveness",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "GET /healthz (liveness) and /readyz (readiness; llm is 'configured', never 'reachable')",
+      "sourceFiles": [
+        "server/_core/index.ts",
+        "server/_core/readiness.ts"
+      ],
+      "tests": [
+        "server/_core/readiness.test.ts",
+        "server/_core/httpTelemetry.test.ts",
+        "server/mysql.integration.mysql.test.ts",
+        "e2e/specs/chat.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        ".github/workflows/preview-smoke-contract.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Probe verified against a live local database and with bad credentials/wrong database name; built-server smoke run locally without DB/auth/storage; no deployed environment probed. Browser-level E2E (Playwright, desktop+mobile, fake OIDC/LLM/S3/clamd, real built server on a local MySQL-compatible DB) is LOCALLY_TESTED only; the CI e2e job is CI_PENDING and no deployed environment was exercised."
+    },
+    {
+      "capability": "durable_task_execution",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "MySQL-backed durable tasks: server/tasks (store, worker), tRPC tasks.get/list/cancel; leases + attempt fencing, checkpoint/resume, bounded retry, durable cancel, idempotent create, effect dedupe, Provider Gateway-governed model calls; server-wired worker runtime (server/tasks/runtime.ts, default OFF via TASK_WORKER_ENABLED) executing one workflow, chat.answer, via tRPC chat.sendAsync",
+      "sourceFiles": [
+        "server/tasks/store.ts",
+        "server/tasks/worker.ts",
+        "server/tasks/types.ts",
+        "server/tasks/index.ts",
+        "drizzle/0008_durable_tasks.sql",
+        "server/tasks/runtime.ts",
+        "server/tasks/chatAnswer.ts",
+        "server/tasks/shared.ts",
+        "server/chat/grounded.ts"
+      ],
+      "tests": [
+        "server/tasks/tasks.test.ts",
+        "server/tasks/tasks.mysql.test.ts",
+        "server/mysql.integration.mysql.test.ts",
+        "server/tasks/runtime.test.ts",
+        "server/tasks/runtime.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Verified on local MariaDB 10.11 only (MySQL 8 CI pending; no GitHub CI observed). The worker runtime is wired into server startup/shutdown and /readyz but is OFF by default; exactly one workflow (chat.answer via chat.sendAsync) is enqueued; synchronous chat.send is unchanged. No client UI uses sendAsync yet. Not exercised against a live deployment or a real model. Side effects are at-least-once with durable dedupe records; handlers must use idempotent operations. Cancellation of a running task is cooperative (next checkpoint/effect). A shutdown that exceeds the grace period abandons in-flight tasks; they resume after lease expiry."
+    },
+    {
+      "capability": "mcp_readonly_connector",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Governed READ-ONLY MCP (Streamable HTTP JSON-RPC) connector: server/connectors/mcp (policy, client, store, service), tRPC connectors.mcp.*; workspace-owned, disabled by default, operator-approved endpoints only, explicit readOnlyHint required, mutation-looking tools denied, bounded time/bytes, schema-validated, redacted, provenance + audit",
+      "sourceFiles": [
+        "server/connectors/mcp/policy.ts",
+        "server/connectors/mcp/client.ts",
+        "server/connectors/mcp/store.ts",
+        "server/connectors/mcp/service.ts",
+        "server/skills/mcp.ts",
+        "drizzle/0009_mcp_connectors.sql",
+        "server/chat/mcpTools.ts",
+        "server/connectors/mcp/shared.ts",
+        "server/tasks/chatAnswer.ts"
+      ],
+      "tests": [
+        "server/connectors/mcp/mcp.test.ts",
+        "server/connectors/mcp/service.mysql.test.ts",
+        "server/mysql.integration.mysql.test.ts",
+        "server/chat/mcpTools.test.ts",
+        "server/chat/mcpChat.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Exercised only against a deterministic in-process fake MCP server; no real MCP server, no OAuth-protected MCP servers, no stdio transport (deliberately unsupported). Wired (default OFF, MCP_CHAT_TOOLS_ENABLED) into the durable chat.answer path only (one read-only call per answer, provenance in the citation); synchronous chat.send and the brain/agent orchestrator do not use it. See docs/MCP_CHAT_TOOLS.md. Name-based mutation heuristics are conservative (false positives such as get_order are denied). Secrets are resolved from MCP_SECRET_<REF> environment variables."
+    },
+    {
+      "capability": "resumable_quarantined_ingestion",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Backend-only resumable chunked ingestion: tRPC files.resumable.{begin,putChunk,status,finalize,abort}; chunks live only in the fileUploadChunks quarantine table; finalize = assemble -> size/checksum -> shape -> malware scan -> clean decision -> extraction -> normal storage (object store + documents + chunks). Infected = terminal reject + purge; scanner unavailable = fail closed, bytes stay quarantined, retryable. Default OFF (FILE_INGESTION_BACKEND_ENABLED); the owner-approval gate keeps the upload UI disabled",
+      "sourceFiles": [
+        "server/ingestion/service.ts",
+        "server/ingestion/store.ts",
+        "server/ingestion/commit.ts",
+        "server/ingestion/index.ts",
+        "drizzle/0010_resumable_ingestion.sql",
+        "server/ingestion/cleanupRunner.ts",
+        "server/ingestion/shared.ts"
+      ],
+      "tests": [
+        "server/ingestion/ingestion.mysql.test.ts",
+        "server/ingestion/cleanupRunner.test.ts",
+        "server/ingestion/cleanupRunner.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Verified on local MariaDB 10.11 with a stub scanner and an in-process clamd INSTREAM fake; no real ClamAV and no real S3. No client uses it and the upload UI remains gated. Max 12 MiB per file (assembled in memory), 128 KiB chunks. A bounded cleanup runner is wired but OFF by default. Quarantine bytes sit in the application database (mediumblob) until purge. Cleanup runner: OFF by default, single-flight per process, verified on MariaDB only, not run against a live deployment. Client upload UI intentionally unchanged (Coming Soon)."
+    },
+    {
+      "capability": "tamil_codeswitch_golden_benchmark",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Deterministic golden corpus (Tamil, English, code-switch, transliterated, grounded, insufficient, conflicting, citation selection, ambiguous, multi-document, adversarial, provider-unavailable, embeddings-unavailable lexical fallback) scored by pnpm evals into a separate CONTRACT_HARNESS_GOLDEN report; deterministic Tamil<->Tanglish transliteration keys (server/retrieval.ts, searchText key block, SQL prefilter) and stopword-only query suppression",
+      "sourceFiles": [
+        "server/evals/golden/corpus.json",
+        "server/evals/golden/run.ts",
+        "scripts/run-evals.mjs",
+        "server/retrieval.ts",
+        "server/retrievalStore.ts"
+      ],
+      "tests": [
+        "server/evals/golden/golden.test.ts",
+        "server/retrieval.translit.test.ts",
+        "server/retrievalStore.translit.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm evals"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "REAL_MODEL_QUALITY_UNVERIFIED: model replies are scripted and embedding vectors are synthetic, so this scores the retrieval/grounding/citation contract only. One documented gap remains (CROSS_LINGUAL_NEEDS_EMBEDDINGS: English query for a Tamil-only chunk needs a real embedding model). Tamil<->Tanglish matching is a deterministic consonant-skeleton heuristic (cross-script only, half weight, can collide); stopword-only queries are suppressed. Rows indexed before 0019 need pnpm db:backfill-search-text to gain transliteration keys."
+    },
+    {
+      "capability": "backup_restore_rollback_rehearsal",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "pnpm test:recovery: logical backup (consistent snapshot, per-table count + SHA-256) -> restore into an empty throwaway database -> verification; old-schema backup upgraded to latest via forward migrations; searchText backfill; provider policy/budget, task checkpoint/effect and OAuth-transaction behaviour after restore; bad-migration detection and recovery by restoring a pre-migration backup",
+      "sourceFiles": [
+        "server/recovery/rehearsal.ts",
+        "scripts/run-recovery-rehearsal.mjs"
+      ],
+      "tests": [
+        "server/recovery/rehearsal.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test:recovery",
+        "pnpm test:mysql"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Local throwaway MariaDB 10.11 only; no managed database (Aiven) was touched, so the managed backup/restore path, PITR and real RTO/RPO are NOT verified. Rehearsal-sized data. Migrations are forward-only: there is NO schema downgrade; rollback = restore a pre-migration backup and writes after it are lost. The logical export is a rehearsal tool, not a replacement for the provider's managed backups. Backup/restore is not scheduled or automated."
+    },
+    {
+      "capability": "release_evidence_manifest",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "pnpm release:evidence consolidates unit/MySQL/E2E totals, eval + golden + recovery digests, migration consistency, capability truth, secret hygiene, source neutrality, production advisory counts and built-server smoke into reports/release/release-evidence.json bound to the git SHA; the quality-gate workflow's release-evidence job enforces it after validate, mysql-integration and e2e succeed",
+      "sourceFiles": [
+        "server/release/evidence.ts",
+        "scripts/release-evidence.ts",
+        "scripts/smoke-built-server.mjs",
+        "scripts/validate-source-neutrality.mjs",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "tests": [
+        "server/release/evidence.test.ts"
+      ],
+      "workflowGate": [
+        ".github/workflows/quality-gate.yml",
+        "pnpm release:evidence"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "The workflow changes have NOT run on GitHub: the release-evidence job is CI_PENDING until a real Actions run on the exact head. A local run can only reach LOCAL_GATES_PASS_CI_PENDING; frozen install and typecheck are attested only by upstream CI job success. The manifest can never claim RUNTIME_VERIFIED and does not cover Render/Aiven staging, a live scanner, real-model quality, or production."
+    },
+    {
+      "capability": "durable_worker_runtime_wiring",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "TaskWorkerRuntime (bounded concurrency, graceful stop, abandon-on-timeout, health) started from server/_core/index.ts after listen; SIGTERM/SIGINT stop runtime then HTTP server; /readyz dependencies.taskWorker",
+      "sourceFiles": [
+        "server/tasks/runtime.ts",
+        "server/tasks/shared.ts",
+        "server/_core/index.ts"
+      ],
+      "tests": [
+        "server/tasks/runtime.test.ts",
+        "server/tasks/runtime.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Default OFF. In-process only: no separate worker deployment topology. Signal handling not exercised against a real orchestrator."
+    }
+  ]
+}
