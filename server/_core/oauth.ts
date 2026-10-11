@@ -1,7 +1,7 @@
 import { isIdentityAllowed, loginAccessPolicy } from "./authAccess";
+import { sessionMaxAgeMs } from "./sessionPolicy";
 import {
   COOKIE_NAME,
-  ONE_YEAR_MS,
   OAUTH_PKCE_COOKIE,
   OAUTH_STATE_COOKIE,
   decodeOAuthState,
@@ -148,12 +148,12 @@ export function registerOAuthRoutes(app: Express, injectedStore?: LoginTransacti
 
       const sessionToken = await sdk.createSessionToken(userInfo.openId, {
         name: userInfo.name || "User",
-        expiresInMs: ONE_YEAR_MS,
+        expiresInMs: sessionMaxAgeMs(),
         sessionGeneration,
       });
 
       const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: sessionMaxAgeMs() });
       res.redirect(302, resolvePostLoginPath(decodedState.returnTo, new URL(redirectUri).origin));
     } catch (error) {
       console.error("[OIDC] Callback failed", error);

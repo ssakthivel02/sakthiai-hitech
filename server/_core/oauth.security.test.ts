@@ -416,3 +416,19 @@ describe("login access policy (preview-user restriction)", () => {
     expect(dbMock.upsertUser).not.toHaveBeenCalled();
   });
 });
+
+describe("session cookie lifetime", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it("the session cookie and token follow SESSION_MAX_AGE_DAYS (default 30 days), never one year", async () => {
+    for (const [value, days] of [["", 30], ["7", 7]] as const) {
+      vi.stubEnv("SESSION_MAX_AGE_DAYS", value);
+      const login = beginLogin();
+      const r = await callback({ code: login.code, state: login.state }, login.cookie);
+      const cookie = r.setCookie.find(c => c.startsWith("app_session_id="))!;
+      expect(cookie).toMatch(new RegExp(`Max-Age=${days * 86400}(;|$)`));
+      const token = cookie.split(";")[0].split("=")[1];
+      const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+      expect(claims.exp - claims.iat).toBe(days * 86400);
+    }
+  });
+});

@@ -1,4 +1,4 @@
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME } from "@shared/const";
 import { ForbiddenError } from "@shared/_core/errors";
 import { randomUUID } from "node:crypto";
 import { parse as parseCookieHeader } from "cookie";
@@ -8,6 +8,7 @@ import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
 import { isSessionUserAllowed, loginAccessPolicy } from "./authAccess";
+import { assertSessionSecretStrength, isTokenAgeAcceptable, sessionMaxAgeMs } from "./sessionPolicy";
 import { isSessionGenerationCurrent } from "./sessionRevocation";
 
 const isNonEmptyString = (value: unknown): value is string =>
@@ -130,6 +131,7 @@ class SDKServer {
     if (!ENV.cookieSecret) {
       throw new Error("JWT_SECRET is not configured");
     }
+    assertSessionSecretStrength(ENV.cookieSecret);
     return new TextEncoder().encode(ENV.cookieSecret);
   }
 
@@ -154,7 +156,7 @@ class SDKServer {
     options: { expiresInMs?: number } = {},
   ): Promise<string> {
     const issuedAt = Date.now();
-    const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
+    const expiresInMs = Math.min(options.expiresInMs ?? sessionMaxAgeMs(), sessionMaxAgeMs());
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
 
     return new SignJWT({
@@ -179,10 +181,12 @@ class SDKServer {
       const { payload } = await jwtVerify(cookieValue, this.getSessionSecret(), {
         algorithms: ["HS256"],
       });
-      const { openId, appId, name, sessionGeneration, jti } = payload as Record<
+      const { openId, appId, name, sessionGeneration, jti, iat } = payload as Record<
         string,
         unknown
       >;
+      // Absolute lifetime enforced server-side from iat (also caps tokens issued with a longer exp).
+      if (!isTokenAgeAcceptable(iat)) return null;
       if (
         !isNonEmptyString(openId) ||
         !isNonEmptyString(appId) ||
