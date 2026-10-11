@@ -163,8 +163,11 @@ export const PRINCIPAL_ROLES = {
  * Fail-closed check of SHOW GRANTS output for the connected principal. Accepted lines: `GRANT USAGE ON *.*` and
  * database-level grants on exactly the target database whose privileges fit the role. Anything else (global or
  * dynamic privileges, other databases, wildcards, table/column/proxy/role grants, WITH GRANT OPTION, ALL) is a problem.
+ * Wildcards follow the server's partial_revokes setting (MySQL GRANT docs): when OFF (the default, and assumed when
+ * unknown) an unescaped `_`/`%` in a database-level grant matches other databases, so only the escaped name
+ * (`sakthiai\_preview`) is exact; when ON unescaped characters are literal and an escaped name no longer names the target.
  */
-export function checkPrincipalGrants(lines, role, database) {
+export function checkPrincipalGrants(lines, role, database, { partialRevokes = false } = {}) {
   const spec = PRINCIPAL_ROLES[role];
   if (!spec) return { privileges: [], problems: [`unknown PREVIEW_DB_ROLE ${role || "<none>"}; expected one of ${Object.keys(PRINCIPAL_ROLES).join(", ")}`] };
   const problems = [], held = new Set();
@@ -176,6 +179,10 @@ export function checkPrincipalGrants(lines, role, database) {
     if (!m) { problems.push(`unexpected grant (only database-level grants on ${database} are allowed): ${line}`); continue; }
     const db = m[2].replace(/\\([_%])/g, "$1");
     if (/[%]/.test(db) || db !== database) { problems.push(`grant on another or wildcard database ${m[2]} is not allowed`); continue; }
+    const unescaped = /(^|[^\\])[_%]/.test(m[2].replace(/\\\\/g, ""));
+    const escaped = /\\[_%]/.test(m[2]);
+    if (!partialRevokes && unescaped) { problems.push(`wildcard database grant ${m[2]} is not allowed: with partial_revokes OFF an unescaped "_" or "%" also matches other databases; grant on \`${database.replace(/[_%]/g, "\\$&")}\`.* instead`); continue; }
+    if (partialRevokes && escaped) { problems.push(`grant on ${m[2]} does not cover ${database}: with partial_revokes ON an escaped name is literal; grant on \`${database}\`.* instead`); continue; }
     for (const priv of m[1].split(",").map(p => p.trim().toUpperCase())) {
       if (!spec.allowed.includes(priv)) problems.push(`privilege ${priv} on ${database} is not allowed for role ${role}`);
       else held.add(priv);
@@ -275,10 +282,12 @@ export async function runGuard(mode, { databaseUrl, expectedDatabase = "sakthiai
       const [[{ u }]] = await conn.query("SELECT CURRENT_USER() AS u");
       const lines = (await q(conn, "SHOW GRANTS")).map(r => Object.values(r)[0]);
       const principal = String(u).split("@")[0];
-      const check = checkPrincipalGrants(lines, role, database);
+      const [[{ pr }]] = await conn.query("SELECT @@GLOBAL.partial_revokes AS pr");
+      const partialRevokes = Number(pr) === 1;
+      const check = checkPrincipalGrants(lines, role, database, { partialRevokes });
       problems.push(...check.problems);
       if (["root", "avnadmin"].includes(principal.toLowerCase())) problems.push(`administrative principal ${principal} is not allowed`);
-      return write({ mode, generatedAt: now.toISOString(), role, principal, grants: lines, privileges: check.privileges, problems });
+      return write({ mode, generatedAt: now.toISOString(), role, principal, partialRevokes, grants: lines, privileges: check.privileges, problems });
     } finally { await conn.end(); }
   }
   const expected = expectedJournal(root);

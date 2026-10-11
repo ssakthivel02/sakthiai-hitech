@@ -264,12 +264,12 @@ describe("preview-db-setup.yml: environment-scoped credentials", () => {
 
 describe("preview migration guard: principal privileges (SHOW GRANTS)", () => {
   const db = "sakthiai_preview";
-  const g = (privs, on = "`sakthiai_preview`.*", tail = "") => `GRANT ${privs} ON ${on} TO \`u\`@\`%\`${tail}`;
+  // default = the escaped form SHOW GRANTS returns for the documented A2 SQL (exact match with partial_revokes OFF)
+  const g = (privs, on = "`sakthiai\\_preview`.*", tail = "") => `GRANT ${privs} ON ${on} TO \`u\`@\`%\`${tail}`;
   const usage = "GRANT USAGE ON *.* TO `u`@`%`";
 
-  it("inspect accepts exactly SELECT on the target database (escaped underscore included)", () => {
+  it("inspect accepts exactly SELECT on the target database (escaped underscore)", () => {
     expect(checkPrincipalGrants([usage, g("SELECT")], "inspect", db)).toEqual({ privileges: ["SELECT"], problems: [] });
-    expect(checkPrincipalGrants([usage, g("SELECT", "`sakthiai\\_preview`.*")], "inspect", db).problems).toEqual([]);
   });
 
   it("inspect refuses any write, DDL, ALL, global, other-database, wildcard, table, role or grant-option grant", () => {
@@ -279,6 +279,18 @@ describe("preview migration guard: principal privileges (SHOW GRANTS)", () => {
       [g("SELECT", "`sakthiai_preview`.*", " WITH GRANT OPTION")], [usage, "GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO `u`@`%`", g("SELECT")], [usage],
     ];
     for (const lines of refused) expect(checkPrincipalGrants(lines, "inspect", db).problems.length, lines.join(" | ")).toBeGreaterThan(0);
+  });
+
+  it("an unescaped _ or % is a live wildcard when partial_revokes is OFF (MySQL default): refused; the escaped form passes", () => {
+    // GRANT ... ON `sakthiai_preview`.* also covers e.g. `sakthiaiXpreview` unless partial_revokes is ON (MySQL 8.4 GRANT docs).
+    expect(checkPrincipalGrants([usage, g("SELECT", "`sakthiai_preview`.*")], "inspect", db).problems.join()).toMatch(/wildcard/);
+    expect(checkPrincipalGrants([usage, g("SELECT", "`sakthiai_preview`.*")], "inspect", db, { partialRevokes: false }).problems.join()).toMatch(/wildcard/);
+    expect(checkPrincipalGrants([usage, g("SELECT", "`sakthiai\\_preview`.*")], "inspect", db, { partialRevokes: false })).toEqual({ privileges: ["SELECT"], problems: [] });
+  });
+
+  it("with partial_revokes ON the unescaped name is literal (passes) and the escaped name no longer covers the target (refused)", () => {
+    expect(checkPrincipalGrants([usage, g("SELECT", "`sakthiai_preview`.*")], "inspect", db, { partialRevokes: true })).toEqual({ privileges: ["SELECT"], problems: [] });
+    expect(checkPrincipalGrants([usage, g("SELECT", "`sakthiai\\_preview`.*")], "inspect", db, { partialRevokes: true }).problems.join()).toMatch(/partial_revokes/);
   });
 
   it("migrate requires the migration privileges and refuses DROP, ALL and missing privileges", () => {

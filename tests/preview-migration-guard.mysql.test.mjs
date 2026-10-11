@@ -213,7 +213,8 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
       const u = new URL(db.url); u.username = user; u.password = pw;
       return u.toString();
     };
-    const on = `\`${db.name}\`.*`;
+    // the documented A2 form: `_` escaped, so the grant names exactly this database (partial_revokes OFF, the default)
+    const on = `\`${db.name.replace(/[_%]/g, "\\$&")}\`.*`;
     const inspectUrl = await principal("gi", [`SELECT ON ${on}`]);
     const migratorUrl = await principal("gm", [`SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX ON ${on}`]);
     const appUrl = await principal("ga", [`SELECT, INSERT, UPDATE, DELETE ON ${on}`]);
@@ -228,6 +229,14 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
     for (const [url, role] of [[migratorUrl, "inspect"], [appUrl, "inspect"], [appUrl, "migrate"], [dropUrl, "migrate"], [globalUrl, "inspect"], [inspectUrl, "migrate"], [inspectUrl, undefined]]) {
       expect((await grants(url, role)).problems.length, `${new URL(url).username} as ${role}`).toBeGreaterThan(0);
     }
+    expect(ok.report.partialRevokes).toBe(false);
+    // an unescaped `_` is a live wildcard: the grant also opens a look-alike database, and the guard must refuse it
+    const decoy = db.name.replace("_", "X");
+    await exec(base, `CREATE DATABASE \`${decoy}\``, `CREATE TABLE \`${decoy}\`.t (id int)`);
+    cleanup.push(() => exec(base, `DROP DATABASE IF EXISTS \`${decoy}\``));
+    const wildUrl = await principal("gw", [`SELECT ON \`${db.name}\`.*`]);
+    await expect(exec(wildUrl, `SELECT COUNT(*) FROM \`${decoy}\`.t`)).resolves.toBeUndefined(); // no "denied": the wildcard reaches it
+    expect((await grants(wildUrl, "inspect")).problems.join()).toMatch(/wildcard database grant/);
     // the inspect principal really cannot write, so inspect mode is read-only by privilege as well as by workflow
     await expect(exec(inspectUrl, "CREATE TABLE should_fail (id int)")).rejects.toThrow(/denied/);
     await expect(exec(inspectUrl, "INSERT INTO users (openId) VALUES ('x')")).rejects.toThrow(/denied/);
