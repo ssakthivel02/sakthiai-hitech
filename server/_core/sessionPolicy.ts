@@ -5,6 +5,8 @@
  *  - Clock skew tolerated for `iat`: 60 s.
  *  - In a production runtime the HS256 secret must be at least 32 characters (fail closed otherwise).
  */
+import { loginAccessPolicy } from "./authAccess";
+
 const DAY_MS = 86_400_000;
 export const DEFAULT_SESSION_DAYS = 30;
 export const MAX_SESSION_DAYS = 90;
@@ -34,10 +36,12 @@ export function assertSessionSecretStrength(secret: string, env: Env = process.e
   }
 }
 
-export type AuthenticationReadiness = "configured" | "missing_configuration" | "weak_secret";
+export type AuthenticationReadiness = "configured" | "missing_configuration" | "weak_secret" | "no_authorized_identities";
 /**
  * What /readyz reports for authentication. Must agree with what the auth path will actually do: a secret that
- * `assertSessionSecretStrength` would reject is NOT ready, even though it is present.
+ * `assertSessionSecretStrength` would reject is NOT ready, even though it is present; and a production runtime whose
+ * login policy is closed (no OWNER_OPEN_ID, AUTH_ALLOWED_SUBJECTS, AUTH_ALLOWED_EMAILS or AUTH_OPEN_SIGNUP=true)
+ * rejects every sign-in, so it is NOT ready either.
  */
 export function authenticationReadiness(input: { secret: string; oidc: Array<string | undefined> }, env: Env = process.env): AuthenticationReadiness {
   const present = [input.secret, ...input.oidc].every(v => typeof v === "string" && v.trim().length > 0);
@@ -47,5 +51,6 @@ export function authenticationReadiness(input: { secret: string; oidc: Array<str
   } catch {
     return "weak_secret";
   }
+  if (env.NODE_ENV === "production" && loginAccessPolicy(env).mode === "closed") return "no_authorized_identities";
   return "configured";
 }

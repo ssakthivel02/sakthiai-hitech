@@ -77,12 +77,33 @@ describe("/readyz authentication readiness agrees with what auth will actually d
   });
   it("production + 32+ char secret + full OIDC config is configured; anything missing is missing_configuration", async () => {
     const { authenticationReadiness } = await import("./sessionPolicy");
-    expect(authenticationReadiness({ secret: "x".repeat(32), oidc }, { NODE_ENV: "production" })).toBe("configured");
+    expect(authenticationReadiness({ secret: "x".repeat(32), oidc }, { NODE_ENV: "production", OWNER_OPEN_ID: "owner-sub" })).toBe("configured");
     expect(authenticationReadiness({ secret: "", oidc }, { NODE_ENV: "production" })).toBe("missing_configuration");
     expect(authenticationReadiness({ secret: "x".repeat(40), oidc: [...oidc.slice(0, 3), ""] }, { NODE_ENV: "production" })).toBe("missing_configuration");
   });
   it("non-production keeps short local secrets usable", async () => {
     const { authenticationReadiness } = await import("./sessionPolicy");
+    expect(authenticationReadiness({ secret: "dev", oidc }, { NODE_ENV: "test" })).toBe("configured");
+  });
+});
+
+describe("/readyz reports a production deployment where nobody may sign in", () => {
+  const oidc = ["https://idp/authorize", "https://idp/token", "https://idp/userinfo", "client"];
+  const secret = "x".repeat(40);
+  it("production with no OWNER_OPEN_ID / AUTH_ALLOWED_* and no AUTH_OPEN_SIGNUP is NOT ready (no_authorized_identities)", async () => {
+    const { authenticationReadiness } = await import("./sessionPolicy");
+    expect(authenticationReadiness({ secret, oidc }, { NODE_ENV: "production" })).toBe("no_authorized_identities");
+  });
+  it("any admitted identity source makes it configured", async () => {
+    const { authenticationReadiness } = await import("./sessionPolicy");
+    for (const extra of [{ OWNER_OPEN_ID: "o" }, { AUTH_ALLOWED_SUBJECTS: "s" }, { AUTH_ALLOWED_EMAILS: "a@b.c" }, { AUTH_OPEN_SIGNUP: "true" }]) {
+      expect(authenticationReadiness({ secret, oidc }, { NODE_ENV: "production", ...extra })).toBe("configured");
+    }
+  });
+  it("weak secret and missing configuration still take precedence; non-production unaffected", async () => {
+    const { authenticationReadiness } = await import("./sessionPolicy");
+    expect(authenticationReadiness({ secret: "short", oidc }, { NODE_ENV: "production" })).toBe("weak_secret");
+    expect(authenticationReadiness({ secret: "", oidc }, { NODE_ENV: "production" })).toBe("missing_configuration");
     expect(authenticationReadiness({ secret: "dev", oidc }, { NODE_ENV: "test" })).toBe("configured");
   });
 });
