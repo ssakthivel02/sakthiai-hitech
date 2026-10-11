@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Clapperboard, Film, Image, Plus, RefreshCw, ShieldCheck, Upload, Play, RotateCcw, Ban, CheckCircle2 } from "lucide-react";
 import CreatorReferenceControls from "./CreatorReferenceControls";
+import CreatorSpendAdminPanel from "./CreatorSpendAdminPanel";
+import { describeCreatorError } from "@shared/creatorErrors";
 
 type CueDraft = { startMs: number; endMs: number; text: string; language: "ta" | "en" };
 type TimelineDraft = { assetId: number; shotId?: number; startMs: number; endMs: number; track: 1; sortOrder: number };
@@ -38,6 +40,20 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error ?? "");
 }
 
+function CreatorErrorNotice({ error }: { error: unknown }) {
+  const view = describeCreatorError(errorText(error));
+  return (
+    <Card style={{ marginBottom: 16 }} role="alert" aria-live="assertive" data-testid="creator-error" data-error-code={view.code}>
+      <CardContent style={{ paddingTop: 16, display: "grid", gap: 4 }}>
+        <strong>{view.title}</strong>
+        <span>{view.detail}</span>
+        {view.action && <span>{view.action}</span>}
+        <small>Code: {view.code}</small>
+      </CardContent>
+    </Card>
+  );
+}
+
 function provenanceIds(sourceAssetIdsJson: string | null | undefined) {
   if (!sourceAssetIdsJson) return [] as number[];
   try {
@@ -49,7 +65,7 @@ function provenanceIds(sourceAssetIdsJson: string | null | undefined) {
 }
 
 export default function Creator() {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const [workspaceId, setWorkspaceId] = useState<number>();
   const [projectId, setProjectId] = useState<number>();
   const [projectName, setProjectName] = useState("Murugan Album Film");
@@ -224,9 +240,10 @@ export default function Creator() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Badge variant="outline"><ShieldCheck size={14}/> Human approval required</Badge><Badge variant="outline">{creatorStatus.data?.stage ?? "Runtime loading"}</Badge></div>
       </header>
 
-      {operationError && <Card style={{ marginBottom: 16 }}><CardContent style={{ paddingTop: 16 }}><strong>Creator operation blocked:</strong> {errorText(operationError)}</CardContent></Card>}
+      {user?.role === "admin" && <CreatorSpendAdminPanel />}
+      {operationError && <CreatorErrorNotice error={operationError} />}
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, .7fr) minmax(0, 2fr)", gap: 16 }}>
+      <div className="creator-layout">
         <aside style={{ display: "grid", gap: 16, alignContent: "start" }}>
           <Card><CardHeader><CardTitle>Creator projects</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 10 }}><Input value={projectName} onChange={e => setProjectName(e.target.value)} placeholder="Project name"/><Button disabled={!workspaceId || !projectName.trim() || createProject.isPending} onClick={() => createProject.mutate({ workspaceId: workspaceId!, name: projectName })}><Plus size={16}/> New Creator project</Button><div className="list">{projects.data?.map(item => <button key={item.id} className="list-row" style={{ width: "100%", textAlign: "left", border: 0, cursor: "pointer" }} onClick={() => setProjectId(item.id)}><span>{item.name}</span><small>{item.status} · creatorProjectId {item.id}</small></button>)}</div></CardContent></Card>
           <Card><CardHeader><CardTitle>Provider evidence</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 8 }}>{creatorStatus.data?.providers.map(provider => <div key={provider.provider} className="list-row"><span>{provider.provider}</span><small>{provider.configured ? "Configured — real output still requires evidence" : "Not configured"}</small></div>)}<small>Configuration alone never proves provider operation.</small></CardContent></Card>
@@ -237,10 +254,10 @@ export default function Creator() {
           <Card><CardHeader><CardTitle><Clapperboard size={18}/> Storyboard / shot graph</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 16 }}>
             {!project.data ? <p>Select or create a Creator project.</p> : <>
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}><Input value={sceneTitle} onChange={e => setSceneTitle(e.target.value)} placeholder="Scene title"/><Button disabled={!projectId || !sceneTitle.trim() || createScene.isPending} onClick={() => createScene.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, sceneIndex: nextSceneIndex, title: sceneTitle })}><Plus size={16}/> Scene</Button></div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr auto", gap: 8 }}><Input value={shotTitle} onChange={e => setShotTitle(e.target.value)} placeholder="Shot title"/><Input value={shotPrompt} onChange={e => setShotPrompt(e.target.value)} placeholder="Generation prompt"/><Button disabled={!selectedScene || !shotTitle.trim() || createShot.isPending} onClick={() => createShot.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, sceneId: selectedScene!.id, shotIndex: nextShotIndex, title: shotTitle, prompt: shotPrompt })}><Plus size={16}/> Shot</Button></div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 8 }}><Input value={shotTitle} onChange={e => setShotTitle(e.target.value)} placeholder="Shot title"/><Input value={shotPrompt} onChange={e => setShotPrompt(e.target.value)} placeholder="Generation prompt"/><Button disabled={!selectedScene || !shotTitle.trim() || createShot.isPending} onClick={() => createShot.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, sceneId: selectedScene!.id, shotIndex: nextShotIndex, title: shotTitle, prompt: shotPrompt })}><Plus size={16}/> Shot</Button></div>
               {project.data.scenes.map(scene => <div key={scene.id} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}><strong>{scene.sceneIndex + 1}. {scene.title}</strong><div style={{ display: "grid", gap: 8, marginTop: 10 }}>{project.data.shots.filter(shot => shot.sceneId === scene.id).map(shot => {
                 const selectedFrames = frameSelections[shot.id] ?? {};
-                return <div key={shot.id} className="list-row" style={{ alignItems: "stretch", gap: 10 }}><div style={{ minWidth: 220 }}><span>{shot.shotIndex + 1}. {shot.title}</span><small>{shot.status} · {shot.startMs ?? "?"}–{shot.endMs ?? "?"} ms · shotId {shot.id}</small><small>Next Veo lock: first {selectedFrames.firstFrameAssetId ?? "—"} · last {selectedFrames.lastFrameAssetId ?? "—"}</small></div><div style={{ display: "grid", gap: 6, minWidth: 340 }}><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}><label style={{ display: "grid", gap: 3 }}><small>First frame</small><select value={selectedFrames.firstFrameAssetId ?? ""} onChange={e => setFrameSelections(current => ({ ...current, [shot.id]: { ...(current[shot.id] ?? {}), firstFrameAssetId: e.target.value ? Number(e.target.value) : undefined } }))}><option value="">None</option>{eligibleConditioningAssets.map(asset => <option key={`first-${asset.id}`} value={asset.id}>asset {asset.id} · {asset.assetType}{asset.shotId ? ` · shot ${asset.shotId}` : ""}</option>)}</select></label><label style={{ display: "grid", gap: 3 }}><small>Last frame</small><select value={selectedFrames.lastFrameAssetId ?? ""} onChange={e => setFrameSelections(current => ({ ...current, [shot.id]: { ...(current[shot.id] ?? {}), lastFrameAssetId: e.target.value ? Number(e.target.value) : undefined } }))}><option value="">None</option>{eligibleConditioningAssets.map(asset => <option key={`last-${asset.id}`} value={asset.id}>asset {asset.id} · {asset.assetType}{asset.shotId ? ` · shot ${asset.shotId}` : ""}</option>)}</select></label></div><div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Button size="sm" variant="outline" disabled={submitImage.isPending} onClick={() => submitImageForShot(shot)}><Image size={14}/> Image</Button><Button size="sm" variant="outline" disabled={submitVideo.isPending} onClick={() => submitVideoForShot(shot, selectedFrames)}><Film size={14}/> Video</Button></div></div></div>;
+                return <div key={shot.id} className="list-row" style={{ alignItems: "stretch", gap: 10, flexWrap: "wrap" }}><div style={{ minWidth: "min(220px, 100%)", flex: "1 1 220px" }}><span>{shot.shotIndex + 1}. {shot.title}</span><small>{shot.status} · {shot.startMs ?? "?"}–{shot.endMs ?? "?"} ms · shotId {shot.id}</small><small>Next Veo lock: first {selectedFrames.firstFrameAssetId ?? "—"} · last {selectedFrames.lastFrameAssetId ?? "—"}</small></div><div style={{ display: "grid", gap: 6, minWidth: "min(340px, 100%)", flex: "1 1 340px" }}><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 6 }}><label style={{ display: "grid", gap: 3 }}><small>First frame</small><select value={selectedFrames.firstFrameAssetId ?? ""} onChange={e => setFrameSelections(current => ({ ...current, [shot.id]: { ...(current[shot.id] ?? {}), firstFrameAssetId: e.target.value ? Number(e.target.value) : undefined } }))}><option value="">None</option>{eligibleConditioningAssets.map(asset => <option key={`first-${asset.id}`} value={asset.id}>asset {asset.id} · {asset.assetType}{asset.shotId ? ` · shot ${asset.shotId}` : ""}</option>)}</select></label><label style={{ display: "grid", gap: 3 }}><small>Last frame</small><select value={selectedFrames.lastFrameAssetId ?? ""} onChange={e => setFrameSelections(current => ({ ...current, [shot.id]: { ...(current[shot.id] ?? {}), lastFrameAssetId: e.target.value ? Number(e.target.value) : undefined } }))}><option value="">None</option>{eligibleConditioningAssets.map(asset => <option key={`last-${asset.id}`} value={asset.id}>asset {asset.id} · {asset.assetType}{asset.shotId ? ` · shot ${asset.shotId}` : ""}</option>)}</select></label></div><div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Button size="sm" variant="outline" disabled={submitImage.isPending} onClick={() => submitImageForShot(shot)}><Image size={14}/> Image</Button><Button size="sm" variant="outline" disabled={submitVideo.isPending} onClick={() => submitVideoForShot(shot, selectedFrames)}><Film size={14}/> Video</Button></div></div></div>;
               })}</div></div>)}
               {!eligibleConditioningAssets.length && <small>No approved immutable image/reference asset exists yet. Generate/approve an image or lock a reference before conditioned Veo submission.</small>}
             </>}
@@ -261,7 +278,7 @@ export default function Creator() {
           </CardContent></Card>
 
           <Card><CardHeader><CardTitle>2. Tamil subtitle alignment</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 10 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "140px 140px 1fr auto", gap: 8 }}><Input type="number" value={captionStartMs} onChange={e => setCaptionStartMs(Number(e.target.value))}/><Input type="number" value={captionEndMs} onChange={e => setCaptionEndMs(Number(e.target.value))}/><Input value={captionText} onChange={e => setCaptionText(e.target.value)} placeholder="Tamil caption text"/><Button onClick={addCaptionCue}><Plus size={14}/> Cue</Button></div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 140px), 1fr))", gap: 8 }}><Input type="number" value={captionStartMs} onChange={e => setCaptionStartMs(Number(e.target.value))}/><Input type="number" value={captionEndMs} onChange={e => setCaptionEndMs(Number(e.target.value))}/><Input value={captionText} onChange={e => setCaptionText(e.target.value)} placeholder="Tamil caption text"/><Button onClick={addCaptionCue}><Plus size={14}/> Cue</Button></div>
             <div className="list">{cueDrafts.map((cue, index) => <div key={`${cue.startMs}-${index}`} className="list-row"><span>{cue.startMs}–{cue.endMs} ms · {cue.text}</span><Button size="sm" variant="ghost" onClick={() => setCueDrafts(current => current.filter((_, i) => i !== index))}>Remove</Button></div>)}</div>
             <Button disabled={!activeTimeline || !cueDrafts.length || saveCues.isPending} onClick={() => saveCues.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, cues: cueDrafts, humanTamilReviewed: true })}><ShieldCheck size={16}/> Validate and lock Tamil cues</Button>
             <small>{activeTimeline ? `Timeline ${activeTimeline.id} · ${activeTimeline.width}×${activeTimeline.height} @ ${activeTimeline.fps}fps` : "Timeline is created with the approved audio master."}</small>
@@ -277,7 +294,7 @@ export default function Creator() {
           <Card><CardHeader><CardTitle>4. Quality → Tamil → Visual → Final master</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 12 }}>
             <div>{latestRenderAsset ? <Badge>Latest render asset {latestRenderAsset.id}</Badge> : <Badge variant="outline">No render candidate yet</Badge>}</div>
             <Textarea value={sourcePrompt} onChange={e => setSourcePrompt(e.target.value)} placeholder="Approved source storyboard/prompt"/>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px,1fr))", gap: 8 }}>{qualityDimensionIds.map(id => <label key={id} style={{ display: "grid", gap: 4 }}><small>{id}</small><Input type="number" min={0} max={5} step={0.1} value={qualityScores[id]} onChange={e => setQualityScores(current => ({ ...current, [id]: Number(e.target.value) }))}/></label>)}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 8 }}>{qualityDimensionIds.map(id => <label key={id} style={{ display: "grid", gap: 4 }}><small>{id}</small><Input type="number" min={0} max={5} step={0.1} value={qualityScores[id]} onChange={e => setQualityScores(current => ({ ...current, [id]: Number(e.target.value) }))}/></label>)}</div>
             <Textarea value={criticalDefects} onChange={e => setCriticalDefects(e.target.value)} placeholder="Critical defects, one per line. Leave blank if none."/>
             <Button disabled={!latestRenderAsset || qualityReview.isPending} onClick={() => qualityReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, reviewerType: "HUMAN", sourcePromptOrStoryboard: sourcePrompt, dimensionScores: qualityScores, criticalDefects: criticalDefects.split("\n").map(v => v.trim()).filter(Boolean), notes: reviewNotes })}>Record governed quality review</Button>
             <Textarea value={reviewNotes} onChange={e => setReviewNotes(e.target.value)} placeholder="Human review evidence notes"/>

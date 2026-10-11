@@ -109,7 +109,7 @@ export default function CreatorReferenceControls(props: {
         <CardHeader><CardTitle><LockKeyhole size={18}/> Immutable reference library</CardTitle></CardHeader>
         <CardContent style={{ display: "grid", gap: 12 }}>
           <p style={{ margin: 0 }}>Upload only a reference you have reviewed and approved. Once locked, Creator treats it as immutable project identity/style/location/object evidence.</p>
-          <div style={{ display: "grid", gridTemplateColumns: "160px minmax(180px,1fr) minmax(220px,1fr)", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 8 }}>
             <select value={referenceKind} onChange={event => setReferenceKind(event.target.value as ReferenceKind)} style={{ minHeight: 40, border: "1px solid var(--border)", borderRadius: 8, padding: "0 10px", background: "var(--background)" }}>
               <option value="CHARACTER">CHARACTER</option>
               <option value="STYLE">STYLE</option>
@@ -147,9 +147,9 @@ export default function CreatorReferenceControls(props: {
             {project.data?.shots.map(shot => {
               const timing = timings[shot.id] ?? { startMs: shot.startMs ?? 0, endMs: shot.endMs ?? ((shot.startMs ?? 0) + 8000) };
               return (
-                <div key={shot.id} className="list-row" style={{ alignItems: "center" }}>
-                  <div style={{ minWidth: 220 }}><span>{shot.shotIndex + 1}. {shot.title}</span><small>shotId {shot.id}</small></div>
-                  <div style={{ display: "grid", gridTemplateColumns: "130px 130px auto", gap: 8, alignItems: "center" }}>
+                <div key={shot.id} className="list-row" style={{ alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                  <div style={{ minWidth: "min(220px, 100%)" }}><span>{shot.shotIndex + 1}. {shot.title}</span><small>shotId {shot.id}</small></div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 130px), 1fr))", gap: 8, alignItems: "center" }}>
                     <Input aria-label={`Shot ${shot.id} start milliseconds`} type="number" min={0} step={1} value={timing.startMs} onChange={event => setTimings(current => ({ ...current, [shot.id]: { ...timing, startMs: Number(event.target.value) } }))} />
                     <Input aria-label={`Shot ${shot.id} end milliseconds`} type="number" min={1} step={1} value={timing.endMs} onChange={event => setTimings(current => ({ ...current, [shot.id]: { ...timing, endMs: Number(event.target.value) } }))} />
                     <Button size="sm" variant="outline" disabled={updateShotTiming.isPending} onClick={() => saveTiming(shot.id)}><Save size={14}/> Save timing</Button>
