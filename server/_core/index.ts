@@ -19,6 +19,7 @@ import { embeddingStatus } from "../embeddings";
 import { malwareScannerConfigurationStatus } from "../security/malwareScanner";
 import { ENV } from "./env";
 import { deploymentTier, runtimeMode } from "./deploymentTier";
+import { authenticationReadiness } from "./sessionPolicy";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
 import { probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
 
@@ -129,13 +130,12 @@ async function startServer() {
     const schemaCurrent = databaseSchema?.status === "current";
     // /readyz is unauthenticated: publish counts only; operators get the missing table names from the server log.
     if (databaseSchema?.status === "behind") console.warn("readiness: database schema behind this build; missing tables:", databaseSchema.missingTables.join(","), "missing columns:", databaseSchema.missingColumns);
-    const authReady = configured(
-      ENV.cookieSecret,
-      ENV.oidcAuthorizationUrl,
-      ENV.oidcTokenUrl,
-      ENV.oidcUserInfoUrl,
-      ENV.oidcClientId,
-    );
+    // Must agree with the auth path: a production JWT_SECRET too short to sign/verify is reported, not "configured".
+    const authState = authenticationReadiness({
+      secret: ENV.cookieSecret,
+      oidc: [ENV.oidcAuthorizationUrl, ENV.oidcTokenUrl, ENV.oidcUserInfoUrl, ENV.oidcClientId],
+    });
+    const authReady = authState === "configured";
     // Infrastructure readiness, not model health: "configured" only when the gateway's own routing + policy + default
     // budget would let it TRY at least one provider for a conversation. Static: no provider call, no spend.
     // Whether a provider has actually answered is reported separately as llmGateway.operational.
@@ -161,7 +161,7 @@ async function startServer() {
         databaseSchema: databaseSchema
           ? { status: databaseSchema.status, expectedTables: databaseSchema.expectedTables, missingTables: databaseSchema.missingTables.length, missingColumns: databaseSchema.missingColumns }
           : { status: "not_checked" },
-        authentication: authReady ? "configured" : "missing_configuration",
+        authentication: authState,
         llm: llmReady ? "configured" : "missing_configuration",
         llmGateway: gateway,
         storage: storageReady ? "configured" : "missing_configuration",

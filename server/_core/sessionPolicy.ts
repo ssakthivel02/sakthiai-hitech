@@ -33,3 +33,19 @@ export function assertSessionSecretStrength(secret: string, env: Env = process.e
     throw new Error(`JWT_SECRET must be at least ${MIN_PRODUCTION_SECRET_LENGTH} characters in production`);
   }
 }
+
+export type AuthenticationReadiness = "configured" | "missing_configuration" | "weak_secret";
+/**
+ * What /readyz reports for authentication. Must agree with what the auth path will actually do: a secret that
+ * `assertSessionSecretStrength` would reject is NOT ready, even though it is present.
+ */
+export function authenticationReadiness(input: { secret: string; oidc: Array<string | undefined> }, env: Env = process.env): AuthenticationReadiness {
+  const present = [input.secret, ...input.oidc].every(v => typeof v === "string" && v.trim().length > 0);
+  if (!present) return "missing_configuration";
+  try {
+    assertSessionSecretStrength(input.secret, env);
+  } catch {
+    return "weak_secret";
+  }
+  return "configured";
+}

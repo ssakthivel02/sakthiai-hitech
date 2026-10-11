@@ -67,3 +67,22 @@ describe("JWT secret strength", () => {
     await expect(sdk.createSessionToken("sub-1", { sessionGeneration: 1 })).resolves.toBeTypeOf("string");
   });
 });
+
+describe("/readyz authentication readiness agrees with what auth will actually do", () => {
+  const oidc = ["https://idp/authorize", "https://idp/token", "https://idp/userinfo", "client"];
+  it("production + short secret is NOT ready (weak_secret), because every sign-in would fail closed", async () => {
+    const { authenticationReadiness } = await import("./sessionPolicy");
+    expect(authenticationReadiness({ secret: "short-secret", oidc }, { NODE_ENV: "production" })).toBe("weak_secret");
+    expect(authenticationReadiness({ secret: "x".repeat(31), oidc }, { NODE_ENV: "production" })).toBe("weak_secret");
+  });
+  it("production + 32+ char secret + full OIDC config is configured; anything missing is missing_configuration", async () => {
+    const { authenticationReadiness } = await import("./sessionPolicy");
+    expect(authenticationReadiness({ secret: "x".repeat(32), oidc }, { NODE_ENV: "production" })).toBe("configured");
+    expect(authenticationReadiness({ secret: "", oidc }, { NODE_ENV: "production" })).toBe("missing_configuration");
+    expect(authenticationReadiness({ secret: "x".repeat(40), oidc: [...oidc.slice(0, 3), ""] }, { NODE_ENV: "production" })).toBe("missing_configuration");
+  });
+  it("non-production keeps short local secrets usable", async () => {
+    const { authenticationReadiness } = await import("./sessionPolicy");
+    expect(authenticationReadiness({ secret: "dev", oidc }, { NODE_ENV: "test" })).toBe("configured");
+  });
+});
