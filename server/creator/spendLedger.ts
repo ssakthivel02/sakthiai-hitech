@@ -13,7 +13,9 @@ import type { CreatorPaidKind, CreatorSpendLimits } from "./paidPolicy";
  * A second reserve() with the same hold id never counts twice (`created: false`).
  *
  * Settlement: commit/release are guarded by `state = 'HELD'` so they apply at most once across instances.
- * Ambiguous provider outcomes stay HELD (counted as spent). Stale holds are never auto-released.
+ * Ambiguous provider outcomes stay HELD (counted as spent). Stale holds are settled only by the reconciler
+ * (spendReconciler.ts) when the outcome is provable, or by an administrator's recorded decision; every settlement
+ * records `settledBy` (+ optional note) as the spend audit trail.
  */
 type Db = ReturnType<typeof drizzle>;
 export type CreatorSpendDbProvider = () => Promise<Db | null | undefined>;
@@ -32,12 +34,21 @@ export type CreatorSpendReserveResult =
   | { ok: true; created: boolean }
   | { ok: false; reason: `${CreatorSpendScope}_exhausted` };
 
+/** Who settled a hold. `request` = the submitting request; `reconciler`; `admin:<userId>` = manual decision. */
+export type CreatorSettlement = { by: string; note?: string };
+const REQUEST: CreatorSettlement = { by: "request" };
+
 export interface CreatorSpendLedger {
   reserve(input: CreatorSpendReserveInput): Promise<CreatorSpendReserveResult>;
-  commit(holdId: string, generationId: number): Promise<void>;
-  release(holdId: string): Promise<void>;
+  /** true when this call moved the hold HELD -> COMMITTED. */
+  commit(holdId: string, generationId: number | null, settlement?: CreatorSettlement): Promise<boolean>;
+  /** true when this call moved the hold HELD -> RELEASED and restored the counters. */
+  release(holdId: string, settlement?: CreatorSettlement): Promise<boolean>;
   recordUnknown(holdId: string, generationId: number): Promise<void>;
 }
+
+const by = (settlement: CreatorSettlement) => settlement.by.slice(0, 64);
+const note = (settlement: CreatorSettlement) => (settlement.note ? settlement.note.slice(0, 255) : null);
 
 /** Deterministic: one hold per (workspace, idempotency key), so a reused key can never reserve twice. */
 export function creatorHoldId(workspaceId: number, idempotencyKey: string): string {
@@ -109,9 +120,11 @@ export class MysqlCreatorSpendLedger implements CreatorSpendLedger {
     }
   }
 
-  async commit(holdId: string, generationId: number): Promise<void> {
+  async commit(holdId: string, generationId: number | null, settlement: CreatorSettlement = REQUEST): Promise<boolean> {
     const db = await this.db();
-    await db.execute(sql`UPDATE creatorSpendHolds SET state = 'COMMITTED', generationId = ${generationId}, settledAt = CURRENT_TIMESTAMP WHERE id = ${holdId} AND state = 'HELD'`);
+    const result = await db.execute(sql`UPDATE creatorSpendHolds SET state = 'COMMITTED', generationId = COALESCE(${generationId}, generationId), settledAt = CURRENT_TIMESTAMP,
+      settledBy = ${by(settlement)}, settlementNote = ${note(settlement)} WHERE id = ${holdId} AND state = 'HELD'`);
+    return affected(result) === 1;
   }
 
   async recordUnknown(holdId: string, generationId: number): Promise<void> {
@@ -119,20 +132,22 @@ export class MysqlCreatorSpendLedger implements CreatorSpendLedger {
     await db.execute(sql`UPDATE creatorSpendHolds SET generationId = ${generationId} WHERE id = ${holdId} AND state = 'HELD'`);
   }
 
-  async release(holdId: string): Promise<void> {
+  async release(holdId: string, settlement: CreatorSettlement = REQUEST): Promise<boolean> {
     const db = await this.db();
-    await db.transaction(async tx => {
-      const claimed = await tx.execute(sql`UPDATE creatorSpendHolds SET state = 'RELEASED', settledAt = CURRENT_TIMESTAMP WHERE id = ${holdId} AND state = 'HELD'`);
-      if (affected(claimed) !== 1) return; // already settled, possibly by another instance
+    return db.transaction(async tx => {
+      const claimed = await tx.execute(sql`UPDATE creatorSpendHolds SET state = 'RELEASED', settledAt = CURRENT_TIMESTAMP,
+        settledBy = ${by(settlement)}, settlementNote = ${note(settlement)} WHERE id = ${holdId} AND state = 'HELD'`);
+      if (affected(claimed) !== 1) return false; // already settled, possibly by another instance
       const hold = rowsOf<{ workspaceId: unknown; userId: unknown; windowStart: unknown; cost: unknown }>(
         await tx.execute(sql`SELECT workspaceId, userId, windowStart, cost FROM creatorSpendHolds WHERE id = ${holdId}`),
       )[0];
-      if (!hold) return;
+      if (!hold) return false;
       const day = hold.windowStart instanceof Date ? hold.windowStart.toISOString().slice(0, 10) : String(hold.windowStart);
       const cost = Number(hold.cost);
       for (const key of ["global", `workspace:${Number(hold.workspaceId)}`, `user:${Number(hold.userId)}`]) {
         await tx.execute(sql`UPDATE creatorSpendWindows SET generations = GREATEST(generations - 1, 0), cost = GREATEST(cost - ${cost}, 0) WHERE scope = ${key} AND windowStart = ${day}`);
       }
+      return true;
     });
   }
 }

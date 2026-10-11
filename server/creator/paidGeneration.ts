@@ -78,8 +78,8 @@ export function createCreatorSpendHook(input: {
       }
       return { created: result.created };
     },
-    commit: generationId => ledger.commit(holdId, generationId).catch(() => undefined),
-    release: () => ledger.release(holdId).catch(() => undefined),
+    commit: generationId => ledger.commit(holdId, generationId).then(() => undefined, () => undefined),
+    release: () => ledger.release(holdId).then(() => undefined, () => undefined),
     markUnknown: generationId => ledger.recordUnknown(holdId, generationId).catch(() => undefined),
   };
 }

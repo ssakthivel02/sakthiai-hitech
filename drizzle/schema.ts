@@ -480,6 +480,9 @@ export const creatorSpendHolds = mysqlTable("creatorSpendHolds", {
   state: mysqlEnum("state", ["HELD", "COMMITTED", "RELEASED"]).default("HELD").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   settledAt: timestamp("settledAt"),
+  /** Who settled the hold: `request` (the submitting request), `reconciler`, or `admin:<userId>` (manual decision). */
+  settledBy: varchar("settledBy", { length: 64 }),
+  settlementNote: varchar("settlementNote", { length: 255 }),
 }, table => [
   index("creatorSpendHolds_state_createdAt_idx").on(table.state, table.createdAt),
   index("creatorSpendHolds_workspaceId_createdAt_idx").on(table.workspaceId, table.createdAt),

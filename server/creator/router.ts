@@ -17,6 +17,7 @@ import {
 } from "./orchestrator";
 import { createCreatorSpendHook, requireCreatorWorkspaceOwner, requirePaidCreatorAccess } from "./paidGeneration";
 import { listCreatorProviderStatuses } from "./providerRegistry";
+import { creatorSpendAdminRouter } from "./spendAdmin";
 import { verifyCreatorRuntimeAcceptance } from "./runtimeAcceptance";
 import { buildCreatorRuntimePreflight } from "./runtimePreflight";
 
@@ -86,6 +87,7 @@ export const creatorRouter = router({
   audio: creatorAudioRouter,
   timeline: creatorTimelineRouter,
   review: creatorReviewRouter,
+  spend: creatorSpendAdminRouter,
 
   status: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);

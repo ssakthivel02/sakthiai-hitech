@@ -19,6 +19,29 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
     } finally { await db.close(); }
   });
 
+  const migratedThrough = async (tag: string) => {
+    const db = await createTestDatabase({ migrate: false });
+    const all = migrationStatements();
+    for (const m of all.slice(0, all.findIndex(x => x.tag === tag) + 1)) for (const s of m.statements) await db.pool.promise().query(s);
+    return db;
+  };
+
+  it("a database at 0010 (before the Creator spend ledger) is NOT ready: 0011's tables are reported missing", async () => {
+    const db = await migratedThrough("0010_resumable_ingestion");
+    try {
+      const state = await probeSchemaReadiness(readColumns(db));
+      expect(state).toMatchObject({ status: "behind", missingTables: expect.arrayContaining(["creatorSpendWindows", "creatorSpendHolds"]) });
+      expect(state.missingTables).toHaveLength(2);
+    } finally { await db.close(); }
+  });
+
+  it("a database at 0011 is NOT ready: exactly the two 0012 audit columns are missing", async () => {
+    const db = await migratedThrough("0011_creator_spend_ledger");
+    try {
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: [], missingColumns: 2 });
+    } finally { await db.close(); }
+  });
+
   it("a fully migrated database is current", async () => {
     const db = await createTestDatabase();
     try {
