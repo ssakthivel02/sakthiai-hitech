@@ -234,10 +234,10 @@ export default function Creator() {
   if (!isAuthenticated) return <main className="landing"><h1>Creator requires an authenticated SakthiAI workspace.</h1><Link href="/">Return home</Link></main>;
 
   return (
-    <main className="workspace" style={{ maxWidth: 1500, margin: "0 auto", padding: 24 }}>
-      <header style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", marginBottom: 20 }}>
+    <main className="workspace creator-page" style={{ maxWidth: 1500, margin: "0 auto", padding: 24 }}>
+      <header style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", marginBottom: 20, flexWrap: "wrap" }}>
         <div><Link href="/"><Button variant="ghost" size="sm"><ArrowLeft size={16}/> Workspace</Button></Link><div className="eyebrow">SAKTHIAI CREATOR · P0</div><h2>Murugan film production workspace</h2><p>Project → references → shots → jobs → timeline → governed review → final 16:9 master.</p></div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Badge variant="outline"><ShieldCheck size={14}/> Human approval required</Badge><Badge variant="outline">{creatorStatus.data?.stage ?? "Runtime loading"}</Badge></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Badge variant="outline"><ShieldCheck size={14}/> Human approval required</Badge><Badge variant="outline" style={{ whiteSpace: "normal", overflowWrap: "anywhere", maxWidth: "100%" }}>{creatorStatus.data?.stage ?? "Runtime loading"}</Badge></div>
       </header>
 
       {user?.role === "admin" && <CreatorSpendAdminPanel />}
