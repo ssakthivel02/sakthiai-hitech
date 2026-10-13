@@ -17,7 +17,13 @@ test.describe("Creator paid generation is off by default", () => {
     expect(direct).toMatchObject({ code: "FORBIDDEN", message: "CREATOR_PAID_GENERATION_DISABLED" });
     // Admin spend endpoints are not reachable for a normal user.
     expect((await trpcQuery(page.request, "creator.spend.summary")).code).toBe("FORBIDDEN");
+    // P-G10: infrastructure probes are operator-only. A normal user (who owns a personal workspace) gets nothing from them.
+    expect((await trpcQuery(page.request, "creator.preflight", { workspaceId: ws })).code).toBe("FORBIDDEN");
+    expect((await trpcMutate(page.request, "creator.verifyRuntime", { workspaceId: ws })).code).toBe("FORBIDDEN");
 
+    await page.goto("/creator/runtime");
+    await expect(page.getByRole("heading", { name: "Creator runtime status is restricted to administrators." })).toBeVisible();
+    await expect(page.getByText("Paid generation readiness")).toHaveCount(0);
     await page.goto("/creator");
     await expect(page.getByTestId("creator-spend-admin")).toHaveCount(0);
     await page.getByRole("button", { name: /E2E Murugan/ }).click();

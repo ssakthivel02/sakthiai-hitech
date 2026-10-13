@@ -7,8 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, RefreshCw, ShieldCheck, ShieldX, FlaskConical } from "lucide-react";
 
 export default function CreatorRuntime() {
-  const { isAuthenticated, loading } = useAuth();
-  const workspaces = trpc.workspace.list.useQuery(undefined, { enabled: isAuthenticated });
+  const { user, isAuthenticated, loading } = useAuth();
+  const isAdmin = user?.role === "admin"; // operator surface: the server enforces this too
+  const workspaces = trpc.workspace.list.useQuery(undefined, { enabled: isAuthenticated && isAdmin });
   const workspaceId = workspaces.data?.[0]?.workspace.id;
   const preflight = trpc.creator.preflight.useQuery(
     { workspaceId: workspaceId! },
@@ -19,6 +20,10 @@ export default function CreatorRuntime() {
   if (loading) return <div className="loading-screen">Loading Creator runtime…</div>;
   if (!isAuthenticated) {
     return <main className="landing"><h1>Creator runtime status requires an authenticated SakthiAI workspace.</h1><Link href="/">Return home</Link></main>;
+  }
+
+  if (!isAdmin) {
+    return <main className="landing"><h1>Creator runtime status is restricted to administrators.</h1><p>Paid generation is controlled by the workspace administrator. Nothing is charged unless it is switched on and you are approved.</p><Link href="/creator">Back to Creator</Link></main>;
   }
 
   const structurallyReady = Boolean(preflight.data?.readyForPaidGeneration);

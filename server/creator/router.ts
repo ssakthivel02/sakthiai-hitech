@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
+import { NOT_ADMIN_ERR_MSG } from "@shared/const";
 import { protectedProcedure, router } from "../_core/trpc";
 import { creatorAudioRouter } from "./audioRouter";
 import { resolveApprovedConditionedFrameAsset } from "./conditionedFrameAsset";
@@ -19,6 +20,7 @@ import { createCreatorSpendHook, requireCreatorWorkspaceOwner, requirePaidCreato
 import { listCreatorProviderStatuses } from "./providerRegistry";
 import { creatorSpendAdminRouter } from "./spendAdmin";
 import { verifyCreatorRuntimeAcceptance } from "./runtimeAcceptance";
+import { createRuntimeVerifyGuard, RuntimeVerifyTimeoutError } from "./runtimeVerifyGuard";
 import { buildCreatorRuntimePreflight } from "./runtimePreflight";
 
 const imageInput = z.object({
@@ -35,6 +37,16 @@ async function requireWorkspace(userId: number, workspaceId: number) {
   if (!workspace) throw new TRPCError({ code: "FORBIDDEN", message: "Workspace access denied" });
   return workspace;
 }
+
+/** Global administrator only; unauthenticated callers still get UNAUTHORIZED (client login redirect), non-admins FORBIDDEN. */
+const operatorProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+  return next();
+});
+
+/** One shared, bounded data-plane verification for the whole process (see runtimeVerifyGuard). */
+const runtimeVerifyGuard = createRuntimeVerifyGuard({ run: () => verifyCreatorRuntimeAcceptance(), minIntervalMs: 10_000, timeoutMs: 20_000 });
+export const resetCreatorRuntimeVerifyGuardForTests = () => runtimeVerifyGuard.reset();
 
 async function requirePaidGenerationReady() {
   const acceptance = await verifyCreatorRuntimeAcceptance();
@@ -130,14 +142,28 @@ export const creatorRouter = router({
     };
   }),
 
-  preflight: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
+  // Operator surfaces (P-G10). Global infrastructure probes: every signed-in user owns a personal workspace, so workspace
+  // membership does not restrict them. They require the global administrator role AND membership of the named workspace.
+  preflight: operatorProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
     return buildCreatorRuntimePreflight();
   }),
 
-  verifyRuntime: protectedProcedure.input(workspaceInput).mutation(async ({ ctx, input }) => {
+  verifyRuntime: operatorProcedure.input(workspaceInput).mutation(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
-    return verifyCreatorRuntimeAcceptance();
+    try {
+      const run = await runtimeVerifyGuard.execute();
+      console.log(JSON.stringify({
+        event: "creator.runtime_verify", userId: ctx.user.id, workspaceId: input.workspaceId,
+        ready: run.value.readyForPaidGeneration, failedChecks: run.value.checks.filter(check => check.required && !check.pass).map(check => check.id),
+        cached: run.cached, durationMs: run.durationMs,
+      }));
+      return run.value;
+    } catch (error) {
+      console.log(JSON.stringify({ event: "creator.runtime_verify", userId: ctx.user.id, workspaceId: input.workspaceId, ready: false, error: error instanceof RuntimeVerifyTimeoutError ? "timeout" : "failed" }));
+      if (error instanceof RuntimeVerifyTimeoutError) throw new TRPCError({ code: "TIMEOUT", message: error.message });
+      throw error;
+    }
   }),
 
   submitImage: protectedProcedure
