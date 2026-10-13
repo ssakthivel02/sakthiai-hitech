@@ -80,7 +80,7 @@ File ingestion stays disabled for external beta until a real scanner runtime has
 2. Confirm the correct Render workspace with the owner before connector inspection.
 3. Confirm `autoDeploy=OFF`.
 4. Inspect configuration presence only; never reveal secret values.
-5. Confirm Node 22, `pnpm@10.4.1`, `pnpm start`, `DATABASE_EXPECTED_NAME=sakthiai_preview`, verified DB CA configuration, OIDC, LLM and storage prerequisites.
+5. Confirm Node 22, `pnpm@10.4.1` (build only), start command `exec node dist/index.js`, `DATABASE_EXPECTED_NAME=sakthiai_preview`, verified DB CA configuration, OIDC, LLM and storage prerequisites.
 6. Confirm no duplicate preview service was created.
 
 STOP if the deployed service identity, ownership, auto-deploy state or secret-management path is uncertain.

@@ -18,6 +18,8 @@ requireText(render, 'key: SAKTHIAI_DEPLOY_ENV\n        value: preview', 'Render 
 requireText(server, 'repository: process.env.RENDER_GIT_REPO_SLUG?.trim() || "ssakthivel02/sakthiai-hitech"', 'releasez repository identity missing');
 requireText(render, 'healthCheckPath: /healthz', 'Render platform health check must target /healthz; /readyz remains the explicit dependency-qualification endpoint');
 requireText(render, 'autoDeployTrigger: off', 'Preview auto-deploy must remain disabled');
+requireText(render, 'startCommand: exec node dist/index.js', 'Render must exec the built entry point: SIGTERM sent to a pnpm or non-exec shell wrapper bypasses the graceful shutdown handler');
+if (/startCommand:.*\b(pnpm|npm|yarn|npx)\b/.test(render)) fail('Render startCommand must not run through a package-manager wrapper');
 if (contract.deployment.productionApproval !== false) fail('Repository contract must not imply production approval');
 if (contract.claimBoundary.repositoryValidationIsDeploymentProof !== false) fail('Repository validation must not be deployment proof');
 if (contract.release.exactCommitRequiredForAcceptance !== true) fail('Exact deployed commit must be required for acceptance');

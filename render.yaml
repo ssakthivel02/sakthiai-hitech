@@ -5,7 +5,7 @@ services:
     plan: free
     autoDeployTrigger: off
     buildCommand: corepack enable && corepack prepare pnpm@10.4.1 --activate && pnpm install --frozen-lockfile && pnpm build
-    startCommand: pnpm start
+    startCommand: exec node dist/index.js
     healthCheckPath: /healthz
     envVars:
       - key: NODE_ENV
