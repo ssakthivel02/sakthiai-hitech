@@ -2,32 +2,59 @@ name: SakthiAI Preview DB Setup
 
 on:
   workflow_dispatch:
+    inputs:
+      recovery_point:
+        description: "Owner-attested Aiven backup time for hitech-preview-mysql taken/confirmed before this run, UTC with Z (e.g. 2026-10-05T01:10:00Z). Recorded as OWNER_ATTESTED, not provider-verified."
+        required: true
+        type: string
+      mode:
+        description: "inspect = read-only preflight (secrets present, target name, verified TLS, recovery point, journal/hash/snapshot); writes nothing. migrate = apply pending migrations and backfill."
+        required: true
+        type: choice
+        options: [inspect, migrate]
+        default: inspect
 
 permissions:
   contents: read
+
+# One writer at a time: a second dispatch waits instead of racing the first between its pre guard and db:push.
+concurrency:
+  group: sakthiai-preview-db
+  cancel-in-progress: false
 
 jobs:
   migrate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Credentials live ONLY as environment secrets. inspect -> SELECT-only principal; migrate -> least-privilege
+    # migrator behind required reviewers. Both environments restrict deployment branches. No repository-level DB
+    # secret is read, so a workflow without this environment mapping (e.g. the legacy main copy) gets none.
+    environment: ${{ inputs.mode == 'migrate' && 'sakthiai-preview-db-migrate' || 'sakthiai-preview-db-inspect' }}
     env:
-      DATABASE_URL: ${{ secrets.SAKTHIAI_PREVIEW_DATABASE_URL }}
+      DATABASE_URL: ${{ secrets.SAKTHIAI_PREVIEW_DB_URL }}
       DATABASE_EXPECTED_NAME: sakthiai_preview
-      DATABASE_CA_CERT_B64: ${{ secrets.AIVEN_MYSQL_CA_CERT_B64 }}
+      DATABASE_CA_CERT_B64: ${{ secrets.SAKTHIAI_PREVIEW_DB_CA_B64 }}
+      PREVIEW_DB_ROLE: ${{ inputs.mode }}
+      ENVIRONMENT_DB_ROLE: ${{ vars.SAKTHIAI_PREVIEW_DB_ROLE }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Require preview database secrets
+      - name: Require environment-scoped preview database configuration
         shell: bash
         run: |
           set -euo pipefail
+          case "${PREVIEW_DB_ROLE:-}" in inspect|migrate) ;; *) echo "mode must be inspect or migrate."; exit 1 ;; esac
+          if [ "${ENVIRONMENT_DB_ROLE:-}" != "${PREVIEW_DB_ROLE}" ]; then
+            echo "Environment variable SAKTHIAI_PREVIEW_DB_ROLE ('${ENVIRONMENT_DB_ROLE:-<unset>}') does not match mode '${PREVIEW_DB_ROLE}'; refusing."
+            exit 1
+          fi
           if [ -z "${DATABASE_URL:-}" ]; then
-            echo "SAKTHIAI_PREVIEW_DATABASE_URL is not configured."
+            echo "Environment secret SAKTHIAI_PREVIEW_DB_URL is not configured for the ${PREVIEW_DB_ROLE} environment."
             exit 1
           fi
           if [ -z "${DATABASE_CA_CERT_B64:-}" ]; then
-            echo "AIVEN_MYSQL_CA_CERT_B64 is not configured."
+            echo "Environment secret SAKTHIAI_PREVIEW_DB_CA_B64 is not configured for the ${PREVIEW_DB_ROLE} environment."
             exit 1
           fi
 
@@ -57,13 +84,62 @@ jobs:
           corepack prepare pnpm@10.4.1 --activate
 
       - name: Install dependencies
+        env:
+          DATABASE_URL: ""
+          DATABASE_CA_CERT_B64: ""
         run: pnpm install --frozen-lockfile
 
+      - name: Require a valid owner-attested pre-migration recovery point
+        env:
+          RECOVERY_POINT: ${{ inputs.recovery_point }}
+        run: node scripts/preview-migration-guard.mjs attest
+
+      - name: Database principal privileges match the mode (inspect = SELECT only; read-only, verified TLS)
+        run: node scripts/preview-migration-guard.mjs grants
+
       - name: Typecheck
+        env:
+          DATABASE_URL: ""
+          DATABASE_CA_CERT_B64: ""
         run: pnpm check
 
+      - name: Pre-migration journal, hash, recovery-point and snapshot guard (read-only, verified TLS)
+        env:
+          RECOVERY_POINT: ${{ inputs.recovery_point }}
+        run: node scripts/preview-migration-guard.mjs pre
+
       - name: Apply preview schema
+        if: inputs.mode == 'migrate'
         run: pnpm db:push
+
+      - name: Post-migration journal and data-preservation guard (read-only)
+        if: inputs.mode == 'migrate'
+        run: node scripts/preview-migration-guard.mjs post
+
+      - name: Migrator rerun is a no-op
+        if: inputs.mode == 'migrate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm db:push
+          node scripts/preview-migration-guard.mjs rerun
+
+      - name: Search-text backfill is complete and idempotent
+        if: inputs.mode == 'migrate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm db:backfill-search-text | tee /tmp/backfill-1.txt
+          pnpm db:backfill-search-text | tee /tmp/backfill-2.txt
+          grep -q 'BACKFILL_DONE updated=0' /tmp/backfill-2.txt
+
+      - name: Upload preview migration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-migration-evidence
+          path: reports/staging/preview-migration-*.json
+          if-no-files-found: warn
 
       - name: Verify database connectivity over trusted TLS
         shell: bash
@@ -91,4 +167,7 @@ jobs:
           NODE
 
       - name: Unit and regression tests
+        env:
+          DATABASE_URL: ""
+          DATABASE_CA_CERT_B64: ""
         run: pnpm test

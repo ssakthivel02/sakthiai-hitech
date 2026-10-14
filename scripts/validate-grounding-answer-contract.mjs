@@ -18,11 +18,13 @@ if (contract.claims?.productionReady !== false) fail("repository contract must n
 
 const retrievalIndex = source.indexOf("const matches = await searchChunks");
 const noEvidenceIndex = source.indexOf("if (!matches.length)");
-const llmIndex = source.indexOf("await invokeLLM");
+const llmIndex = source.indexOf("await getProviderGateway().invoke(");
 
 if (retrievalIndex < 0) fail("chat path must retrieve evidence before generation");
 if (noEvidenceIndex < 0) fail("chat path must contain an explicit no-evidence branch");
-if (llmIndex < 0) fail("LLM invocation anchor missing");
+if (llmIndex < 0) fail("Provider Gateway invocation anchor missing (chat must call await getProviderGateway().invoke)");
+if (requirements.modelCallsMustUseProviderGateway !== true) fail("contract must require model calls to go through the Provider Gateway");
+if (/from\s+["']\.\/_core\/llm["']/.test(source) || /\binvokeLLM\b/.test(source)) fail("routers.ts must not import or call a provider client directly");
 if (!(retrievalIndex < noEvidenceIndex && noEvidenceIndex < llmIndex)) {
   fail("no-evidence branch must execute after retrieval and before LLM invocation");
 }
@@ -41,10 +43,35 @@ if (!noEvidenceWindow.includes('grounding: "INSUFFICIENT_EVIDENCE"')) {
   fail("no-evidence response must expose INSUFFICIENT_EVIDENCE grounding state");
 }
 
-if (!source.includes("Use only the supplied evidence")) fail("evidence-only system instruction is required");
-if (!source.includes("If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE")) {
+// Model-failure truthfulness: a failed/empty model call must never be labelled grounded.
+if (requirements.modelFailureMustNotClaimGrounding !== true) fail("contract must require truthful model-failure state");
+if (requirements.modelFailureState !== "MODEL_UNAVAILABLE") fail("model-failure state must remain MODEL_UNAVAILABLE");
+if (!source.includes("resolveGroundedOutcome({")) fail("chat path must derive grounding from resolveGroundedOutcome");
+if (/grounding:\s*"GROUNDED_EVIDENCE"/.test(source)) {
+  fail("routers.ts must not hard-code grounding: GROUNDED_EVIDENCE (a failed model call would be mislabelled)");
+}
+const groundingPath = process.argv[4] || "server/grounding.ts";
+const groundingSource = fs.readFileSync(groundingPath, "utf8");
+if (!groundingSource.includes('"MODEL_UNAVAILABLE"')) fail("grounding module must define the MODEL_UNAVAILABLE state");
+for (const testFile of requirements.behaviouralTests || []) {
+  if (!fs.existsSync(testFile)) fail(`required behavioural test is missing: ${testFile}`);
+}
+if (!(requirements.behaviouralTests || []).length) fail("contract must list the behavioural regression tests");
+
+// The synchronous and durable chat paths share this prompt. Verify that chat.send
+// imports and passes it as the system message, then check the actual prompt source.
+if (!/import\s*\{[^}]*\bgroundedSystemPrompt\b[^}]*\}\s*from\s*["']\.\/chat\/grounded["']/.test(source)) {
+  fail("chat path must import the shared groundedSystemPrompt");
+}
+if (!/role:\s*["']system["']\s*,\s*content:\s*groundedSystemPrompt\(input\.language,\s*matches\)/.test(source)) {
+  fail("chat path must pass the shared evidence prompt as its system message");
+}
+const promptPath = process.argv[5] || "server/chat/grounded.ts";
+const promptSource = fs.readFileSync(promptPath, "utf8");
+if (!promptSource.includes("Use only the supplied evidence")) fail("evidence-only system instruction is required");
+if (!promptSource.includes("If it does not support the answer, respond exactly INSUFFICIENT_EVIDENCE")) {
   fail("system instruction must require the exact insufficient-evidence sentinel");
 }
-if (!source.includes("Do not invent citations")) fail("system instruction must explicitly forbid invented citations");
+if (!promptSource.includes("Do not invent citations")) fail("system instruction must explicitly forbid invented citations");
 
 console.log("GROUNDING_CONTRACT_PASS");

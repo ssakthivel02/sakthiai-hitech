@@ -30,8 +30,33 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Secret hygiene (tracked content)
+        run: node scripts/validate-secret-hygiene.mjs
+
+      - name: Production dependency advisories (no critical/high)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports/audit
+          pnpm audit --prod --json > reports/audit/audit-prod.json || true
+          node -e "const r=require('./reports/audit/audit-prod.json');const v=r.metadata&&r.metadata.vulnerabilities;if(!v){console.error('audit report unreadable');process.exit(1)}console.log('production advisories',JSON.stringify(v));if(v.critical||v.high){console.error('critical/high production advisories present');process.exit(1)}"
+
       - name: Governed intelligence integrity
         run: pnpm intelligence:check
+
+      - name: Deterministic capability and intelligence evals (contract harness, no network)
+        run: pnpm evals
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: |
+            reports/evals/eval-report.json
+            reports/evals/golden-benchmark.json
+            reports/evals/golden-benchmark.md
+          if-no-files-found: warn
 
       - name: Video pre-generation quality contract
         shell: bash
@@ -90,61 +115,216 @@ jobs:
           echo "Uncleared release-readiness fixture correctly rejected."
 
       - name: Production source neutrality guard
-        shell: bash
-        run: |
-          set -euo pipefail
-          files=(vite.config.ts render.yaml server/_core/index.ts server/_core/llm.ts server/_core/sdk.ts server/_core/oauth.ts server/storage.ts server/_core/storageProxy.ts client/src/const.ts client/src/_core/hooks/useAuth.ts)
-          if grep -En -i "forge\.manus\.im|vite-plugin-manus-runtime|manuspre\.computer|manus\.computer|manus-asia\.computer|manuscomputer\.ai|manusvm\.computer|WebDevAuthPublicService|/app-auth|OAUTH_SERVER_URL|types/manusTypes" "${files[@]}"; then
-            echo "Forbidden Manus/Forge/WebDev coupling detected in production-critical SakthiAI source."
-            exit 1
-          fi
+        run: node scripts/validate-source-neutrality.mjs
 
       - name: Typecheck
         run: pnpm check
 
       - name: Tests
-        run: pnpm test
+        run: pnpm test --reporter=default --reporter=json --outputFile=reports/unit/vitest-report.json
 
       - name: Build
         run: pnpm build
 
       - name: Deployable artifact neutrality guard
-        shell: bash
+        run: node scripts/validate-source-neutrality.mjs --dist
+
+      - name: Built-server behavior smoke (healthz, SPA shell, fail-closed readyz)
+        run: node scripts/smoke-built-server.mjs
+
+      - name: Upload validate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-evidence
+          path: |
+            reports/unit/vitest-report.json
+            reports/audit/audit-prod.json
+            reports/release/smoke.json
+            reports/evals/eval-report.json
+            reports/evals/golden-benchmark.json
+          if-no-files-found: warn
+
+  mysql-integration:
+    # Real MySQL 8 qualification: migrations vs schema, session revocation, tenancy, upload/scanner protocol,
+    # storage ownership, retrieval, provider policy/budget/breaker persistence, readiness. Disposable service
+    # container only; never a hosted database.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-root-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
         run: |
-          set -euo pipefail
-          if grep -REn -i "forge\.manus\.im|vite-plugin-manus-runtime|manuspre\.computer|manus\.computer|manus-asia\.computer|manuscomputer\.ai|manusvm\.computer|BUILT_IN_FORGE|WebDevAuthPublicService|/app-auth|OAUTH_SERVER_URL|/manus-storage/|/__manus__/" dist; then
-            echo "Forbidden Manus/Forge/WebDev marker found in deployable SakthiAI dist output."
-            exit 1
-          fi
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
 
-      - name: Built-server behavior smoke
-        shell: bash
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Real-MySQL integration tests
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+        run: pnpm test:mysql
+
+      - name: Migration manifest (baseline 0000-0004 -> latest, rerun no-op, data preservation, fresh-schema parity, backfill)
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+        run: pnpm staging:migration-manifest
+
+      - name: Upload migration manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-manifest
+          path: reports/staging/runtime-migration-manifest.json
+          if-no-files-found: warn
+
+      - name: Upload MySQL integration report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-integration-report
+          path: reports/mysql/vitest-report.json
+          if-no-files-found: warn
+
+      - name: Upload recovery rehearsal report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-report
+          path: reports/recovery/recovery-report.json
+          if-no-files-found: warn
+
+  e2e:
+    # Browser-level production-shaped qualification: the real BUILT server + client against a disposable MySQL 8 service
+    # container, with in-process fakes for OIDC, the local LLM, an "external" LLM (must never be contacted), S3 and clamd.
+    # No paid API, hosted database or deployment is ever contacted.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-root-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
         run: |
-          set -euo pipefail
-          PORT=3211 NODE_ENV=production node dist/index.js >/tmp/sakthiai-server.log 2>&1 &
-          pid=$!
-          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
 
-          healthy=false
-          for attempt in $(seq 1 20); do
-            if curl --fail --silent --show-error http://127.0.0.1:3211/healthz >/tmp/sakthiai-health.json; then
-              healthy=true
-              break
-            fi
-            sleep 1
-          done
-          if [ "$healthy" != true ]; then
-            cat /tmp/sakthiai-server.log
-            exit 1
-          fi
-          cat /tmp/sakthiai-health.json
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-          curl --fail --silent --show-error http://127.0.0.1:3211/ >/tmp/sakthiai-root.html
-          test -s /tmp/sakthiai-root.html
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
 
-          ready_status=$(curl --silent --output /tmp/sakthiai-ready.json --write-out '%{http_code}' http://127.0.0.1:3211/readyz)
-          cat /tmp/sakthiai-ready.json
-          if [ "$ready_status" != "503" ]; then
-            echo "Expected /readyz to fail closed with 503 when required preview services are absent; got $ready_status"
-            exit 1
-          fi
+      - name: Playwright E2E
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: reports/e2e
+          if-no-files-found: warn
+
+  release-evidence:
+    # Consolidates every gate into ONE machine-readable manifest bound to this exact commit. It runs only when validate,
+    # mysql-integration and e2e all succeeded (default `needs` semantics). It cannot say RUNTIME_VERIFIED: nothing here
+    # observes a deployed runtime. Render/Aiven are never contacted.
+    needs: [validate, mysql-integration, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (for the deployable-output neutrality scan)
+        run: pnpm build
+
+      - name: Download validate evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: validate-evidence
+          path: reports
+
+      - name: Download MySQL integration report
+        uses: actions/download-artifact@v4
+        with:
+          name: mysql-integration-report
+          path: reports/mysql
+
+      - name: Download recovery rehearsal report
+        uses: actions/download-artifact@v4
+        with:
+          name: recovery-report
+          path: reports/recovery
+
+      - name: Download Playwright report
+        uses: actions/download-artifact@v4
+        with:
+          name: playwright-report
+          path: reports/e2e
+
+      - name: Generate and enforce release evidence manifest
+        env:
+          RELEASE_UPSTREAM_JOBS_SUCCEEDED: validate,mysql-integration,e2e
+        run: pnpm release:evidence --require-pass --require-ci
+
+      - name: Upload release evidence manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence
+          path: reports/release/release-evidence.json
+          if-no-files-found: warn

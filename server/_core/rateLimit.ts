@@ -33,11 +33,27 @@ export const AUTHENTICATED_RATE_POLICIES = {
     maxRequests: 12,
     windowMs: 60_000,
   },
+  /** Paid Creator submissions: abuse guard only. The spend control is the database ledger (creatorSpendWindows). */
+  creatorSubmit: {
+    name: "creator-submit",
+    maxRequests: 3,
+    windowMs: 60_000,
+  },
+  /** Operations on existing provider jobs (poll / retry / cancel). */
+  creatorProviderJob: {
+    name: "creator-provider-job",
+    maxRequests: 30,
+    windowMs: 60_000,
+  },
 } as const satisfies Record<string, RateLimitPolicy>;
 
 export function selectAuthenticatedRatePolicy(path: string): RateLimitPolicy {
   if (path === "chat.send") return AUTHENTICATED_RATE_POLICIES.chatSend;
   if (path === "files.upload") return AUTHENTICATED_RATE_POLICIES.fileUpload;
+  if (path === "creator.submitImage" || path === "creator.submitVideo") return AUTHENTICATED_RATE_POLICIES.creatorSubmit;
+  if (path === "creator.pollGeneration" || path === "creator.retryGeneration" || path === "creator.cancelGeneration") {
+    return AUTHENTICATED_RATE_POLICIES.creatorProviderJob;
+  }
   return AUTHENTICATED_RATE_POLICIES.default;
 }
 
