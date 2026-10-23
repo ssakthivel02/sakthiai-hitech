@@ -649,15 +649,17 @@
       ],
       "tests": [
         "server/artifacts/artifacts.test.ts",
-        "server/artifacts/artifacts.mysql.test.ts"
+        "server/artifacts/artifacts.mysql.test.ts",
+        "e2e/specs/artifacts.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
-        "pnpm test:mysql"
+        "pnpm test:mysql",
+        "pnpm test:e2e"
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Only chat answers can be saved (kind chat_answer); no manual create, edit, delete or versioning, and no file-attachment of artifacts. Real-SQL tests ran on a scratch MariaDB through tRPC callers; no browser pass, no CI run and no deployed-runtime verification. Migration 0013 has not been applied to any real database."
+      "knownLimitation": "Only chat answers can be saved (kind chat_answer); no manual create, edit, delete or versioning, and no file-attachment of artifacts. Real-SQL tests and a browser-less API e2e (built server, fake OIDC/LLM/S3/clamd, scratch MariaDB) passed locally; no browser pass, no CI run and no deployed-runtime verification. Migration 0013 has not been applied to any real database."
     },
     {
       "capability": "workspace_search",
@@ -672,11 +674,13 @@
       ],
       "tests": [
         "server/artifacts/artifacts.test.ts",
-        "server/artifacts/artifacts.mysql.test.ts"
+        "server/artifacts/artifacts.mysql.test.ts",
+        "e2e/specs/artifacts.spec.ts"
       ],
       "workflowGate": [
         "pnpm test",
-        "pnpm test:mysql"
+        "pnpm test:mysql",
+        "pnpm test:e2e"
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
