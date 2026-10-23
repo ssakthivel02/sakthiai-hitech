@@ -92,6 +92,13 @@
       "when": 1790640000000,
       "tag": "0012_creator_spend_settlement_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "5",
+      "when": 1790726400000,
+      "tag": "0013_workspace_artifacts",
+      "breakpoints": true
     }
   ]
 }

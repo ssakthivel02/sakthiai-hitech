@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
+  Archive,
   BrainCircuit,
   FileText,
   FolderKanban,
@@ -19,6 +20,9 @@ import {
 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import betaCapabilities from "../../../release/beta-capability-contract.json";
+
+/** Default artifact title: the question that produced the answer. The server sanitises and bounds it again. */
+const titleFromQuestion = (question: string) => Array.from(question.trim().replace(/\s+/g, " ")).slice(0, 120).join("");
 
 export default function Home() {
   const { user, loading, isAuthenticated, logout } = useAuth();
@@ -31,6 +35,10 @@ export default function Home() {
   const [citations, setCitations] = useState<
     Array<{ filename: string; documentId: number; page?: number; excerpt: string }>
   >([]);
+  const [grounding, setGrounding] = useState<string>();
+  const [answerMessageId, setAnswerMessageId] = useState<number>();
+  const [answeredQuestion, setAnsweredQuestion] = useState("");
+  const [saveProjectId, setSaveProjectId] = useState("");
   const [projectName, setProjectName] = useState("");
   const [file, setFile] = useState<File | null>(null);
 
@@ -76,11 +84,19 @@ export default function Home() {
       files.refetch();
     },
   });
+  const utils = trpc.useUtils();
+  const saveArtifact = trpc.artifacts.saveFromMessage.useMutation({
+    onSuccess: () => utils.artifacts.list.invalidate(),
+  });
   const send = trpc.chat.send.useMutation({
-    onSuccess: result => {
+    onSuccess: (result, variables) => {
       setConversationId(result.conversationId);
       setAnswer(result.answer);
       setCitations(result.citations);
+      setGrounding(result.grounding);
+      setAnswerMessageId(result.assistantMessageId);
+      setAnsweredQuestion(variables.message);
+      saveArtifact.reset();
     },
   });
   const canUse = Boolean(activeWorkspace);
@@ -140,6 +156,7 @@ export default function Home() {
           <a className="active" href="#chat"><MessageCircle size={17}/> Chat</a>
           <a href="#projects"><FolderKanban size={17}/> Projects <Badge>{projects.data?.length ?? 0}</Badge></a>
           <a href="#files"><FileText size={17}/> Files <Badge>{files.data?.length ?? 0}</Badge></a>
+          <Link href="/artifacts"><Archive size={17}/> Artifacts</Link>
           <Link href="/intelligence"><BrainCircuit size={17}/> Intelligence</Link>
         </nav>
         <div className="identity">
@@ -211,6 +228,47 @@ export default function Home() {
                           ))}
                         </div>
                       )}
+                      {grounding === "GROUNDED_EVIDENCE" && answerMessageId && conversationId ? (
+                        <div className="mt-4 flex flex-wrap items-center gap-2" role="group" aria-label="Save this answer">
+                          <label htmlFor="save-artifact-project" className="sr-only">Save to project</label>
+                          <select
+                            id="save-artifact-project"
+                            value={saveProjectId}
+                            onChange={event => setSaveProjectId(event.target.value)}
+                            disabled={saveArtifact.isPending || Boolean(saveArtifact.data)}
+                            className="h-9 rounded-md border bg-background px-2 text-sm"
+                          >
+                            <option value="">No project</option>
+                            {projects.data?.map(project => (
+                              <option key={project.id} value={project.id}>{project.name}</option>
+                            ))}
+                          </select>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={!canUse || saveArtifact.isPending || Boolean(saveArtifact.data)}
+                            onClick={() =>
+                              saveArtifact.mutate({
+                                workspaceId: activeWorkspace!,
+                                conversationId,
+                                messageId: answerMessageId,
+                                projectId: saveProjectId ? Number(saveProjectId) : undefined,
+                                title: titleFromQuestion(answeredQuestion) || undefined,
+                              })
+                            }
+                          >
+                            <Archive size={14}/> {saveArtifact.isPending ? "Saving…" : saveArtifact.data ? "Saved" : "Save as artifact"}
+                          </Button>
+                          {saveArtifact.data ? (
+                            <span className="text-sm" role="status">
+                              {saveArtifact.data.created ? "Saved to Artifacts." : "Already saved."}{" "}
+                              <Link href={`/artifacts/${saveArtifact.data.artifact.id}`} className="underline underline-offset-2">Open artifact</Link>
+                            </span>
+                          ) : null}
+                          {saveArtifact.isError ? <span className="text-sm text-destructive" role="alert">{saveArtifact.error.message}</span> : null}
+                        </div>
+                      ) : null}
                     </>
                   ) : (
                     <div className="empty-state">
