@@ -264,6 +264,100 @@ describe.skipIf(skipMysqlSuite())("workspace artifacts + universal search on rea
     });
   });
 
+  describe("lifecycle: rename, move, delete", () => {
+    const grounded = async (user: any, question: string, projectId?: number, title?: string) => {
+      stubGateway("The Murugan temple opens at 6am. [1]");
+      const c = callerFor(user);
+      const send = await c.chat.send({ workspaceId: wsA, message: question });
+      expect(send.grounding).toBe("GROUNDED_EVIDENCE");
+      const saved = await c.artifacts.saveFromMessage({ workspaceId: wsA, conversationId: send.conversationId, messageId: send.assistantMessageId!, projectId, title });
+      return { artifact: saved.artifact, conversationId: send.conversationId, messageId: send.assistantMessageId! };
+    };
+    const snapshot = async (id: number) => (await rows<{ content: string; citationsJson: string; contentHash: string; sourceMessageId: number; createdByUserId: number }>(sql`SELECT content, citationsJson, contentHash, sourceMessageId, createdByUserId FROM artifacts WHERE id = ${id}`))[0];
+
+    it("the creator renames: title is sanitized, search follows the new title, evidence/content/provenance are untouched", async () => {
+      const a = callerFor(userA);
+      const made = await grounded(userA, "Murugan temple opens in the morning", undefined, "Obsolete heading");
+      const before = await snapshot(made.artifact.id);
+      const renamed = await a.artifacts.update({ workspaceId: wsA, artifactId: made.artifact.id, title: `  Zanzibar${RLO} lifecycle\u0000 title  ` });
+      expect(renamed.title).toBe("Zanzibar lifecycle title");
+      expect(renamed.content).toBe(made.artifact.content);
+      expect(renamed.citations).toEqual(made.artifact.citations);
+      expect(await snapshot(made.artifact.id)).toEqual(before);
+      const found = await a.search.workspace({ workspaceId: wsA, query: "zanzibar" });
+      expect(found.artifacts.map(x => x.id)).toEqual([made.artifact.id]);
+      expect((await a.search.workspace({ workspaceId: wsA, query: "obsolete" })).artifacts.map(x => x.id)).not.toContain(made.artifact.id);
+      await expect(a.artifacts.update({ workspaceId: wsA, artifactId: made.artifact.id, title: `${RLO}\u200b  ` })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      await expect(a.artifacts.update({ workspaceId: wsA, artifactId: made.artifact.id })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect((await a.artifacts.get({ workspaceId: wsA, artifactId: made.artifact.id })).title).toBe("Zanzibar lifecycle title");
+    });
+
+    it("moves between projects and out of a project; a project from another tenant (or a missing one) is refused", async () => {
+      const a = callerFor(userA);
+      const made = await grounded(userA, "Murugan temple opens move test", shared.projectId);
+      expect((await a.artifacts.update({ workspaceId: wsA, artifactId: made.artifact.id, projectId: shared.otherProjectId })).projectId).toBe(shared.otherProjectId);
+      expect((await a.artifacts.list({ workspaceId: wsA, projectId: shared.otherProjectId })).map(x => x.id)).toContain(made.artifact.id);
+      expect((await a.artifacts.list({ workspaceId: wsA, projectId: shared.projectId })).map(x => x.id)).not.toContain(made.artifact.id);
+      expect((await a.artifacts.update({ workspaceId: wsA, artifactId: made.artifact.id, projectId: null })).projectId).toBeNull();
+      await expect(a.artifacts.update({ workspaceId: wsA, artifactId: made.artifact.id, projectId: shared.bProjectId })).rejects.toMatchObject({ code: "FORBIDDEN", message: "Project access denied" });
+      await expect(a.artifacts.update({ workspaceId: wsA, artifactId: made.artifact.id, projectId: 987654 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect((await a.artifacts.get({ workspaceId: wsA, artifactId: made.artifact.id })).projectId).toBeNull();
+    });
+
+    it("only the saver or a workspace owner may change an artifact: a plain member cannot touch another member's, the owner can", async () => {
+      const mine = await grounded(userA, "Murugan temple opens owner artifact");
+      const hers = await grounded(userC, "Murugan temple opens member artifact");
+      const c = callerFor(userC); const a = callerFor(userA);
+      // C is a plain member: can read A's artifact (workspace-shared) but not change or delete it
+      expect((await c.artifacts.get({ workspaceId: wsA, artifactId: mine.artifact.id })).id).toBe(mine.artifact.id);
+      await expect(c.artifacts.update({ workspaceId: wsA, artifactId: mine.artifact.id, title: "Hijacked" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(c.artifacts.update({ workspaceId: wsA, artifactId: mine.artifact.id, projectId: shared.projectId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(c.artifacts.delete({ workspaceId: wsA, artifactId: mine.artifact.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect((await a.artifacts.get({ workspaceId: wsA, artifactId: mine.artifact.id })).title).not.toBe("Hijacked");
+      // C can manage her own
+      expect((await c.artifacts.update({ workspaceId: wsA, artifactId: hers.artifact.id, title: "Chitra's note" })).title).toBe("Chitra's note");
+      // A is the workspace owner: can rename and delete C's
+      expect((await a.artifacts.update({ workspaceId: wsA, artifactId: hers.artifact.id, title: "Owner tidy-up" })).title).toBe("Owner tidy-up");
+      expect(await a.artifacts.delete({ workspaceId: wsA, artifactId: hers.artifact.id })).toEqual({ deleted: true });
+    });
+
+    it("another tenant cannot rename, move or delete: forbidden against the real workspace, not-found against its own; the row is untouched", async () => {
+      const made = await grounded(userA, "Murugan temple opens tenant test", undefined, "Tenant guarded");
+      const before = await snapshot(made.artifact.id);
+      const b = callerFor(userB);
+      for (const call of [
+        () => b.artifacts.update({ workspaceId: wsA, artifactId: made.artifact.id, title: "pwned" }),
+        () => b.artifacts.delete({ workspaceId: wsA, artifactId: made.artifact.id }),
+      ]) await expect(call()).rejects.toMatchObject({ code: "FORBIDDEN", message: "Workspace access denied" });
+      for (const call of [
+        () => b.artifacts.update({ workspaceId: wsB, artifactId: made.artifact.id, title: "pwned" }),
+        () => b.artifacts.update({ workspaceId: wsB, artifactId: made.artifact.id, projectId: shared.bProjectId }),
+        () => b.artifacts.delete({ workspaceId: wsB, artifactId: made.artifact.id }),
+      ]) await expect(call()).rejects.toMatchObject({ code: "NOT_FOUND", message: "Artifact not found" });
+      expect(await snapshot(made.artifact.id)).toEqual(before);
+      expect((await callerFor(userA).artifacts.get({ workspaceId: wsA, artifactId: made.artifact.id })).title).toBe("Tenant guarded");
+    });
+
+    it("delete removes only the artifact: gone from get/list/search, second delete is not-found, chat and files remain, and the answer can be saved again", async () => {
+      const a = callerFor(userA);
+      const made = await grounded(userA, "Murugan temple opens delete test", shared.projectId, "Quokkaterminal entry");
+      expect((await a.search.workspace({ workspaceId: wsA, query: "quokkaterminal" })).artifacts.map(x => x.id)).toEqual([made.artifact.id]);
+      const docsBefore = await rows<{ n: number }>(sql`SELECT COUNT(*) n FROM documents WHERE workspaceId = ${wsA}`);
+
+      expect(await a.artifacts.delete({ workspaceId: wsA, artifactId: made.artifact.id })).toEqual({ deleted: true });
+      await expect(a.artifacts.get({ workspaceId: wsA, artifactId: made.artifact.id })).rejects.toMatchObject({ code: "NOT_FOUND" });
+      expect((await a.artifacts.list({ workspaceId: wsA })).map(x => x.id)).not.toContain(made.artifact.id);
+      expect((await a.search.workspace({ workspaceId: wsA, query: "quokkaterminal" })).artifacts).toEqual([]);
+      await expect(a.artifacts.delete({ workspaceId: wsA, artifactId: made.artifact.id })).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+      expect(Number((await rows<{ n: number }>(sql`SELECT COUNT(*) n FROM messages WHERE id = ${made.messageId}`))[0].n)).toBe(1);
+      expect(Number((await rows<{ n: number }>(sql`SELECT COUNT(*) n FROM documents WHERE workspaceId = ${wsA}`))[0].n)).toBe(Number(docsBefore[0].n));
+      const again = await a.artifacts.saveFromMessage({ workspaceId: wsA, conversationId: made.conversationId, messageId: made.messageId });
+      expect(again.created).toBe(true);
+      expect(again.artifact.id).not.toBe(made.artifact.id);
+    });
+  });
+
   describe("search behaviour on real SQL", () => {
     const seed = async (workspaceId: number, title: string, content: string) => {
       await database.db.insert(m.schema.artifacts).values({ workspaceId, createdByUserId: userA.id, kind: "chat_answer", title, language: "en", content, contentHash: "0".repeat(64), searchText: searchTextFor(`${title}\n${content}`) });

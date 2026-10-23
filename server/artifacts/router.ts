@@ -1,9 +1,9 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { getDb, getWorkspaceForUser, searchChunks } from "../db";
+import { getDb, getWorkspaceForUser, getWorkspaceRole, searchChunks } from "../db";
 import { isLowInformationQuery } from "../retrieval";
-import { ArtifactError, createArtifactFromMessage, getArtifact, listArtifacts, searchArtifacts, type ArtifactErrorCode } from "./store";
+import { ArtifactError, createArtifactFromMessage, deleteArtifact, getArtifact, listArtifacts, searchArtifacts, updateArtifact, type ArtifactErrorCode } from "./store";
 import { groupDocumentHits } from "./workspaceSearch";
 
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -19,7 +19,9 @@ async function requireDb() {
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
   return db;
 }
-const errorCode = { CONVERSATION_DENIED: "FORBIDDEN", PROJECT_DENIED: "FORBIDDEN", MESSAGE_NOT_FOUND: "NOT_FOUND", NOT_FOUND: "NOT_FOUND", NOT_SAVEABLE: "PRECONDITION_FAILED", TOO_LARGE: "PAYLOAD_TOO_LARGE" } as const satisfies Record<ArtifactErrorCode, TRPCError["code"]>;
+const errorCode = { CONVERSATION_DENIED: "FORBIDDEN", PROJECT_DENIED: "FORBIDDEN", MESSAGE_NOT_FOUND: "NOT_FOUND", NOT_FOUND: "NOT_FOUND", NOT_SAVEABLE: "PRECONDITION_FAILED", TOO_LARGE: "PAYLOAD_TOO_LARGE", MODIFY_DENIED: "FORBIDDEN", INVALID: "BAD_REQUEST" } as const satisfies Record<ArtifactErrorCode, TRPCError["code"]>;
+/** Membership was already proven by requireWorkspace; the role decides whether the caller may change artifacts saved by others. */
+async function actorFor(userId: number, workspaceId: number) { return { userId, isWorkspaceOwner: (await getWorkspaceRole(userId, workspaceId)) === "owner" }; }
 async function guard<T>(run: () => Promise<T>): Promise<T> {
   try { return await run(); } catch (error) { if (error instanceof ArtifactError) throw new TRPCError({ code: errorCode[error.code], message: error.message }); throw error; }
 }
@@ -38,6 +40,22 @@ export const artifactsRouter = router({
     .query(async ({ ctx, input }) => {
       await requireWorkspace(ctx.user.id, input.workspaceId);
       return listArtifacts(await requireDb(), input.workspaceId, { projectId: input.projectId, limit: input.limit });
+    }),
+  /** Rename and/or move to another project (projectId: null removes it from its project). Creator or workspace owner only. */
+  update: protectedProcedure
+    .input(workspaceInput.extend({ artifactId: z.number().int().positive(), title: z.string().max(400).optional(), projectId: z.number().int().positive().nullable().optional() }).refine(value => value.title !== undefined || value.projectId !== undefined, { message: "Nothing to change" }))
+    .mutation(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      const db = await requireDb();
+      return guard(async () => updateArtifact(db, { workspaceId: input.workspaceId, actor: await actorFor(ctx.user.id, input.workspaceId), artifactId: input.artifactId, title: input.title, projectId: input.projectId }));
+    }),
+  /** Permanently deletes the artifact (not its source chat or files). Creator or workspace owner only. */
+  delete: protectedProcedure
+    .input(workspaceInput.extend({ artifactId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      const db = await requireDb();
+      return guard(async () => deleteArtifact(db, { workspaceId: input.workspaceId, actor: await actorFor(ctx.user.id, input.workspaceId), artifactId: input.artifactId }));
     }),
   get: protectedProcedure
     .input(workspaceInput.extend({ artifactId: z.number().int().positive() }))

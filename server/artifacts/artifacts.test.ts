@@ -166,8 +166,13 @@ describe("tenant-isolation guards (static)", () => {
   const router = readFileSync(new URL("./router.ts", import.meta.url), "utf8");
 
   it("every artifacts query is scoped by workspaceId in SQL", () => {
-    // list x2 (with/without project filter), get-by-id, search, and the source-message lookup used for idempotent saves
-    expect(store.split("eq(artifacts.workspaceId, workspaceId)").length - 1).toBe(5);
+    // list x2 (with/without project filter), get-by-id, search, the source-message lookup used for idempotent saves, and the lifecycle ownership lookup
+    expect(store.split("eq(artifacts.workspaceId, workspaceId)").length - 1).toBe(6);
+    // the lifecycle writes (update, delete) are workspace-scoped in their own WHERE, and both go through the same ownership gate first
+    expect(store.split(".where(and(eq(artifacts.workspaceId, input.workspaceId), eq(artifacts.id, input.artifactId)))").length - 1).toBe(2);
+    expect(store.match(/await loadManageable\(/g)!.length).toBe(2);
+    expect(store).toContain("row.createdByUserId !== actor.userId && !actor.isWorkspaceOwner");
+    expect(store).toContain("eq(projects.workspaceId, input.workspaceId)");
     expect(store.match(/\.from\(artifacts\)/g)!.length).toBe(store.match(/\.from\(artifacts\)[\s\S]*?\.where\(/g)!.length);
   });
   it("saving requires the saver to own the conversation and reads an ASSISTANT message of that conversation and workspace", () => {
@@ -184,10 +189,14 @@ describe("tenant-isolation guards (static)", () => {
   });
   it("every router procedure is authenticated and checks workspace membership before touching data; the client cannot supply content or citations", () => {
     const procedures = router.match(/\w+: protectedProcedure\b/g)!.length;
-    expect(procedures).toBe(4);
+    expect(procedures).toBe(6);
     expect(router).not.toContain("publicProcedure");
     expect(router.match(/await requireWorkspace\(ctx\.user\.id, input\.workspaceId\)/g)!.length).toBe(procedures);
     const saveInput = router.slice(router.indexOf("saveFromMessage"), router.indexOf(".mutation("));
     expect(saveInput).not.toMatch(/content|citations/i);
+    // update can only change title/project (never content, evidence or provenance); the role comes from the server, never from input
+    const updateInput = router.slice(router.indexOf("update: protectedProcedure"), router.indexOf(".mutation(", router.indexOf("update: protectedProcedure")));
+    expect(updateInput).not.toMatch(/content|citations|sourceMessageId|createdBy|role|owner/i);
+    expect(router.match(/actor: await actorFor\(ctx\.user\.id, input\.workspaceId\)/g)!.length).toBe(2);
   });
 });

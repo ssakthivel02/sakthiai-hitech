@@ -28,7 +28,7 @@ export const DEFAULT_ARTIFACT_TITLE = "Saved answer";
 export const ARTIFACT_SEARCH_CANDIDATE_LIMIT = 100;
 const SNIPPET_CODE_POINTS = 240;
 
-export type ArtifactErrorCode = "CONVERSATION_DENIED" | "MESSAGE_NOT_FOUND" | "NOT_SAVEABLE" | "TOO_LARGE" | "PROJECT_DENIED" | "NOT_FOUND";
+export type ArtifactErrorCode = "CONVERSATION_DENIED" | "MESSAGE_NOT_FOUND" | "NOT_SAVEABLE" | "TOO_LARGE" | "PROJECT_DENIED" | "NOT_FOUND" | "MODIFY_DENIED" | "INVALID";
 export class ArtifactError extends Error {
   constructor(readonly code: ArtifactErrorCode, message: string) { super(message); this.name = "ArtifactError"; }
 }
@@ -220,4 +220,50 @@ export async function searchArtifacts(db: Db, workspaceId: number, query: string
     .orderBy(desc(hits), desc(artifacts.id))
     .limit(ARTIFACT_SEARCH_CANDIDATE_LIMIT);
   return rankArtifactCandidates(rows, query, limit);
+}
+
+// ---- lifecycle: rename / move / delete ----
+
+/** Who may change an artifact: the member who saved it, or a workspace owner. Plain members can read everything but cannot alter others' artifacts. */
+export type ArtifactActor = { userId: number; isWorkspaceOwner: boolean };
+async function loadManageable(db: Db, workspaceId: number, actor: ArtifactActor, artifactId: number) {
+  const row = (await db.select({ id: artifacts.id, createdByUserId: artifacts.createdByUserId, content: artifacts.content }).from(artifacts)
+    .where(and(eq(artifacts.workspaceId, workspaceId), eq(artifacts.id, artifactId))).limit(1))[0];
+  if (!row) throw new ArtifactError("NOT_FOUND", "Artifact not found");
+  if (row.createdByUserId !== actor.userId && !actor.isWorkspaceOwner) throw new ArtifactError("MODIFY_DENIED", "Only the member who saved this artifact or a workspace owner can change it");
+  return row;
+}
+
+/**
+ * Renames and/or moves an artifact. projectId: a number moves it into that (same-workspace) project, null removes it from its project,
+ * undefined leaves it. Evidence, content and provenance are never editable here. A rename re-indexes searchText so search follows the title.
+ */
+export async function updateArtifact(db: Db, input: { workspaceId: number; actor: ArtifactActor; artifactId: number; title?: string; projectId?: number | null }): Promise<ArtifactView> {
+  if (input.title === undefined && input.projectId === undefined) throw new ArtifactError("INVALID", "Nothing to change");
+  const row = await loadManageable(db, input.workspaceId, input.actor, input.artifactId);
+  const changes: { title?: string; searchText?: string; projectId?: number | null } = {};
+  if (input.title !== undefined) {
+    const title = sanitizeTitle(input.title);
+    if (!title) throw new ArtifactError("INVALID", "Title cannot be empty");
+    changes.title = title;
+    changes.searchText = searchTextFor(`${title}\n${row.content}`);
+  }
+  if (input.projectId !== undefined) {
+    if (input.projectId !== null) {
+      const project = await db.select({ id: projects.id }).from(projects).where(and(eq(projects.id, input.projectId), eq(projects.workspaceId, input.workspaceId))).limit(1);
+      if (!project[0]) throw new ArtifactError("PROJECT_DENIED", "Project access denied");
+    }
+    changes.projectId = input.projectId;
+  }
+  await db.update(artifacts).set(changes).where(and(eq(artifacts.workspaceId, input.workspaceId), eq(artifacts.id, input.artifactId)));
+  const updated = await getArtifact(db, input.workspaceId, input.artifactId);
+  if (!updated) throw new ArtifactError("NOT_FOUND", "Artifact not found");
+  return updated;
+}
+
+/** Permanently deletes the artifact row only. The source conversation, message and uploaded files are untouched; the same answer can be saved again. */
+export async function deleteArtifact(db: Db, input: { workspaceId: number; actor: ArtifactActor; artifactId: number }): Promise<{ deleted: true }> {
+  await loadManageable(db, input.workspaceId, input.actor, input.artifactId);
+  await db.delete(artifacts).where(and(eq(artifacts.workspaceId, input.workspaceId), eq(artifacts.id, input.artifactId)));
+  return { deleted: true };
 }

@@ -637,7 +637,7 @@
       "capability": "workspace_artifacts",
       "truthModel": "PARTIAL",
       "status": "TESTED_LOCAL",
-      "runtimePath": "Home 'Save as artifact' (GROUNDED_EVIDENCE answers only) -> artifacts.saveFromMessage (ids only; content and citations copied server-side from the stored assistant message; saver must own the conversation; idempotent per (workspaceId, sourceMessageId)) -> artifacts table (migration 0013) -> artifacts.list / artifacts.get -> /artifacts/:id viewer with evidence list",
+      "runtimePath": "Home 'Save as artifact' (GROUNDED_EVIDENCE answers only) -> artifacts.saveFromMessage (ids only; content and citations copied server-side from the stored assistant message; saver must own the conversation; idempotent per (workspaceId, sourceMessageId)) -> artifacts table (migration 0013) -> artifacts.list / artifacts.get -> /artifacts/:id viewer with evidence list; artifacts.update (rename, move project; re-indexes search) and artifacts.delete (saver or workspace owner only) from the viewer",
       "sourceFiles": [
         "server/artifacts/store.ts",
         "server/artifacts/router.ts",
@@ -659,7 +659,7 @@
       ],
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
-      "knownLimitation": "Only chat answers can be saved (kind chat_answer); no manual create, edit, delete or versioning, and no file-attachment of artifacts. Real-SQL tests and a browser-less API e2e (built server, fake OIDC/LLM/S3/clamd, scratch MariaDB) passed locally; no browser pass, no CI run and no deployed-runtime verification. Migration 0013 has not been applied to any real database."
+      "knownLimitation": "Only chat answers can be saved (kind chat_answer); no manual create, no content editing or versioning, no soft-delete/undo or audit record for delete, and no file-attachment of artifacts. Rename/move/delete are limited to the saver or a workspace owner. Real-SQL tests and a browser-less API e2e (built server, fake OIDC/LLM/S3/clamd, scratch MariaDB) passed locally; no browser pass, no CI run and no deployed-runtime verification. Migration 0013 has not been applied to any real database."
     },
     {
       "capability": "workspace_search",

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
-import { ArrowLeft, FileText, Search } from "lucide-react";
+import { ArrowLeft, FileText, Pencil, Search, Trash2 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { startLogin } from "@/const";
@@ -13,6 +13,64 @@ import { Input } from "@/components/ui/input";
 const METHOD_LABEL = { lexical: "Keyword match", semantic: "Meaning match", hybrid: "Keyword + meaning" } as const;
 const formatDate = (value: Date | string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 const errorText = (error: unknown) => (error instanceof Error ? error.message : "Something went wrong");
+
+type ProjectOption = { id: number; name: string };
+/** Rename, move and delete. The server is the authority (saver or workspace owner only); a refusal is shown, never hidden. */
+function ArtifactActions({ workspaceId, artifact, projects, onDeleted }: { workspaceId: number; artifact: { id: number; title: string; projectId: number | null; language: "en" | "ta" }; projects: ProjectOption[]; onDeleted: () => void }) {
+  const utils = trpc.useUtils();
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(artifact.title);
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => { setTitle(artifact.title); setEditing(false); setConfirming(false); }, [artifact.id, artifact.title]);
+  const refresh = () => Promise.all([utils.artifacts.list.invalidate(), utils.artifacts.get.invalidate(), utils.search.workspace.invalidate()]);
+  const update = trpc.artifacts.update.useMutation({ onSuccess: async () => { setEditing(false); await refresh(); } });
+  const remove = trpc.artifacts.delete.useMutation({ onSuccess: async () => { await refresh(); onDeleted(); } });
+  const failure = update.error ?? remove.error;
+  const busy = update.isPending || remove.isPending;
+  const rename = (event: FormEvent) => { event.preventDefault(); const next = title.trim(); if (next && next !== artifact.title) update.mutate({ workspaceId, artifactId: artifact.id, title: next }); else setEditing(false); };
+
+  return (
+    <section aria-labelledby="artifact-actions" className="space-y-3 border-t pt-4">
+      <h2 id="artifact-actions" className="text-sm font-semibold">Manage</h2>
+      {editing ? (
+        <form onSubmit={rename} className="flex flex-wrap gap-2">
+          <label htmlFor="artifact-rename" className="sr-only">Artifact title</label>
+          <Input id="artifact-rename" lang={artifact.language} value={title} maxLength={180} autoFocus onChange={event => setTitle(event.target.value)} className="min-w-0 flex-1" />
+          <Button type="submit" size="sm" disabled={busy || !title.trim()}>Save title</Button>
+          <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setTitle(artifact.title); setEditing(false); update.reset(); }}>Cancel</Button>
+        </form>
+      ) : (
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { remove.reset(); setEditing(true); }}><Pencil size={14} aria-hidden="true" /> Rename</Button>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="artifact-project" className="text-sm text-muted-foreground">Project</label>
+        <select
+          id="artifact-project"
+          className="h-9 rounded-md border bg-background px-2 text-sm"
+          value={artifact.projectId ?? ""}
+          disabled={busy}
+          onChange={event => update.mutate({ workspaceId, artifactId: artifact.id, projectId: event.target.value ? Number(event.target.value) : null })}
+        >
+          <option value="">No project</option>
+          {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+      </div>
+      {confirming ? (
+        <div role="group" aria-label="Confirm delete" className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/50 p-3">
+          <p className="text-sm">Delete this artifact permanently? The chat and your files are not affected.</p>
+          <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => remove.mutate({ workspaceId, artifactId: artifact.id })}>Yes, delete</Button>
+          <Button type="button" size="sm" variant="outline" disabled={busy} autoFocus onClick={() => setConfirming(false)}>Keep it</Button>
+        </div>
+      ) : (
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { update.reset(); setConfirming(true); }}><Trash2 size={14} aria-hidden="true" /> Delete…</Button>
+      )}
+      <div aria-live="polite">
+        {busy ? <p role="status" className="text-sm text-muted-foreground">Saving…</p> : null}
+        {failure && !busy ? <p role="alert" className="text-sm text-destructive">{failure.data?.code === "FORBIDDEN" ? "Only the member who saved this artifact or a workspace owner can change it." : `Could not complete that: ${errorText(failure)}`}</p> : null}
+      </div>
+    </section>
+  );
+}
 
 export default function Artifacts() {
   const { loading, isAuthenticated } = useAuth();
@@ -208,6 +266,7 @@ export default function Artifacts() {
                       ))}
                     </ol>
                   </section>
+                  <ArtifactActions workspaceId={workspaceId!} artifact={opened.data} projects={projects.data ?? []} onDeleted={() => navigate(withQuery("/artifacts"))} />
                 </CardContent>
               </Card>
             </article>
