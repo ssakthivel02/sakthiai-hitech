@@ -25,11 +25,31 @@
   "database": {
     "expectedDatabase": "sakthiai_preview",
     "restoreRequiredForDestructiveOrIncompatibleMigration": true,
-    "allowSchemaGuessing": false
+    "allowSchemaGuessing": false,
+    "applicationRollbackSeparateFromRestore": true,
+    "targetJournalMustBePrefixOfLiveJournal": true
   },
   "release": {
     "productionApproved": false,
     "paidProviderActivationApproved": false,
     "dnsChangeApproved": false
+  },
+  "securityBaseline": {
+    "minimumCommit": "403c8f8a2db6fa532a80ae659668fbd18bf779b2",
+    "reason": "First commit containing the local-provider classification and redirect refusal (79635f7), the Creator redirect refusal (fa2760e) and the high-advisory dependency fixes (403c8f8). A rollback target must contain it.",
+    "forbiddenTargets": [
+      {
+        "commit": "469c668e71ceaae800e8605c5814e7017035fdbc",
+        "reason": "Currently deployed preview build; lacks the baseline security fixes. Never a rollback target."
+      }
+    ]
+  },
+  "containment": {
+    "whenNoQualifiedTarget": [
+      "suspend-service",
+      "maintenance-mode"
+    ],
+    "neverServeForbiddenTarget": true,
+    "note": "If no deployed-and-verified build at or after the baseline exists, contain by suspending the service or enabling maintenance mode instead of serving an older build."
   }
 }
