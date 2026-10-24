@@ -5,6 +5,7 @@ import { hasAnyBudgetLimit, InMemoryBudgetStore, type BudgetStore, type Reservat
 import { CircuitBreaker, type BreakerConfig, type BreakerStore } from "./circuitBreaker";
 import type { GatewayConfig } from "./config";
 import { createOpenAiCompatibleAdapter } from "./openaiCompatible";
+import { createResolvedAddressGuard } from "./hostClass";
 import {
   ERROR_TRAITS,
   ProviderCallError,
@@ -76,8 +77,10 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
         : createOpenAiCompatibleAdapter({
             providerId: binding.providerId,
             baseUrl: binding.baseUrl,
+            endpointProfile: binding.endpointProfile,
             apiKey: binding.apiKey,
             timeoutMs: binding.timeoutMs,
+            ...(binding.kind === "self_hosted" ? { noRedirect: true, ...(binding.resolveGuard ? { hostGuard: createResolvedAddressGuard() } : {}) } : {}),
             maxAttempts: config.retry.maxAttempts,
             totalDeadlineMs: config.retry.totalDeadlineMs,
             backoffBaseMs: config.retry.backoffBaseMs,
@@ -298,6 +301,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
           usage,
           attempts,
           latencyMs: now() - startedAt,
+          ...(binding.endpointProfile ? { endpointProfile: binding.endpointProfile } : {}),
         });
       } catch (error) {
         const failure = error instanceof ProviderCallError ? error : new ProviderCallError("network");
@@ -380,6 +384,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
       breaker: breakerState,
       lastSuccessAt: record?.lastSuccessAt,
       lastFailureClass: record?.lastFailureClass,
+      ...(binding.endpointProfile ? { endpointProfile: binding.endpointProfile } : {}),
     };
   }
 

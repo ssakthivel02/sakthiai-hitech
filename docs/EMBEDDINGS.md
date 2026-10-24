@@ -3,6 +3,7 @@
 Provider-neutral, local-first. Speaks the OpenAI-compatible `POST {base}/v1/embeddings` protocol (Ollama, vLLM and llama.cpp `--embedding` expose it; Ollama's native `/api/embed` is NOT supported).
 
 - `LOCAL_EMBEDDING_API_URL` + `LOCAL_EMBEDDING_MODEL` (+ optional `LOCAL_EMBEDDING_DIMENSIONS`, `LOCAL_EMBEDDING_API_KEY`) configure the self-hosted path.
+  - The self-hosted path is exempt from `EMBEDDING_ALLOW_EXTERNAL`, so it obeys the same network rules as the chat local slot (see `docs/PROVIDER_GATEWAY.md`): loopback is accepted as is; a private-network host (RFC 1918, `100.64/10`, ULA/link-local, internal names) only if its exact name or IP is listed in `LOCAL_EMBEDDING_ALLOWED_HOSTS`, and a name is resolved before every request; public hosts and known hosted-provider domains are refused with no override (use `EMBEDDING_*`); redirects are never followed.
 - `EMBEDDING_API_URL` (+ `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`) configures an external provider. **Owner action:** it is now used only if `EMBEDDING_ALLOW_EXTERNAL=true`, because chunk text would leave the platform. Previously configuring the URL was enough.
 - Order: local first; external only as an opt-in fallback for provider-health failures (timeouts, 429, 5xx). 401/403, bad requests and bad vectors are terminal.
 - Validation: non-empty array of finite numbers, not all-zero, at most 8192 dims; configured dimension enforced, otherwise learned from the first valid vector and enforced afterwards.

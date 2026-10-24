@@ -1,5 +1,6 @@
 import { isRetryableHttpStatus } from "../_core/llm";
 export { isRetryableHttpStatus };
+import { isPinnedProfile, validatePinnedOrigin, type EndpointProfileId } from "./endpointProfiles";
 import {
   ERROR_TRAITS,
   ProviderCallError,
@@ -13,6 +14,8 @@ export type OpenAiCompatibleOptions = {
   providerId: string;
   /** e.g. https://api.example.com, http://localhost:11434/v1 (a trailing /v1 is honoured, not doubled). */
   baseUrl: string;
+  /** Default "openai-v1". Pinned profiles fix host+path and disable redirects (see endpointProfiles.ts). */
+  endpointProfile?: EndpointProfileId;
   apiKey?: string;
   /** Per-HTTP-attempt timeout. */
   timeoutMs?: number;
@@ -23,6 +26,11 @@ export type OpenAiCompatibleOptions = {
   backoffBaseMs?: number;
   backoffMaxMs?: number;
   fetchImpl?: typeof fetch;
+  /** Retained for call-site compatibility. Redirects are now refused for EVERY profile and binding (a redirect would re-send the prompt body to
+   *  a destination nobody configured, including internal addresses); this option no longer changes behaviour. */
+  noRedirect?: boolean;
+  /** Local/self-hosted binding configured by NAME: called with the URL hostname before each attempt; false = refuse (fail closed, no request is sent). */
+  hostGuard?: (hostname: string) => Promise<boolean>;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
   now?: () => number;
@@ -35,6 +43,12 @@ export const ADAPTER_DEFAULTS = {
   backoffBaseMs: 250,
   backoffMaxMs: 5_000,
 } as const;
+
+/** Fixed request paths of the pinned profiles. Exact strings, never taken from configuration or request data. */
+const PINNED_PATHS: Readonly<Record<Exclude<EndpointProfileId, "openai-v1">, string>> = {
+  "gemini-openai": "/v1beta/openai/chat/completions",
+  "sarvam-chat": "/v1/chat/completions",
+};
 
 export function chatCompletionsUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
@@ -98,7 +112,15 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const random = options.random ?? Math.random;
   const now = options.now ?? Date.now;
-  const url = chatCompletionsUrl(options.baseUrl);
+  const profile = options.endpointProfile ?? "openai-v1";
+  const pinned = isPinnedProfile(profile);
+  let url: string;
+  if (pinned) {
+    const resolved = validatePinnedOrigin(profile as Exclude<EndpointProfileId, "openai-v1">, options.baseUrl);
+    if (!resolved.ok) throw new Error(`endpoint profile ${profile} refused the configured base URL: ${resolved.reason}`);
+    url = `${resolved.origin}${PINNED_PATHS[profile as Exclude<EndpointProfileId, "openai-v1">]}`;
+  } else url = chatCompletionsUrl(options.baseUrl);
+  const urlHostname = new URL(url).hostname;
 
   async function attemptOnce(call: AdapterCall, attemptTimeoutMs: number): Promise<Omit<AdapterSuccess, "attempts">> {
     const controller = new AbortController();
@@ -106,6 +128,13 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
     try {
       let response: Response;
       try {
+        if (options.hostGuard) {
+          const allowed = await Promise.race([
+            options.hostGuard(urlHostname),
+            new Promise<boolean>((_, reject) => controller.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true })),
+          ]);
+          if (!allowed) throw new ProviderCallError("bad_request"); // policy refusal: terminal, no retry, no fallback masking it as an outage
+        }
         response = await doFetch(url, {
           method: "POST",
           headers: { "content-type": "application/json", ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}) },
@@ -115,8 +144,12 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
             ...(call.maxOutputTokens ? { max_tokens: call.maxOutputTokens } : {}),
           }),
           signal: controller.signal,
+          // Never follow a redirect: the prompt (and, same-origin, the credential) would be re-sent to a destination nobody configured,
+          // which is also a server-side request to wherever the response points. A redirect is a terminal network failure.
+          redirect: "error",
         });
       } catch (error) {
+        if (error instanceof ProviderCallError) throw error;
         if (controller.signal.aborted || (error as { name?: string })?.name === "AbortError") throw new ProviderCallError("timeout");
         throw new ProviderCallError("network");
       }

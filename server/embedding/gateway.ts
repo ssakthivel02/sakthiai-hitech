@@ -1,6 +1,8 @@
 import { CircuitBreaker } from "../gateway/circuitBreaker";
 import { classifyStatus, isRetryableHttpStatus, parseRetryAfterMs } from "../gateway/openaiCompatible";
 import { ERROR_TRAITS, ProviderCallError, type ProviderErrorClass } from "../gateway/types";
+import { validateLocalSlotUrl } from "../gateway/config";
+import { createResolvedAddressGuard, needsResolutionCheck } from "../gateway/hostClass";
 
 /**
  * Provider-neutral embedding gateway. Speaks the OpenAI-compatible `/v1/embeddings` protocol, which
@@ -22,6 +24,8 @@ export type EmbeddingProviderConfig = {
   /** Required vector length when configured; otherwise learned from the first valid vector. */
   dimensions?: number;
   timeoutMs: number;
+  /** Local binding only. Configured by NAME: every resolved address must be loopback/private at request time (fail closed). */
+  resolveGuard?: boolean;
 };
 
 export type EmbeddingConfig = {
@@ -76,10 +80,10 @@ export function loadEmbeddingConfig(env: EnvLike): EmbeddingConfig {
   const localUrl = env.LOCAL_EMBEDDING_API_URL?.trim();
   if (localUrl) {
     const dimensions = dims(env.LOCAL_EMBEDDING_DIMENSIONS ?? env.EMBEDDING_DIMENSIONS);
-    const problem = validateUrl(localUrl, false) ?? (env.LOCAL_EMBEDDING_MODEL?.trim() ? null : "LOCAL_EMBEDDING_MODEL is required") ?? null;
+    const problem = validateUrl(localUrl, false) ?? validateLocalSlotUrl(localUrl, env, "LOCAL_EMBEDDING_ALLOWED_HOSTS") ?? (env.LOCAL_EMBEDDING_MODEL?.trim() ? null : "LOCAL_EMBEDDING_MODEL is required") ?? null;
     const reason = problem ?? (dimensions === "bad" ? "dimensions must be an integer between 1 and 8192" : null);
     if (reason) invalid.push({ providerId: LOCAL_EMBEDDING_ID, reason });
-    else providers.push({ providerId: LOCAL_EMBEDDING_ID, kind: "self_hosted", baseUrl: localUrl, model: env.LOCAL_EMBEDDING_MODEL!.trim(), apiKey: env.LOCAL_EMBEDDING_API_KEY?.trim() || undefined, dimensions: dimensions === "bad" ? undefined : dimensions, timeoutMs });
+    else providers.push({ providerId: LOCAL_EMBEDDING_ID, kind: "self_hosted", baseUrl: localUrl, model: env.LOCAL_EMBEDDING_MODEL!.trim(), apiKey: env.LOCAL_EMBEDDING_API_KEY?.trim() || undefined, dimensions: dimensions === "bad" ? undefined : dimensions, timeoutMs, ...(needsResolutionCheck(new URL(localUrl).hostname) ? { resolveGuard: true } : {}) });
   }
 
   const externalUrl = env.EMBEDDING_API_URL?.trim();
@@ -109,6 +113,8 @@ export type EmbeddingOutcome =
 
 export type EmbeddingDeps = {
   fetchImpl?: typeof fetch;
+  /** Test seam for the request-time resolution check applied to self-hosted providers configured by name. */
+  hostGuard?: (hostname: string) => Promise<boolean>;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
   now?: () => number;
@@ -135,6 +141,7 @@ export function validateVector(raw: unknown, expectedDimensions?: number): numbe
 
 export function createEmbeddingGateway(config: EmbeddingConfig, deps: EmbeddingDeps = {}) {
   const doFetch = deps.fetchImpl ?? fetch;
+  const hostGuard = deps.hostGuard ?? createResolvedAddressGuard();
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const random = deps.random ?? Math.random;
   const now = deps.now ?? Date.now;
@@ -149,13 +156,23 @@ export function createEmbeddingGateway(config: EmbeddingConfig, deps: EmbeddingD
     try {
       let response: Response;
       try {
+        if (provider.kind === "self_hosted" && provider.resolveGuard) {
+          const allowed = await Promise.race([
+            hostGuard(new URL(embeddingsUrl(provider.baseUrl)).hostname),
+            new Promise<boolean>((_, reject) => controller.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true })),
+          ]);
+          if (!allowed) throw new ProviderCallError("bad_request"); // policy refusal: terminal, nothing is sent
+        }
         response = await doFetch(embeddingsUrl(provider.baseUrl), {
           method: "POST",
           headers: { "content-type": "application/json", ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}) },
           body: JSON.stringify({ model: provider.model, input }),
           signal: controller.signal,
+          // No embedding endpoint (self-hosted or external) may make the gateway re-send the document text to another destination.
+          redirect: "error",
         });
       } catch (error) {
+        if (error instanceof ProviderCallError) throw error;
         if (controller.signal.aborted || (error as { name?: string })?.name === "AbortError") throw new ProviderCallError("timeout");
         throw new ProviderCallError("network");
       }

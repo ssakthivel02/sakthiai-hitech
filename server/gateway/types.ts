@@ -1,3 +1,4 @@
+import type { EndpointProfileId } from "./endpointProfiles";
 import type { ModelCapability, ProviderKind, BillingMode, TaskIntent } from "../model-fabric/types";
 
 /**
@@ -108,6 +109,10 @@ export type ProviderBinding = {
   model: string;
   apiKey?: string;
   timeoutMs: number;
+  /** External binding only. Absent = "openai-v1" (historical behaviour). */
+  endpointProfile?: EndpointProfileId;
+  /** Local binding only. The configured host is a name: every address it resolves to must be loopback/private at request time (fail closed). */
+  resolveGuard?: boolean;
 };
 
 export type RuntimeState =
@@ -126,6 +131,8 @@ export type ProviderRuntimeStatus = {
   breaker: "CLOSED" | "OPEN" | "HALF_OPEN";
   lastSuccessAt?: number;
   lastFailureClass?: ProviderErrorClass;
+  /** Which endpoint profile this binding uses (never the URL). */
+  endpointProfile?: EndpointProfileId;
 };
 
 export type AttemptRecord = {
@@ -156,6 +163,8 @@ export type GatewayOutcome =
       usage: GatewayUsage;
       attempts: AttemptRecord[];
       latencyMs: number;
+      /** Endpoint profile of the binding that answered (a label, never a URL). */
+      endpointProfile?: EndpointProfileId;
     }
   | {
       status: "failed";
