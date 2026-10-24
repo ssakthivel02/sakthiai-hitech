@@ -125,7 +125,9 @@ function mapInteraction(payload: Interaction, providerJobId: string): CreatorPro
 }
 
 async function requestInteraction(url: string, init?: RequestInit): Promise<Interaction> {
-  const response = await fetch(url, init);
+  // Never follow a redirect: the x-goog-api-key header is NOT stripped by fetch on a cross-origin redirect, so following one would hand the
+  // provider key (and the prompt) to whatever host the response names.
+  const response = await fetch(url, { ...init, redirect: "error" });
   const payload = (await response.json()) as Interaction;
   if (!response.ok) throw new GoogleImageHttpError(`GOOGLE_IMAGE_HTTP_${response.status}`, response.status, payload);
   return payload;

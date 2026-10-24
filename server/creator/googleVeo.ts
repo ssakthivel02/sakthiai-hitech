@@ -155,6 +155,8 @@ export async function submitGoogleVeo(input: CreatorVeoRequest): Promise<VeoOper
       "x-goog-api-key": config.apiKey,
     },
     body: JSON.stringify(body),
+    // x-goog-api-key survives a cross-origin redirect in fetch; refuse redirects so the key and prompt cannot be forwarded.
+    redirect: "error",
   });
 
   const payload = (await response.json()) as VeoOperationSnapshot;
@@ -174,6 +176,7 @@ export async function pollGoogleVeo(operationName: string): Promise<VeoOperation
 
   const response = await fetch(`${config.baseUrl}/${safeName}`, {
     headers: { "x-goog-api-key": config.apiKey },
+    redirect: "error",
   });
   const payload = (await response.json()) as VeoOperationSnapshot;
   if (!response.ok) {
