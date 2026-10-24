@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
   "purpose": "Public-safe release evidence ledger rendered on /intelligence. Records what was OBSERVED, when, and by which kind of check. No hostnames, service identifiers, account names or credentials. Unknown is never healthy; an observation older than freshnessDays is shown as stale and treated as unknown.",
-  "observedAt": "2026-10-24T02:50:00Z",
+  "observedAt": "2026-10-24T05:00:00Z",
   "freshnessDays": 7,
   "verdicts": {
     "preview": "no-go",
@@ -10,14 +10,14 @@
   "candidate": {
     "label": "Draft PR #29 (combined runtime-qualification candidate)",
     "link": "https://github.com/ssakthivel02/sakthiai-hitech/pull/29",
-    "lastCiVerifiedCommit": "403c8f8a2db6fa532a80ae659668fbd18bf779b2",
-    "ciEvidence": "16/16 check runs successful at 403c8f8 (incl. mysql-integration on MySQL 8.0, mysql-84-compatibility on MySQL 8.4, e2e and release-evidence), read 24 Oct 2026",
+    "lastCiVerifiedCommit": "95fbcc34618c8703e1ed3c434df854ac340ac3e0",
+    "ciEvidence": "16/16 check runs successful at 95fbcc3 (incl. mysql-integration on MySQL 8.0, mysql-84-compatibility on MySQL 8.4, e2e and release-evidence), read 24 Oct 2026",
     "note": "Commits pushed after the CI-verified commit are source-implemented only until their own CI run is read. The exact head is whatever this page's build reports below."
   },
   "deployment": {
     "observedCommit": "469c668e71ceaae800e8605c5814e7017035fdbc",
-    "observedAt": "2026-10-24T02:35:00Z",
-    "method": "Hosting provider API, read-only: one web service, auto-deploy off, latest live deploy",
+    "observedAt": "2026-10-24T04:45:00Z",
+    "method": "Hosting provider API, read-only: one web service, auto-deploy off, latest live deploy, not suspended, no deploy events since 10 Oct",
     "note": "The preview serves an older commit than the CI-verified candidate. Deploying the candidate is an owner-approved, gated action."
   },
   "dashboardLink": "https://github.com/ssakthivel02/sakthiai-hitech/issues/1",
@@ -26,27 +26,27 @@
       "id": "source-security",
       "name": "Gateway and Creator security fixes (local-slot classification, redirects, pinned endpoint profiles)",
       "state": "ci_passed",
-      "evidence": "Reproduced on 0a48dc3, fixed, unit-tested and mutation-checked; CI 16/16 at 403c8f8. Not deployed."
+      "evidence": "Reproduced on 0a48dc3, fixed, unit-tested and mutation-checked; CI 16/16 at 95fbcc3. Not deployed."
     },
     {
       "id": "ci",
       "name": "Repository CI on the candidate",
       "state": "ci_passed",
-      "evidence": "16/16 check runs at 403c8f8, including the first MySQL 8.4 container run. Later commits need their own CI run."
+      "evidence": "16/16 check runs at 95fbcc3, including MySQL 8.0 and 8.4 containers and browser e2e. Later commits need their own CI run."
     },
     {
       "id": "preview-deploy",
       "name": "Preview deployment serves the candidate",
       "state": "blocked",
-      "evidence": "Preview serves 469c668; the CI-verified candidate 403c8f8 is not deployed.",
+      "evidence": "Preview serves 469c668; the CI-verified candidate 95fbcc3 is not deployed. The preview is still running (suspension approved, not executed).",
       "blocker": "Owner approval for a preview redeploy; preview service suspension (decision Q2) is approved but not executed."
     },
     {
       "id": "preview-database",
       "name": "Preview database inspected and migrated",
       "state": "blocked",
-      "evidence": "No read-only inspection of the preview database has been recorded for the current candidate. Migrations through 0012 pass in disposable MySQL 8.0 and 8.4 containers in CI; the live schema has not been observed.",
-      "blocker": "Owner approval and environment-scoped credentials for the read-only inspect run, then a separately approved migrate run."
+      "evidence": "No read-only inspection of the preview database exists for the candidate. Inspect mode at the candidate ref is source-verified read-only (SELECT/SHOW only; SELECT-only principal enforced). The default-branch copy of the workflow is an unguarded migrator that runs on the legacy repository secret; it stays dangerous until that secret is deleted. Migrations through 0012 pass in disposable MySQL 8.0 and 8.4 containers in CI.",
+      "blocker": "Delete the legacy repository secret first; then owner approval for power-on and an inspect dispatch from the candidate ref (never the default branch); then a separately approved migrate run."
     },
     {
       "id": "session-isolation",
@@ -74,6 +74,19 @@
       "state": "blocked",
       "evidence": "Fail-closed authorization and spend ledger exist in source; paid generation is disabled.",
       "blocker": "Runtime verification of server-side budget and authorization controls before any enablement."
+    },
+    {
+      "id": "multi-instance-limits",
+      "name": "Request limits shared across instances",
+      "state": "source_implemented",
+      "evidence": "Optional shared store implemented and tested on real MySQL (3 instances x 30 concurrent requests, exactly 5 admitted). Its table is a proposal outside the migration journal; the deployed default stays per-process, which is correct only for a single instance."
+    },
+    {
+      "id": "production-environment",
+      "name": "Production environment",
+      "state": "blocked",
+      "evidence": "No production web service, production database, object storage bucket or domain exists. Only the preview service is defined.",
+      "blocker": "Owner decision to provision production infrastructure after preview acceptance (spend-bearing)."
     }
   ]
 }
