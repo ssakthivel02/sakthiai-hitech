@@ -11,7 +11,7 @@ Status: PREVIEW-READY SOURCE, DEPLOYMENT NOT STARTED
 - Preview AI: Cloudflare Workers AI through its OpenAI-compatible endpoint, using a model available on the Workers Free plan; no paid provider is enabled.
 - Preview object storage: Cloudflare R2 through the existing S3-compatible storage adapter, in a dedicated preview bucket only. R2 is runtime object storage, never canonical source storage.
 - Build command: `pnpm install --frozen-lockfile && pnpm build`
-- Start command: `pnpm start`
+- Start command: `exec node dist/index.js` (`NODE_ENV=production` is set by render.yaml; `exec` makes node the signalled process. A `pnpm start` wrapper, or a non-exec `sh -c`, receives Render's SIGTERM and bypasses the app's graceful shutdown)
 - Health check: `/readyz`
 - Production DNS: not attached during preview qualification.
 

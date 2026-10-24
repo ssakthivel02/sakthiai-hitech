@@ -7,6 +7,10 @@ on:
       - 'release/fixtures/beta-capability-contract-fail.json'
       - 'scripts/validate-beta-capability-contract.mjs'
       - 'client/src/pages/IntelligenceDashboard.tsx'
+      - 'release/release-status.json'
+      - 'release/fixtures/release-status-fail.json'
+      - 'scripts/validate-release-status.mjs'
+      - 'shared/releaseStatus.ts'
       - '.github/workflows/beta-capability-truth.yml'
   workflow_dispatch:
 
@@ -29,3 +33,14 @@ jobs:
             exit 1
           fi
           echo "Unsupported Available claim correctly rejected."
+      - name: Validate public release-status ledger
+        run: node scripts/validate-release-status.mjs release/release-status.json
+      - name: Reject runtime claims without dated evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          if node scripts/validate-release-status.mjs release/fixtures/release-status-fail.json; then
+            echo "Unsafe release-status fixture unexpectedly passed."
+            exit 1
+          fi
+          echo "Undated runtime claim correctly rejected."

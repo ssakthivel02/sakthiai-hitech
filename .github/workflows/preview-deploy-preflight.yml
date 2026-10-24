@@ -29,7 +29,7 @@ jobs:
         run: |
           set -euo pipefail
           grep -Eq '^    name: sakthiai-hitech-preview$' render.yaml
-          grep -Eq '^    healthCheckPath: /readyz$' render.yaml
+          grep -Eq '^    healthCheckPath: /healthz$' render.yaml
           grep -Eq '^    autoDeployTrigger: off$' render.yaml
           grep -q 'key: DATABASE_URL' render.yaml
           grep -q 'key: DATABASE_CA_CERT_B64' render.yaml

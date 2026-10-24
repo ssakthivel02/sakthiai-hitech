@@ -8,7 +8,16 @@
     "noEvidenceCitationsMustBeEmpty": true,
     "noEvidenceMustSkipLlm": true,
     "evidenceOnlySystemInstructionRequired": true,
-    "inventedCitationsForbidden": true
+    "inventedCitationsForbidden": true,
+    "modelFailureMustNotClaimGrounding": true,
+    "modelFailureState": "MODEL_UNAVAILABLE",
+    "behaviouralTests": [
+      "server/retrieval.unicode.test.ts",
+      "server/chat.grounding.test.ts",
+      "server/gateway/gateway.test.ts",
+      "server/gateway/boundary.test.ts"
+    ],
+    "modelCallsMustUseProviderGateway": true
   },
   "claims": {
     "repositoryFailClosedGroundingGuard": true,
