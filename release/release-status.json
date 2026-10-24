@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
   "purpose": "Public-safe release evidence ledger rendered on /intelligence. Records what was OBSERVED, when, and by which kind of check. No hostnames, service identifiers, account names or credentials. Unknown is never healthy; an observation older than freshnessDays is shown as stale and treated as unknown.",
-  "observedAt": "2026-10-24T02:40:00Z",
+  "observedAt": "2026-10-24T02:50:00Z",
   "freshnessDays": 7,
   "verdicts": {
     "preview": "no-go",
@@ -10,8 +10,8 @@
   "candidate": {
     "label": "Draft PR #29 (combined runtime-qualification candidate)",
     "link": "https://github.com/ssakthivel02/sakthiai-hitech/pull/29",
-    "lastCiVerifiedCommit": "0a48dc3164e35218c3e2789e2b8d34b177c3e48b",
-    "ciEvidence": "17/17 check runs successful at 0a48dc3 (16 distinct names), read 24 Oct 2026",
+    "lastCiVerifiedCommit": "403c8f8a2db6fa532a80ae659668fbd18bf779b2",
+    "ciEvidence": "16/16 check runs successful at 403c8f8 (incl. mysql-integration on MySQL 8.0, mysql-84-compatibility on MySQL 8.4, e2e and release-evidence), read 24 Oct 2026",
     "note": "Commits pushed after the CI-verified commit are source-implemented only until their own CI run is read. The exact head is whatever this page's build reports below."
   },
   "deployment": {
@@ -25,27 +25,27 @@
     {
       "id": "source-security",
       "name": "Gateway and Creator security fixes (local-slot classification, redirects, pinned endpoint profiles)",
-      "state": "source_implemented",
-      "evidence": "Reproduced on 0a48dc3, fixed, unit-tested and mutation-checked locally on 24 Oct 2026; CI not yet read for the new commits."
+      "state": "ci_passed",
+      "evidence": "Reproduced on 0a48dc3, fixed, unit-tested and mutation-checked; CI 16/16 at 403c8f8. Not deployed."
     },
     {
       "id": "ci",
       "name": "Repository CI on the candidate",
       "state": "ci_passed",
-      "evidence": "17/17 check runs at 0a48dc3. Later commits need their own CI run."
+      "evidence": "16/16 check runs at 403c8f8, including the first MySQL 8.4 container run. Later commits need their own CI run."
     },
     {
       "id": "preview-deploy",
       "name": "Preview deployment serves the candidate",
       "state": "blocked",
-      "evidence": "Preview serves 469c668, which is 11 commits behind the CI-verified candidate 0a48dc3 (more behind the current head).",
+      "evidence": "Preview serves 469c668; the CI-verified candidate 403c8f8 is not deployed.",
       "blocker": "Owner approval for a preview redeploy; preview service suspension (decision Q2) is approved but not executed."
     },
     {
       "id": "preview-database",
       "name": "Preview database inspected and migrated",
       "state": "blocked",
-      "evidence": "No read-only inspection of the preview database has been recorded for the current candidate; migrations 0011/0012 have only local MySQL 8.0 qualification from earlier sessions (MySQL 8.4 not verified).",
+      "evidence": "No read-only inspection of the preview database has been recorded for the current candidate. Migrations through 0012 pass in disposable MySQL 8.0 and 8.4 containers in CI; the live schema has not been observed.",
       "blocker": "Owner approval and environment-scoped credentials for the read-only inspect run, then a separately approved migrate run."
     },
     {
