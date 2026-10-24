@@ -342,6 +342,17 @@ export const providerBreakerStates = mysqlTable("providerBreakerStates", {
 });
 
 /**
+ * Shared fixed-window counters for the authenticated request limiter (RATE_LIMIT_STORE=mysql). One row per
+ * (policy, user) bucket, aligned to the policy window; rows expire and are pruned by the application.
+ */
+export const rateLimitWindows = mysqlTable("rateLimitWindows", {
+  bucketKey: varchar("bucketKey", { length: 191 }).primaryKey(),
+  windowStart: bigint("windowStart", { mode: "number" }).notNull(),
+  count: int("count").default(0).notNull(),
+  expiresAt: bigint("expiresAt", { mode: "number" }).notNull(),
+}, table => [index("rateLimitWindows_expiresAt_idx").on(table.expiresAt)]);
+
+/**
  * Server-issued OAuth login transactions shared by every application instance. Only SHA-256 digests are stored
  * (never the usable nonce or PKCE challenge). Consumption is one conditional UPDATE, so exactly one callback wins.
  */

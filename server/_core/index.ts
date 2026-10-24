@@ -22,6 +22,7 @@ import { deploymentTier, runtimeMode } from "./deploymentTier";
 import { authenticationReadiness } from "./sessionPolicy";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
 import { probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
+import { getAuthenticatedRateLimiter, rateLimitReadiness } from "./sharedRateLimit";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -151,7 +152,8 @@ async function startServer() {
       ENV.storageAccessKeyId,
       ENV.storageSecretAccessKey,
     );
-    const ready = databaseReady && schemaCurrent && authReady && llmReady && storageReady;
+    const rateLimit = rateLimitReadiness(await getAuthenticatedRateLimiter().verify());
+    const ready = databaseReady && schemaCurrent && authReady && llmReady && storageReady && rateLimit.ready;
 
     res.status(ready ? 200 : 503).json({
       status: ready ? "ready" : "not_ready",
@@ -165,6 +167,7 @@ async function startServer() {
         llm: llmReady ? "configured" : "missing_configuration",
         llmGateway: gateway,
         storage: storageReady ? "configured" : "missing_configuration",
+        rateLimit: { store: rateLimit.store, state: rateLimit.state },
         embeddings: embeddingStatus(),
         taskWorker: getTaskRuntime().status(),
         uploadCleanup: getUploadCleanupRunner().status(),

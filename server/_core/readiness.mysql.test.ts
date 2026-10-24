@@ -26,19 +26,25 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
     return db;
   };
 
-  it("a database at 0010 (before the Creator spend ledger) is NOT ready: 0011's tables are reported missing", async () => {
+  it("a database at 0010 (before the Creator spend ledger) is NOT ready: 0011's and 0013's tables are reported missing", async () => {
     const db = await migratedThrough("0010_resumable_ingestion");
     try {
       const state = await probeSchemaReadiness(readColumns(db));
-      expect(state).toMatchObject({ status: "behind", missingTables: expect.arrayContaining(["creatorSpendWindows", "creatorSpendHolds"]) });
-      expect(state.missingTables).toHaveLength(2);
+      expect(state).toMatchObject({ status: "behind", missingTables: ["creatorSpendHolds", "creatorSpendWindows", "rateLimitWindows"] });
     } finally { await db.close(); }
   });
 
-  it("a database at 0011 is NOT ready: exactly the two 0012 audit columns are missing", async () => {
+  it("a database at 0011 is NOT ready: exactly the two 0012 audit columns (and 0013's table) are missing", async () => {
     const db = await migratedThrough("0011_creator_spend_ledger");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: [], missingColumns: 2 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["rateLimitWindows"], missingColumns: 2 });
+    } finally { await db.close(); }
+  });
+
+  it("a database at 0012 is NOT ready: only 0013's rate-limit table is missing", async () => {
+    const db = await migratedThrough("0012_creator_spend_settlement_audit");
+    try {
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["rateLimitWindows"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 

@@ -2,6 +2,13 @@ export type RateLimitPolicy = {
   name: string;
   maxRequests: number;
   windowMs: number;
+  /**
+   * What a SHARED store (RATE_LIMIT_STORE=mysql) does when it cannot count: "deny" refuses the request (costly
+   * routes: model calls, uploads, Creator jobs); "scaled-local" falls back to a per-process window of
+   * floor(maxRequests / RATE_LIMIT_MAX_INSTANCES), so the fleet-wide bound still holds for up to that many instances.
+   * Ignored by the per-process limiter. Default "scaled-local".
+   */
+  onSharedFailure?: "deny" | "scaled-local";
 };
 
 export type RateLimitDecision = {
@@ -10,6 +17,9 @@ export type RateLimitDecision = {
   remaining: number;
   resetAt: number;
   retryAfterMs: number;
+  /** Which counter decided: "global" (shared store), "local" (per-process store), "local-degraded" (shared store failed,
+   *  scaled per-process fallback) or "unavailable" (shared store failed and the policy refuses). Absent = "local". */
+  scope?: "global" | "local" | "local-degraded" | "unavailable";
 };
 
 type Bucket = {
@@ -27,23 +37,27 @@ export const AUTHENTICATED_RATE_POLICIES = {
     name: "chat-send",
     maxRequests: 20,
     windowMs: 60_000,
+    onSharedFailure: "deny",
   },
   fileUpload: {
     name: "file-upload",
     maxRequests: 12,
     windowMs: 60_000,
+    onSharedFailure: "deny",
   },
   /** Paid Creator submissions: abuse guard only. The spend control is the database ledger (creatorSpendWindows). */
   creatorSubmit: {
     name: "creator-submit",
     maxRequests: 3,
     windowMs: 60_000,
+    onSharedFailure: "deny",
   },
   /** Operations on existing provider jobs (poll / retry / cancel). */
   creatorProviderJob: {
     name: "creator-provider-job",
     maxRequests: 30,
     windowMs: 60_000,
+    onSharedFailure: "deny",
   },
 } as const satisfies Record<string, RateLimitPolicy>;
 

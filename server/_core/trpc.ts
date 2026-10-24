@@ -3,7 +3,7 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
 import { selectAuthenticatedRatePolicy } from "./rateLimit";
-import { createRateLimiter } from "./sharedRateLimit";
+import { getAuthenticatedRateLimiter } from "./sharedRateLimit";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -12,9 +12,9 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router;
 export const publicProcedure = t.procedure;
 
-// RATE_LIMIT_STORE=mysql shares the per-user windows across instances (table: drizzle/proposals/rate_limit_windows.sql);
-// default and fallback is the per-process limiter. The database module is loaded lazily to keep this module import-light.
-const authenticatedRateLimiter = createRateLimiter(process.env, async () => (await import("../db")).getDb());
+// RATE_LIMIT_STORE=mysql shares per-user windows across instances (migration 0013); default is per-process.
+// Failure policy per route: docs/RATE_LIMITS.md.
+const authenticatedRateLimiter = getAuthenticatedRateLimiter();
 
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
@@ -45,11 +45,19 @@ const enforceAuthenticatedRateLimit = t.middleware(async opts => {
     ctx.res.setHeader("X-RateLimit-Limit", String(decision.limit));
     ctx.res.setHeader("X-RateLimit-Remaining", String(decision.remaining));
     ctx.res.setHeader("X-RateLimit-Reset", String(Math.ceil(decision.resetAt / 1_000)));
+    ctx.res.setHeader("X-RateLimit-Scope", decision.scope ?? "local");
   }
 
   if (!decision.allowed) {
     const retryAfterSeconds = Math.max(1, Math.ceil(decision.retryAfterMs / 1_000));
     if (!ctx.res.headersSent) ctx.res.setHeader("Retry-After", String(retryAfterSeconds));
+    if (decision.scope === "unavailable") {
+      // The shared counter could not be consulted and this route refuses rather than run uncounted (not a quota verdict).
+      throw new TRPCError({
+        code: "SERVICE_UNAVAILABLE",
+        message: `Request limits are temporarily unavailable for this action. Retry in ${retryAfterSeconds} seconds.`,
+      });
+    }
     throw new TRPCError({
       code: "TOO_MANY_REQUESTS",
       message: `Rate limit exceeded. Retry in ${retryAfterSeconds} seconds.`,
