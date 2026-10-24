@@ -2,7 +2,8 @@ import { NOT_ADMIN_ERR_MSG, UNAUTHED_ERR_MSG } from '@shared/const';
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
-import { InMemoryRateLimiter, selectAuthenticatedRatePolicy } from "./rateLimit";
+import { selectAuthenticatedRatePolicy } from "./rateLimit";
+import { createRateLimiter } from "./sharedRateLimit";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -11,7 +12,9 @@ const t = initTRPC.context<TrpcContext>().create({
 export const router = t.router;
 export const publicProcedure = t.procedure;
 
-const authenticatedRateLimiter = new InMemoryRateLimiter();
+// RATE_LIMIT_STORE=mysql shares the per-user windows across instances (table: drizzle/proposals/rate_limit_windows.sql);
+// default and fallback is the per-process limiter. The database module is loaded lazily to keep this module import-light.
+const authenticatedRateLimiter = createRateLimiter(process.env, async () => (await import("../db")).getDb());
 
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
@@ -36,7 +39,7 @@ const enforceAuthenticatedRateLimit = t.middleware(async opts => {
   }
 
   const policy = selectAuthenticatedRatePolicy(path);
-  const decision = authenticatedRateLimiter.consume(`user:${ctx.user.id}`, policy);
+  const decision = await authenticatedRateLimiter.consume(`user:${ctx.user.id}`, policy);
 
   if (!ctx.res.headersSent) {
     ctx.res.setHeader("X-RateLimit-Limit", String(decision.limit));
