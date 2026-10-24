@@ -214,6 +214,76 @@ jobs:
           path: reports/recovery/recovery-report.json
           if-no-files-found: warn
 
+  mysql-84-compatibility:
+    # Same real-MySQL suite and migration manifest on MySQL 8.4 LTS, the major version of the managed preview
+    # database (8.4.8). 8.0 evidence does not transfer: 8.4 disables mysql_native_password by default and changes
+    # several defaults. Separate job so the existing mysql-integration check name is unchanged. Disposable
+    # service container only; never a hosted database.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-root-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Real-MySQL integration tests
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+        run: pnpm test:mysql
+
+      - name: Migration manifest (baseline 0000-0004 -> latest, rerun no-op, data preservation, fresh-schema parity, backfill)
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+        run: pnpm staging:migration-manifest
+
+      - name: Upload migration manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-manifest-mysql84
+          path: reports/staging/runtime-migration-manifest.json
+          if-no-files-found: warn
+
+      - name: Upload MySQL integration report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-integration-report-mysql84
+          path: reports/mysql/vitest-report.json
+          if-no-files-found: warn
+
+      - name: Upload recovery rehearsal report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-report-mysql84
+          path: reports/recovery/recovery-report.json
+          if-no-files-found: warn
+
   e2e:
     # Browser-level production-shaped qualification: the real BUILT server + client against a disposable MySQL 8 service
     # container, with in-process fakes for OIDC, the local LLM, an "external" LLM (must never be contacted), S3 and clamd.
