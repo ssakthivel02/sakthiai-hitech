@@ -1,11 +1,13 @@
 import { COOKIE_NAME, ONE_YEAR_MS, decodeOAuthState } from "@shared/const";
 import { ForbiddenError } from "@shared/_core/errors";
+import { randomUUID } from "node:crypto";
 import { parse as parseCookieHeader } from "cookie";
 import type { Request } from "express";
 import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
+import { isSessionGenerationCurrent } from "./sessionRevocation";
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
@@ -14,6 +16,8 @@ export type SessionPayload = {
   openId: string;
   appId: string;
   name: string;
+  sessionGeneration: number;
+  sessionId: string;
 };
 
 export type AuthTokenResponse = {
@@ -120,17 +124,23 @@ class SDKServer {
 
   async createSessionToken(
     openId: string,
-    options: { expiresInMs?: number; name?: string } = {}
+    options: { expiresInMs?: number; name?: string; sessionGeneration: number },
   ): Promise<string> {
     return this.signSession(
-      { openId, appId: ENV.appId, name: options.name || "User" },
-      options
+      {
+        openId,
+        appId: ENV.appId,
+        name: options.name || "User",
+        sessionGeneration: options.sessionGeneration,
+        sessionId: randomUUID(),
+      },
+      options,
     );
   }
 
   async signSession(
     payload: SessionPayload,
-    options: { expiresInMs?: number } = {}
+    options: { expiresInMs?: number } = {},
   ): Promise<string> {
     const issuedAt = Date.now();
     const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
@@ -140,15 +150,17 @@ class SDKServer {
       openId: payload.openId,
       appId: payload.appId,
       name: payload.name,
+      sessionGeneration: payload.sessionGeneration,
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setJti(payload.sessionId)
       .setIssuedAt(Math.floor(issuedAt / 1000))
       .setExpirationTime(expirationSeconds)
       .sign(this.getSessionSecret());
   }
 
   async verifySession(
-    cookieValue: string | undefined | null
+    cookieValue: string | undefined | null,
   ): Promise<SessionPayload | null> {
     if (!cookieValue) return null;
 
@@ -156,15 +168,36 @@ class SDKServer {
       const { payload } = await jwtVerify(cookieValue, this.getSessionSecret(), {
         algorithms: ["HS256"],
       });
-      const { openId, appId, name } = payload as Record<string, unknown>;
-      if (!isNonEmptyString(openId) || !isNonEmptyString(appId) || !isNonEmptyString(name)) {
+      const { openId, appId, name, sessionGeneration, jti } = payload as Record<
+        string,
+        unknown
+      >;
+      if (
+        !isNonEmptyString(openId) ||
+        !isNonEmptyString(appId) ||
+        !isNonEmptyString(name) ||
+        !isNonEmptyString(jti) ||
+        typeof sessionGeneration !== "number" ||
+        !Number.isSafeInteger(sessionGeneration) ||
+        sessionGeneration < 0
+      ) {
         return null;
       }
       if (appId !== ENV.appId) return null;
-      return { openId, appId, name };
+      return {
+        openId,
+        appId,
+        name,
+        sessionGeneration,
+        sessionId: jti,
+      };
     } catch {
       return null;
     }
+  }
+
+  async revokeAllSessions(openId: string): Promise<void> {
+    await db.advanceUserSessionGeneration(openId);
   }
 
   async authenticateRequest(req: Request): Promise<AuthenticatedUser> {
@@ -185,11 +218,9 @@ class SDKServer {
 
     const user = await db.getUserByOpenId(session.openId);
     if (!user) throw ForbiddenError("User not found");
-
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: new Date(),
-    });
+    if (!isSessionGenerationCurrent(session.sessionGeneration, user.lastSignedIn)) {
+      throw ForbiddenError("Session revoked");
+    }
 
     return user;
   }
