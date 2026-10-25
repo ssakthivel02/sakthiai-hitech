@@ -20,6 +20,7 @@ import { extractDocument } from "./provenance";
 import { embeddingStatus, tryEmbed, serializeEmbedding } from "./embeddings";
 import { searchTextFor } from "./retrievalStore";
 import { creatorRouter } from "./creator/router";
+import { opsRouter } from "./ops/valueLedger";
 import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
 import { resolveGroundedOutcome, type ModelResult } from "./grounding";
 
@@ -49,6 +50,7 @@ function validateFile(buffer: Buffer, mimeType: string, filename: string) {
 
 export const appRouter = router({
   system: systemRouter,
+  ops: opsRouter,
   creator: creatorRouter,
   auth: router({ me: publicProcedure.query(opts => opts.ctx.user), logout: protectedProcedure.mutation(async ({ ctx }) => { await sdk.revokeAllSessions(ctx.user.openId); const options = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...options, maxAge: -1 }); return { success: true } as const; }) }),
   runtime: router({ status: publicProcedure.query(() => ({ health: "alive" as const, readiness: process.env.DATABASE_URL ? "configured" as const : "degraded" as const, embeddings: embeddingStatus(), scanner: { configuration: malwareScannerConfigurationStatus(), liveProbe: "not_checked" as const, requiredForCurrentReadiness: false as const, fileIngestion: "coming_soon" as const } })) }),

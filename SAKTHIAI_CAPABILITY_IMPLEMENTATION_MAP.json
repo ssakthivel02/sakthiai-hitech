@@ -632,6 +632,71 @@
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
       "knownLimitation": "Default OFF. In-process only: no separate worker deployment topology. Signal handling not exercised against a real orchestrator."
+    },
+    {
+      "capability": "value_ledger",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Admin-only tRPC ops.valueLedger({from,to}): read-only per-UTC-day aggregation of model usage (providerUsageWindows/Holds), Creator spend (creatorSpendWindows/Holds) and activity (messages, conversations, documents, projects); no migration",
+      "sourceFiles": [
+        "server/ops/valueLedger.ts",
+        "server/routers.ts"
+      ],
+      "tests": [
+        "server/ops/valueLedger.test.ts",
+        "server/ops/valueLedger.mysql.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Model usage appears only with GATEWAY_STATE_STORE=mysql (otherwise reported as not_persisted). Output quality is NOT_MEASURED (no per-answer feedback exists). No UI: the endpoint is the interface. Activity counts scan the date range without a dedicated index (fine at preview scale)."
+    },
+    {
+      "capability": "build_artifact_identity",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "pnpm build writes dist/release-manifest.json (SHA-256 of dist, server/client components, source commit, lockfile, toolchain, VITE fingerprint); the server re-verifies it at startup and reports it on /releasez; CI job release-artifact retains the exact-commit dist for 90 days",
+      "sourceFiles": [
+        "scripts/release-manifest.mjs",
+        "server/_core/artifactIdentity.ts",
+        "server/_core/index.ts",
+        ".github/workflows/quality-gate.yml"
+      ],
+      "tests": [
+        "server/_core/artifactIdentity.test.ts",
+        "server/release/evidence.test.ts"
+      ],
+      "workflowGate": [
+        "pnpm build",
+        "node scripts/smoke-built-server.mjs",
+        "pnpm release:evidence"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "The host rebuilds from source, so a deploy is tied by digest equality (docs/RELEASE_ARTIFACT.md), not observed on a deployed build yet. The client digest matches only when the build-time VITE_* values match."
+    },
+    {
+      "capability": "maintenance_mode",
+      "truthModel": "IMPLEMENTED",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "SAKTHIAI_MAINTENANCE_MODE=true: every route except /healthz, /readyz, /releasez answers 503 before parsing/auth/database; /readyz 503 without probing; no background runners; unrecognised values fail closed",
+      "sourceFiles": [
+        "server/_core/maintenanceMode.ts",
+        "server/_core/index.ts"
+      ],
+      "tests": [
+        "server/_core/maintenanceMode.test.ts",
+        "tests/maintenance-mode.test.mjs"
+      ],
+      "workflowGate": [
+        "pnpm test"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Only builds that contain it can use it; the preview's current build (469c668) cannot. Changing the variable needs a restart."
     }
   ]
 }
