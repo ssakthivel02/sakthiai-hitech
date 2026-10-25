@@ -23,6 +23,8 @@ import { authenticationReadiness } from "./sessionPolicy";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
 import { probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
 import { getAuthenticatedRateLimiter, rateLimitReadiness } from "./sharedRateLimit";
+import { getArtifactIdentity } from "./artifactIdentity";
+import { maintenanceGate, maintenanceModeFromEnv } from "./maintenanceMode";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -51,6 +53,9 @@ function configured(...values: Array<string | undefined>) {
   return values.every(value => typeof value === "string" && value.trim().length > 0);
 }
 
+const maintenance = maintenanceModeFromEnv();
+if (maintenance.warning) console.warn(maintenance.warning);
+
 function releaseIdentity() {
   const commit = process.env.RENDER_GIT_COMMIT?.trim() || process.env.GIT_COMMIT?.trim() || "unknown";
   return {
@@ -60,6 +65,9 @@ function releaseIdentity() {
     repository: process.env.RENDER_GIT_REPO_SLUG?.trim() || "ssakthivel02/sakthiai-hitech",
     commit,
     exactCommitKnown: commit !== "unknown",
+    // Built-artifact identity: compare artifact.digest with the CI-retained release-artifact for this commit.
+    artifact: getArtifactIdentity(),
+    maintenanceMode: maintenance.enabled,
   };
 }
 
@@ -111,6 +119,9 @@ async function startServer() {
     next();
   });
 
+  // Before every parser, auth, database, storage, OAuth, tRPC and static handler.
+  app.use(maintenanceGate(maintenance));
+
   registerEdgeBodyParsers(app, { authenticate: req => sdk.authenticateRequest(req) });
 
   app.get("/healthz", (_req, res) =>
@@ -119,12 +130,18 @@ async function startServer() {
       service: "sakthiai",
       environment: deploymentTier(),
       runtimeMode: runtimeMode(),
+      ...(maintenance.enabled ? { maintenanceMode: true } : {}),
     }),
   );
 
   app.get("/releasez", (_req, res) => res.status(200).json(releaseIdentity()));
 
   app.get("/readyz", async (_req, res) => {
+    // Contained: not ready, and no dependency (database, rate-limit store, provider) is contacted at all.
+    if (maintenance.enabled) {
+      res.status(503).json({ status: "maintenance", service: "sakthiai", maintenanceMode: true });
+      return;
+    }
     const databaseReady = await probeDatabaseReadiness();
     // Reachable is not enough: the schema must match this build, or every procedure touching a newer table fails.
     const databaseSchema = databaseReady ? await probeSchemaReadiness() : null;
@@ -153,11 +170,14 @@ async function startServer() {
       ENV.storageSecretAccessKey,
     );
     const rateLimit = rateLimitReadiness(await getAuthenticatedRateLimiter().verify());
-    const ready = databaseReady && schemaCurrent && authReady && llmReady && storageReady && rateLimit.ready;
+    // A build whose files no longer match its own manifest must not take traffic.
+    const artifactIntact = getArtifactIdentity().state !== "mismatch";
+    const ready = databaseReady && schemaCurrent && authReady && llmReady && storageReady && rateLimit.ready && artifactIntact;
 
     res.status(ready ? 200 : 503).json({
       status: ready ? "ready" : "not_ready",
       service: "sakthiai",
+      maintenanceMode: false,
       dependencies: {
         database: !databaseReady ? "unavailable" : schemaCurrent ? "configured" : "schema_mismatch",
         databaseSchema: databaseSchema
@@ -168,6 +188,7 @@ async function startServer() {
         llmGateway: gateway,
         storage: storageReady ? "configured" : "missing_configuration",
         rateLimit: { store: rateLimit.store, state: rateLimit.state },
+        artifact: getArtifactIdentity().state,
         embeddings: embeddingStatus(),
         taskWorker: getTaskRuntime().status(),
         uploadCleanup: getUploadCleanupRunner().status(),
@@ -194,7 +215,8 @@ async function startServer() {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
   server.listen(port, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${port}/`);
+    console.log(`Server running on http://0.0.0.0:${port}/${maintenance.enabled ? " (MAINTENANCE MODE: only /healthz, /readyz, /releasez answer)" : ""}`);
+    if (maintenance.enabled) return; // no background work while contained
     // Default OFF (TASK_WORKER_ENABLED). A worker failure is contained inside the runtime and never crashes the HTTP app.
     try { getUploadCleanupRunner().start(); } catch (error) { console.error("upload cleanup failed to start", error instanceof Error ? error.message : error); }
     try { getTaskRuntime().start(); } catch (error) { console.error("task runtime failed to start", error instanceof Error ? error.message : error); }

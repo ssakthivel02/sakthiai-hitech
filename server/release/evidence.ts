@@ -93,11 +93,29 @@ export type EvidenceInputs = {
   evalReport: any; goldenReport: any; recoveryReport: any; smoke: any;
   evalDigest: string | null; goldenDigest: string | null; e2eDigest: string | null; recoveryDigest: string | null;
   secretHygiene: { ok: boolean; detail: string } | null; sourceNeutrality: { ok: boolean; detail: string } | null;
+  /** This job's own build (dist/release-manifest.json, re-hashed) vs the artifact the smoke-tested server reported. */
+  artifact?: { localManifest: { artifactDigest: string; fileCount: number; sourceCommit: string; toolchain?: unknown } | null; localDigestMatches: boolean } | null;
 };
 
 export const REQUIRED_JOBS = ["validate", "mysql-integration", "e2e"] as const;
 const gate = (status: GateStatus, detail: string, digest?: string): Gate => ({ status, detail, ...(digest ? { digest } : {}) });
 const testsGate = (t: TestTotals, label: string): Gate => !t.present ? gate("MISSING", `${label} report missing`) : t.failed || t.filesFailed ? gate("FAIL", `${t.failed} failed tests in ${t.filesFailed} files`) : t.total === 0 ? gate("FAIL", "zero tests ran") : gate("PASS", `${t.passed}/${t.total} passed, ${t.skipped} skipped, ${t.files} files`);
+
+/**
+ * Built-artifact identity. PASS only when this job's build matches its own manifest AND equals the digest the
+ * smoke-tested server recomputed from its own files (in CI that server ran in the validate job on another runner, so
+ * equality is an independent rebuild reproducing it). The deployable artifact itself is retained by the release-artifact
+ * job. Commit plus lockfile is not enough.
+ */
+function artifactGate(i: EvidenceInputs): Gate {
+  const local = i.artifact?.localManifest; const served = i.smoke?.artifact;
+  if (!local) return gate("MISSING", "dist/release-manifest.json missing (build did not write one)");
+  if (!i.artifact?.localDigestMatches) return gate("FAIL", "dist/ does not match its own release manifest");
+  if (!served) return gate("MISSING", "smoke report carries no served artifact identity");
+  if (served.state !== "verified") return gate("FAIL", `served artifact state ${served.state}`);
+  if (served.digest !== local.artifactDigest) return gate("FAIL", `served artifact ${served.digest} differs from rebuilt ${local.artifactDigest}`);
+  return gate("PASS", `artifact ${local.artifactDigest} (${local.fileCount} files) verified by the running server and reproduced by this build`, local.artifactDigest);
+}
 
 export function buildManifest(i: EvidenceInputs) {
   const attested = i.ci.actions && i.ci.upstreamJobsSucceeded.length > 0;
@@ -120,13 +138,14 @@ export function buildManifest(i: EvidenceInputs) {
     productionAdvisories: !i.audit.present ? gate("MISSING", "pnpm audit --prod report missing") : i.audit.critical || i.audit.high ? gate("FAIL", `${i.audit.critical} critical, ${i.audit.high} high production advisories`) : gate("PASS", `0 critical, 0 high (${i.audit.moderate} moderate, ${i.audit.low} low)`),
     build: i.smoke?.distPresent === true ? gate("PASS", "dist/index.js present") : i.smoke ? gate("FAIL", "dist missing") : gate("MISSING", "built-server smoke not run"),
     builtServerSmoke: !i.smoke ? gate("MISSING", "built-server smoke not run") : i.smoke.ok === true ? gate("PASS", `healthz ${i.smoke.healthz}, root ${i.smoke.rootBytes} bytes, readyz ${i.smoke.readyz} (fail-closed expected)`) : gate("FAIL", String(i.smoke.detail ?? "smoke failed")),
+    artifactIdentity: artifactGate(i),
     ciShaBinding: i.ci.actions ? (shaMatches ? gate("PASS", "GITHUB_SHA equals checked-out HEAD") : gate("FAIL", "GITHUB_SHA differs from checked-out HEAD")) : gate("NOT_ATTESTED", "not running in GitHub Actions"),
   };
   const required = Object.keys(gates);
   const hardFail = required.filter(k => gates[k].status === "FAIL");
   const missing = required.filter(k => gates[k].status === "MISSING");
   const notAttested = required.filter(k => gates[k].status === "NOT_ATTESTED");
-  const localEvidenceOk = ["unitTests", "mysqlIntegration", "e2e", "evals", "goldenBenchmark", "recoveryRehearsal", "capabilityMap", "migrationConsistency", "secretHygiene", "sourceNeutrality", "productionAdvisories", "build", "builtServerSmoke"].every(k => gates[k].status === "PASS");
+  const localEvidenceOk = ["unitTests", "mysqlIntegration", "e2e", "evals", "goldenBenchmark", "recoveryRehearsal", "capabilityMap", "migrationConsistency", "secretHygiene", "sourceNeutrality", "productionAdvisories", "build", "builtServerSmoke", "artifactIdentity"].every(k => gates[k].status === "PASS");
   const ciVerified = i.ci.actions && !i.gitDirty && hardFail.length === 0 && missing.length === 0 && notAttested.length === 0 && shaMatches;
   const overall = hardFail.length ? "GATES_FAILED" : missing.length ? "GATES_INCOMPLETE" : ciVerified ? "CI_GATES_PASS" : "LOCAL_GATES_PASS_CI_PENDING";
   return {
@@ -147,6 +166,7 @@ export function buildManifest(i: EvidenceInputs) {
     evals: { contract: i.evalReport ? { digest: i.evalDigest, evidenceClass: i.evalReport.evidenceClass, cases: i.evalReport.aggregates?.cases, passed: i.evalReport.aggregates?.casesPassed, realModelQuality: i.evalReport.realModelQuality } : null,
       golden: i.goldenReport ? { digest: i.goldenDigest, corpusDigest: i.goldenReport.corpusDigest, evidenceClass: i.goldenReport.evidenceClass, scored: `${i.goldenReport.aggregates?.scoredPassed}/${i.goldenReport.aggregates?.scoredCases}`, knownGaps: i.goldenReport.aggregates?.knownGapCases, realModelQuality: i.goldenReport.realModelQuality } : null },
     e2e: { digest: i.e2eDigest, ...i.e2e },
+    artifact: { digest: i.artifact?.localManifest?.artifactDigest ?? null, fileCount: i.artifact?.localManifest?.fileCount ?? null, servedDigest: i.smoke?.artifact?.digest ?? null, toolchain: i.artifact?.localManifest?.toolchain ?? null, retainedAs: "GitHub Actions artifact release-artifact-<commit> (job release-artifact, exact deployable commit, 90 days)" },
     audit: { scope: "production dependencies (pnpm audit --prod)", ...i.audit },
     recovery: i.recoveryReport ? { digest: i.recoveryDigest, evidenceClass: i.recoveryReport.evidenceClass, engine: i.recoveryReport.engine, scenarios: i.recoveryReport.scenarios?.length, managedDatabaseTouched: i.recoveryReport.managedDatabaseTouched, schemaDowngrade: i.recoveryReport.schemaDowngrade } : null,
     capabilityTruth: { total: i.capability.total, byTruthModel: i.capability.byTruthModel, byStatus: i.capability.byStatus, runtimeVerified: i.capability.runtimeVerified, ciVerified: i.capability.ciVerified },

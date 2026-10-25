@@ -129,8 +129,11 @@ jobs:
       - name: Deployable artifact neutrality guard
         run: node scripts/validate-source-neutrality.mjs --dist
 
-      - name: Built-server behavior smoke (healthz, SPA shell, fail-closed readyz)
+      - name: Built-server behavior smoke (healthz, SPA shell, fail-closed readyz, served artifact identity)
         run: node scripts/smoke-built-server.mjs
+
+      - name: Verify built-artifact manifest
+        run: node scripts/release-manifest.mjs --verify
 
       - name: Upload validate evidence
         if: always()
@@ -398,3 +401,60 @@ jobs:
           name: release-evidence
           path: reports/release/release-evidence.json
           if-no-files-found: warn
+
+  release-artifact:
+    # The deployable build of the EXACT commit a host would deploy: the PR head (not the merge ref the other jobs test)
+    # or the pushed commit. Built with the frozen lockfile, served once to prove the running server verifies its own
+    # files, then retained with its manifest. A host that rebuilds from source is tied to this artifact by comparing
+    # its /releasez artifact.digest with the digest recorded here (docs/RELEASE_ARTIFACT.md).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact deployable commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The browser bundle embeds build-time VITE_* values. Repository variables (non-secret; they ship to every browser)
+      # mirror the preview host's values so the client digest can match the host's build. Unset variables build without
+      # them, and only the server digest is then comparable (docs/RELEASE_ARTIFACT.md).
+      - name: Build
+        env:
+          VITE_APP_ID: ${{ vars.SAKTHIAI_PREVIEW_VITE_APP_ID }}
+          VITE_OIDC_AUTHORIZATION_URL: ${{ vars.SAKTHIAI_PREVIEW_VITE_OIDC_AUTHORIZATION_URL }}
+          VITE_OIDC_CLIENT_ID: ${{ vars.SAKTHIAI_PREVIEW_VITE_OIDC_CLIENT_ID }}
+          VITE_OIDC_SCOPES: ${{ vars.SAKTHIAI_PREVIEW_VITE_OIDC_SCOPES }}
+        run: pnpm build
+
+      - name: Verify manifest and served identity
+        run: |
+          node scripts/release-manifest.mjs --verify
+          node scripts/smoke-built-server.mjs
+          test "$(node -p 'require("./dist/release-manifest.json").sourceCommit')" = "$(git rev-parse HEAD)"
+
+      - name: Record artifact identity
+        id: identity
+        run: |
+          node -p 'const m=require("./dist/release-manifest.json");`artifact=${m.artifactDigest}\ncommit=${m.sourceCommit}`' >> "$GITHUB_OUTPUT"
+          node -e 'const m=require("./dist/release-manifest.json");console.log(`| field | value |\n|---|---|\n| artifact digest | ${m.artifactDigest} |\n| server digest | ${m.components.server.digest} |\n| client digest | ${m.components.client.digest} |\n| VITE variables | ${m.buildEnvironment.viteVariables.join(", ") || "none"} (fingerprint ${m.buildEnvironment.fingerprint}) |\n| files | ${m.fileCount} |\n| source commit | ${m.sourceCommit} |\n| lockfile sha256 | ${m.lockfileSha256} |\n| package.json sha256 | ${m.packageJsonSha256} |\n| node / pnpm | ${m.toolchain.node} / ${m.toolchain.pnpm} |\n| build | ${m.buildCommand} |`)' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain deployable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifact-${{ steps.identity.outputs.commit }}
+          path: dist/
+          retention-days: 90
+          if-no-files-found: error

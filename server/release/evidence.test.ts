@@ -66,7 +66,8 @@ function inputs(over: Partial<EvidenceInputs> = {}): EvidenceInputs {
     evalReport: { thresholds: { passed: true }, evidenceClass: "CONTRACT_HARNESS", realModelQuality: "NOT_MEASURED", aggregates: { cases: 28, casesPassed: 28 } },
     goldenReport: { thresholds: { passed: true }, evidenceClass: "CONTRACT_HARNESS_GOLDEN", realModelQuality: "REAL_MODEL_QUALITY_UNVERIFIED", corpusDigest: "c", aggregates: { scoredPassed: 38, scoredCases: 38, knownGapCases: 4 } },
     recoveryReport: { passed: true, managedDatabaseTouched: false, schemaDowngrade: "NOT_SUPPORTED_FORWARD_ONLY", engine: "MariaDB", evidenceClass: "LOCAL_REHEARSAL", scenarios: new Array(9).fill({}) },
-    smoke: { ok: true, distPresent: true, healthz: 200, rootBytes: 571, readyz: 503 },
+    smoke: { ok: true, distPresent: true, healthz: 200, rootBytes: 571, readyz: 503, artifact: { state: "verified", digest: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", fileCount: 399 } },
+    artifact: { localManifest: { artifactDigest: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", fileCount: 399, sourceCommit: "a".repeat(40) }, localDigestMatches: true },
     evalDigest: "e", goldenDigest: "g", e2eDigest: "2", recoveryDigest: "r", secretHygiene: { ok: true, detail: "clean" }, sourceNeutrality: { ok: true, detail: "clean" },
     ...over,
   };
@@ -117,6 +118,11 @@ describe("release evidence manifest", () => {
       ["recovery touched managed db", { recoveryReport: { passed: true, managedDatabaseTouched: true, schemaDowngrade: "NOT_SUPPORTED_FORWARD_ONLY" } }, "recoveryRehearsal", "GATES_FAILED"],
       ["recovery claims downgrade", { recoveryReport: { passed: true, managedDatabaseTouched: false, schemaDowngrade: "SUPPORTED" } }, "recoveryRehearsal", "GATES_FAILED"],
       ["recovery missing", { recoveryReport: null }, "recoveryRehearsal", "GATES_INCOMPLETE"],
+      ["no release manifest", { artifact: { localManifest: null, localDigestMatches: false } }, "artifactIdentity", "GATES_INCOMPLETE"],
+      ["dist altered after manifest", { artifact: { localManifest: { artifactDigest: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", fileCount: 399, sourceCommit: "a" }, localDigestMatches: false } }, "artifactIdentity", "GATES_FAILED"],
+      ["served artifact unverified", { smoke: { ok: true, distPresent: true, healthz: 200, rootBytes: 1, readyz: 503, artifact: { state: "mismatch", digest: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" } } }, "artifactIdentity", "GATES_FAILED"],
+      ["rebuild differs from served artifact", { smoke: { ok: true, distPresent: true, healthz: 200, rootBytes: 1, readyz: 503, artifact: { state: "verified", digest: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" } } }, "artifactIdentity", "GATES_FAILED"],
+      ["smoke without artifact identity", { smoke: { ok: true, distPresent: true, healthz: 200, rootBytes: 1, readyz: 503 } }, "artifactIdentity", "GATES_INCOMPLETE"],
     ];
     for (const [label, over, gate, overall] of cases) {
       const m = buildManifest(inputs(over)); expect(m.summary.overall, label).toBe(overall); expect([...m.summary.failed, ...m.summary.missing], label).toContain(gate);
