@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
   "purpose": "Public-safe release evidence ledger rendered on /intelligence. Records what was OBSERVED, when, and by which kind of check. No hostnames, service identifiers, account names or credentials. Unknown is never healthy; an observation older than freshnessDays is shown as stale and treated as unknown.",
-  "observedAt": "2026-10-25T02:34:00Z",
+  "observedAt": "2026-10-25T03:06:00Z",
   "freshnessDays": 7,
   "verdicts": {
     "preview": "no-go",
@@ -10,8 +10,8 @@
   "candidate": {
     "label": "Draft PR #29 (combined runtime-qualification candidate)",
     "link": "https://github.com/ssakthivel02/sakthiai-hitech/pull/29",
-    "lastCiVerifiedCommit": "5729a0210afb456c89d4bfc8b8290fab6069adc0",
-    "ciEvidence": "18/18 check runs successful at 5729a02 (incl. mysql-integration on MySQL 8.0, mysql-84-compatibility on MySQL 8.4, e2e, release-evidence and rollback-readiness), read 24 Oct 2026",
+    "lastCiVerifiedCommit": "33be89a244aefd03e8f112c5256877153c9e76f8",
+    "ciEvidence": "18/18 check runs successful at 33be89a (incl. mysql-integration on MySQL 8.0, mysql-84-compatibility on MySQL 8.4, e2e, release-artifact and release-evidence with the artifactIdentity gate), read 25 Oct 2026; 89239c5 had 19/19 including the path-filtered preflight",
     "note": "Commits pushed after the CI-verified commit are source-implemented only until their own CI run is read. The exact head is whatever this page's build reports below."
   },
   "deployment": {
@@ -32,7 +32,7 @@
       "id": "ci",
       "name": "Repository CI on the candidate",
       "state": "ci_passed",
-      "evidence": "17/17 check runs at 2eb2b6e, including MySQL 8.0 and 8.4 containers and browser e2e. Later commits need their own CI run."
+      "evidence": "18/18 check runs at 33be89a, including MySQL 8.0 and 8.4 containers, browser e2e and the retained exact-commit release artifact. Later commits need their own CI run."
     },
     {
       "id": "preview-deploy",
@@ -91,8 +91,8 @@
     {
       "id": "build-identity",
       "name": "Built-artifact identity",
-      "state": "source_implemented",
-      "evidence": "Each build writes a SHA-256 manifest of dist (server and browser components, source commit, lockfile, toolchain, build-time VITE fingerprint); the server re-verifies it at startup and reports it on /releasez; CI retains the exact-commit artifact for 90 days. The host rebuilds from source, so a deploy is tied by digest equality, not yet observed on a deployed build."
+      "state": "ci_passed",
+      "evidence": "Each build writes a SHA-256 manifest of dist (server and browser components, source commit, lockfile, toolchain, build-time VITE fingerprint); the server re-verifies it at startup and reports it on /releasez. CI retained release-artifact-33be89a (90 days) and its release-evidence gate reproduced the digest on a second runner. The host rebuilds from source, so a deploy is tied by digest equality, not yet observed on a deployed build."
     },
     {
       "id": "rollback",
