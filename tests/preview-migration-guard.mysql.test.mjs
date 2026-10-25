@@ -68,7 +68,7 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
   });
 
   it("fresh production database: empty -> every migration pending -> migrate -> post -> rerun no-op, evidence under production-migration-*", async () => {
-    const s = await createScratchDatabase(base, "sakthi_prod"); cleanup.push(() => dropScratchDatabase(base, s.name));
+    const s = await createScratchDatabase(base, "sakthi_rr"); cleanup.push(() => dropScratchDatabase(base, s.name));
     const reportDir = mkdtempSync(path.join(tmpdir(), "guard-report-")); cleanup.push(async () => rmSync(reportDir, { recursive: true, force: true }));
     const guard = mode => runGuard(mode, { databaseUrl: s.url, expectedDatabase: s.name, recoveryPoint: new Date(Date.now() + 1000).toISOString(), root, reportDir, reportPrefix: "production-migration" });
     const pre = await guard("pre");
