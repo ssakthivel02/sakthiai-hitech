@@ -7,6 +7,10 @@ on:
         description: "Owner-attested Aiven backup time for hitech-preview-mysql taken/confirmed before this run, UTC with Z (e.g. 2026-10-05T01:10:00Z). Recorded as OWNER_ATTESTED, not provider-verified."
         required: true
         type: string
+      approved_commit:
+        description: "Full 40-character SHA named in the preview approval. Must equal the commit of the ref you dispatch from; checked before the database environment (and its reviewers/secrets) is entered."
+        required: true
+        type: string
       mode:
         description: "inspect = read-only preflight (secrets present, target name, verified TLS, recovery point, journal/hash/snapshot); writes nothing. migrate = apply pending migrations and backfill."
         required: true
@@ -23,7 +27,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Commit binding runs in its own job with NO environment and NO secrets: a mismatched approved_commit fails here, so the
+  # database environment is never entered, its reviewers are never asked, and no credential is ever bound to the run.
+  bind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      APPROVED_COMMIT: ${{ inputs.approved_commit }}
+      DISPATCHED_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Require approved_commit to equal the dispatched commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "${APPROVED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "approved_commit must be a full 40-character lowercase SHA."
+            exit 1
+          fi
+          if [ "${APPROVED_COMMIT}" != "${DISPATCHED_COMMIT:-}" ]; then
+            echo "approved_commit ${APPROVED_COMMIT} does not match the dispatched commit ${DISPATCHED_COMMIT:-<unset>}; refusing."
+            exit 1
+          fi
+          echo "Commit binding PASS (${DISPATCHED_COMMIT})"
+
   migrate:
+    needs: bind
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Credentials live ONLY as environment secrets. inspect -> SELECT-only principal; migrate -> least-privilege
@@ -37,8 +65,10 @@ jobs:
       PREVIEW_DB_ROLE: ${{ inputs.mode }}
       ENVIRONMENT_DB_ROLE: ${{ vars.SAKTHIAI_PREVIEW_DB_ROLE }}
     steps:
-      - name: Checkout
+      - name: Checkout the dispatched commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - name: Require environment-scoped preview database configuration
         shell: bash

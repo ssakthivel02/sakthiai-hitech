@@ -180,7 +180,8 @@ describe("schema classification against the journal (no database)", () => {
 
 describe("preview-db-setup.yml: environment-scoped credentials", () => {
   const wf = readFileSync(path.join(root, ".github/workflows/preview-db-setup.yml"), "utf8");
-  const steps = wf.split(/\n      - name: /).slice(1);
+  // the credential-bearing steps all live in the `migrate` job; the separate `bind` job (no environment, no secrets) is covered by preview-db-commit-binding.test.mjs
+  const steps = wf.split(/\n  migrate:\n/)[1].split(/\n      - name: /).slice(1);
   const stepIndex = name => steps.findIndex(step => step.startsWith(name));
   // the environment expression, evaluated the way GitHub does for `a && 'x' || 'y'` with non-empty string literals
   const environmentFor = mode => {
