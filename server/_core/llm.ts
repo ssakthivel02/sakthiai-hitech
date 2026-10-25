@@ -45,6 +45,11 @@ export type ModelsResponse = { object: string; data: ModelInfo[] };
 const RETRY_MAX_RETRIES = 4;
 const RETRY_BASE_DELAY_MS = 500;
 const RETRY_MAX_DELAY_MS = 30_000;
+const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+export function isRetryableHttpStatus(status: number): boolean {
+  return RETRYABLE_HTTP_STATUSES.has(status);
+}
 
 type FetchInit = NonNullable<Parameters<typeof fetch>[1]>;
 
@@ -107,7 +112,7 @@ async function fetchWithBackoff(url: string, init: FetchInit): Promise<Response>
   for (let attempt = 0; attempt <= RETRY_MAX_RETRIES; attempt += 1) {
     try {
       const response = await fetch(url, init);
-      if (response.ok || attempt === RETRY_MAX_RETRIES) return response;
+      if (response.ok || attempt === RETRY_MAX_RETRIES || !isRetryableHttpStatus(response.status)) return response;
       const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
       try { await response.body?.cancel(); } catch { /* noop */ }
       await sleep(computeBackoffDelay(attempt, retryAfter));
