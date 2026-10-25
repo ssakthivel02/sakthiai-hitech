@@ -85,7 +85,7 @@
       "id": "production-environment",
       "name": "Production environment",
       "state": "blocked",
-      "evidence": "No production web service, production database, object storage bucket or domain exists. Only the preview service is defined.",
+      "evidence": "No production web service, database, bucket or domain was found in the accounts readable from the release sessions (Render read on 25 Oct; Aiven not readable). A guarded production database workflow (separate environments and secrets, exact-commit and database-name bindings) exists in source and is tested locally; it is not yet on the default branch, so it cannot be dispatched.",
       "blocker": "Owner decision to provision production infrastructure after preview acceptance (spend-bearing)."
     },
     {

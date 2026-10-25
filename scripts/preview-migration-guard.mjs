@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// Read-only guard around `pnpm db:push` for the non-disposable preview database (used by preview-db-setup.yml).
+// Read-only guard around `pnpm db:push` for a non-disposable database: the preview (preview-db-setup.yml) and production
+// (production-db-setup.yml). MIGRATION_REPORT_PREFIX names the evidence files (default preview-migration) and
+// MIGRATION_DB_ROLE (or PREVIEW_DB_ROLE) the principal role; DATABASE_EXPECTED_NAME the only acceptable database.
 //   attest: RECOVERY_POINT must be a real, non-future UTC instant (YYYY-MM-DDTHH:MM[:SS[.ffffff]]Z). No database access.
 //   pre:    applied __drizzle_migrations rows must be an exact in-order prefix of the journal, matching the Drizzle
 //           migrator's own format (hash = sha256 of drizzle/<tag>.sql, created_at = journal `when`); no row may be newer
@@ -264,10 +266,13 @@ async function connect(urlText) {
   });
 }
 
-/** One guard step. Returns { problems, report }; writes preview-migration-<mode>.json under reportDir. */
-export async function runGuard(mode, { databaseUrl, expectedDatabase = "sakthiai_preview", recoveryPoint, role, root = process.cwd(), reportDir = "reports/staging", now = new Date() }) {
+export const REPORT_PREFIX = /^[a-z][a-z0-9-]{0,40}$/;
+
+/** One guard step. Returns { problems, report }; writes <reportPrefix>-<mode>.json under reportDir. */
+export async function runGuard(mode, { databaseUrl, expectedDatabase = "sakthiai_preview", recoveryPoint, role, root = process.cwd(), reportDir = "reports/staging", reportPrefix = "preview-migration", now = new Date() }) {
   const problems = [];
-  const write = report => { mkdirSync(reportDir, { recursive: true }); writeFileSync(path.join(reportDir, `preview-migration-${mode}.json`), `${JSON.stringify(report, null, 2)}\n`); return { problems, report }; };
+  if (!REPORT_PREFIX.test(reportPrefix)) throw new Error(`invalid report prefix ${reportPrefix}`);
+  const write = report => { mkdirSync(reportDir, { recursive: true }); writeFileSync(path.join(reportDir, `${reportPrefix}-${mode}.json`), `${JSON.stringify(report, null, 2)}\n`); return { problems, report }; };
   if (!["attest", "pre", "post", "rerun", "grants"].includes(mode)) { problems.push(`unknown mode ${mode}`); return { problems, report: { mode, problems } }; }
   const recovery = mode === "attest" || mode === "pre" ? parseRecoveryPoint(recoveryPoint, now) : null;
   if (recovery) problems.push(...recovery.problems);
@@ -314,9 +319,9 @@ export async function runGuard(mode, { databaseUrl, expectedDatabase = "sakthiai
         for (const [col, n] of Object.entries(report.rowsNewerThanRecoveryPoint)) problems.push(`${n} row(s) in ${col} are newer than the recovery point; take a fresh backup first`);
       }
     } else if (mode === "post") {
-      problems.push(...checkPreservation(JSON.parse(readFileSync(path.join(reportDir, "preview-migration-pre.json"), "utf8")).snapshot, snap));
+      problems.push(...checkPreservation(JSON.parse(readFileSync(path.join(reportDir, `${reportPrefix}-pre.json`), "utf8")).snapshot, snap));
     } else {
-      problems.push(...compareSnapshots(JSON.parse(readFileSync(path.join(reportDir, "preview-migration-post.json"), "utf8")).snapshot, snap));
+      problems.push(...compareSnapshots(JSON.parse(readFileSync(path.join(reportDir, `${reportPrefix}-post.json`), "utf8")).snapshot, snap));
     }
     report.problems = problems;
     return write(report);
@@ -328,13 +333,14 @@ export async function runGuard(mode, { databaseUrl, expectedDatabase = "sakthiai
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const mode = process.argv[2];
   if (!["attest", "pre", "post", "rerun", "grants"].includes(mode)) { console.error("usage: preview-migration-guard.mjs attest|pre|post|rerun|grants"); process.exit(2); }
+  const reportPrefix = process.env.MIGRATION_REPORT_PREFIX?.trim() || "preview-migration";
   const { problems, report } = await runGuard(mode, {
     databaseUrl: process.env.DATABASE_URL ?? "", expectedDatabase: process.env.DATABASE_EXPECTED_NAME ?? "sakthiai_preview", recoveryPoint: process.env.RECOVERY_POINT,
-    role: process.env.PREVIEW_DB_ROLE,
+    role: process.env.MIGRATION_DB_ROLE ?? process.env.PREVIEW_DB_ROLE, reportPrefix,
   });
   const detail = report.snapshot ? ` engine=${report.snapshot.engine} applied=${report.applied}/${report.journalEntries} pending=${report.pendingTags.join(",") || "none"}` : "";
   const evidence = report.recoveryEvidence ? ` recovery=${report.recoveryEvidence.class}:${report.recoveryEvidence.attestedRecoveryPoint}` : "";
   const principal = mode === "grants" && report.principal ? ` role=${report.role} principal=${report.principal} privileges=${report.privileges.join("+") || "none"}` : "";
-  console.log(`PREVIEW_MIGRATION_${mode.toUpperCase()} ${problems.length ? "FAIL" : "PASS"}${detail}${evidence}${principal}`);
+  console.log(`${reportPrefix.toUpperCase().replace(/-/g, "_")}_${mode.toUpperCase()} ${problems.length ? "FAIL" : "PASS"}${detail}${evidence}${principal}`);
   if (problems.length) { console.error(problems.join("\n")); process.exitCode = 1; }
 }

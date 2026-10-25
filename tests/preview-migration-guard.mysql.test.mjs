@@ -1,6 +1,6 @@
 // Real MySQL 8: the preview-db-setup guard sequence (pre -> migrate -> post -> migrate again -> rerun) against throwaway
 // databases built with the real Drizzle migrator, so __drizzle_migrations has exactly the format drizzle-kit writes.
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import mysql from "mysql2/promise";
@@ -65,6 +65,23 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
     expect(post.report.applied).toBe(journal.entries.length);
     await drizzleMigrate(db.url, path.join(root, "drizzle"));
     expect((await db.guard("rerun")).problems).toEqual([]);
+  });
+
+  it("fresh production database: empty -> every migration pending -> migrate -> post -> rerun no-op, evidence under production-migration-*", async () => {
+    const s = await createScratchDatabase(base, "sakthi_prod"); cleanup.push(() => dropScratchDatabase(base, s.name));
+    const reportDir = mkdtempSync(path.join(tmpdir(), "guard-report-")); cleanup.push(async () => rmSync(reportDir, { recursive: true, force: true }));
+    const guard = mode => runGuard(mode, { databaseUrl: s.url, expectedDatabase: s.name, recoveryPoint: new Date(Date.now() + 1000).toISOString(), root, reportDir, reportPrefix: "production-migration" });
+    const pre = await guard("pre");
+    expect(pre.problems).toEqual([]);
+    expect(pre.report.applied).toBe(0);
+    expect(pre.report.pendingTags).toEqual(journal.entries.map(e => e.tag));
+    await drizzleMigrate(s.url, path.join(root, "drizzle"));
+    const post = await guard("post");
+    expect(post.problems).toEqual([]);
+    expect(post.report.applied).toBe(journal.entries.length);
+    await drizzleMigrate(s.url, path.join(root, "drizzle"));
+    expect((await guard("rerun")).problems).toEqual([]);
+    expect(readdirSync(reportDir).sort()).toEqual(["production-migration-post.json", "production-migration-pre.json", "production-migration-rerun.json"]);
   });
 
   it("refuses to migrate when rows were written after the attested recovery point", async () => {
