@@ -51,6 +51,8 @@ describe("loopback Ollama-style inference keeps working through the default wiri
     const out = await gatewayFor({ LOCAL_LLM_API_URL: `http://${host}:${srv.port}${suffix}`, LOCAL_LLM_MODEL: "llama3" }).invoke(req);
     expect(out).toMatchObject({ status: "returned", content: "ok", kind: "self_hosted", billingMode: "local_compute" });
     expect(srv.hits).toHaveLength(1);
+    // the local slot dials through the pinned transport (address policy inside the connecting lookup), never the ambient global fetch
+    expect(fetchCalls).toEqual([]);
   });
 });
 
