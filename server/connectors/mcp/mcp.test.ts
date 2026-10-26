@@ -27,6 +27,33 @@ describe("endpoint policy", () => {
   });
 });
 
+describe("resolved-address policy judges the destination an address really routes to", () => {
+  const lookupTo = (...addresses: string[]) => (async () => addresses.map((address) => ({ address, family: address.includes(":") ? 6 : 4 }))) as never;
+  const url = new URL("https://mcp.example.com/mcp");
+  const PRIV = { ...ENV, MCP_ALLOW_PRIVATE_NETWORK: "true" };
+
+  it.each([
+    "::ffff:169.254.169.254", "::ffff:a9fe:a9fe", "0:0:0:0:0:ffff:a9fe:a9fe", "64:ff9b::a9fe:a9fe", "2002:a9fe:a9fe::1", "::169.254.169.254", "fd00:ec2::254", "fd00:ec2:0:0:0:0:0:254",
+    "fe80::1", "febf::1", "100.100.100.200", "169.254.0.7",
+  ])("link-local / metadata %s is refused even with MCP_ALLOW_PRIVATE_NETWORK=true", async (address) => {
+    await expect(assertResolvedAddressAllowed(url, ENV, lookupTo(address))).rejects.toThrow(/link-local|metadata/);
+    await expect(assertResolvedAddressAllowed(url, PRIV, lookupTo(address))).rejects.toThrow(/link-local|metadata/);
+    await expect(assertResolvedAddressAllowed(url, PRIV, lookupTo("93.184.216.34", address))).rejects.toThrow(/link-local|metadata/); // one bad answer among good ones
+  });
+
+  it.each(["::ffff:10.0.0.5", "::ffff:a00:5", "::ffff:192.168.1.1", "::ffff:127.0.0.1", "64:ff9b::a00:5", "2002:a00:5::1", "::1", "fd12::1", "fc00::9"])(
+    "private / loopback %s (including IPv4-mapped and NAT64 spellings) needs the private-network flag",
+    async (address) => {
+      await expect(assertResolvedAddressAllowed(url, ENV, lookupTo(address))).rejects.toThrow(/private/);
+      await expect(assertResolvedAddressAllowed(url, PRIV, lookupTo(address))).resolves.toBeUndefined();
+    },
+  );
+
+  it.each(["93.184.216.34", "::ffff:93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946", "64:ff9b::5db8:d822"])("public %s is allowed", async (address) => {
+    await expect(assertResolvedAddressAllowed(url, ENV, lookupTo(address))).resolves.toBeUndefined();
+  });
+});
+
 describe("tool classification (fail closed)", () => {
   const ro = { readOnlyHint: true };
   it("allows only explicitly read-only, non-mutating-looking tools", () => {

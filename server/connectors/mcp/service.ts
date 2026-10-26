@@ -1,5 +1,6 @@
 import dns from "node:dns/promises";
-import { assertResolvedAddressAllowed, checkEndpointSyntax, decideTool, redactSecrets, type EnvLike } from "./policy";
+import { assertResolvedAddressAllowed, checkEndpointSyntax, decideTool, mcpAddressProblem, redactSecrets, type EnvLike } from "./policy";
+import { createPinnedFetch } from "../../gateway/pinnedFetch";
 import { McpClientError, McpReadOnlyClient, validateArguments, type McpTool } from "./client";
 import type { AuditAction, AuditOutcome, ConnectorRecord, McpConnectorStore } from "./store";
 
@@ -36,7 +37,20 @@ export type ServiceDeps = { store: McpConnectorStore; env?: EnvLike; fetchImpl?:
 
 export class McpConnectorService {
   private readonly env: EnvLike;
-  constructor(private readonly deps: ServiceDeps) { this.env = deps.env ?? process.env; }
+  /**
+   * The connector's real transport. assertResolvedAddressAllowed gives an early, clear refusal, but a name resolved there is resolved AGAIN by every request
+   * (initialize, tools/list, tools/call), so a rebinding name could pass the check and be dialled at a forbidden address. This fetch applies the same
+   * policy inside the connecting lookup, on the address actually dialled. A test-supplied fetchImpl replaces it, exactly as before.
+   */
+  private readonly transport: typeof fetch;
+  constructor(private readonly deps: ServiceDeps) {
+    this.env = deps.env ?? process.env;
+    this.transport = deps.fetchImpl ?? createPinnedFetch({
+      policy: (address, hostname) => mcpAddressProblem(address, hostname, this.env),
+      resolve: async (hostname) => (await (deps.lookup ?? dns.lookup)(hostname, { all: true })).map((a) => a.address),
+      refusal: () => new McpClientError("UNAVAILABLE", "endpoint address refused by policy"),
+    });
+  }
 
   private view = (c: ConnectorRecord): ConnectorView => ({ id: c.id, name: c.name, endpoint: c.endpoint, enabled: c.enabled, hasSecret: !!c.secretRef, allowedTools: c.allowedTools, timeoutMs: c.timeoutMs, maxResponseBytes: c.maxResponseBytes });
   private secretOf = (c: ConnectorRecord): string | undefined => (c.secretRef ? this.env[`MCP_SECRET_${c.secretRef}`] : undefined);
@@ -83,7 +97,7 @@ export class McpConnectorService {
     try { await assertResolvedAddressAllowed(verdict.url, this.env, this.deps.lookup); } catch (error) { return deny(error instanceof Error ? error.message : "endpoint address refused"); }
     const secret = this.secretOf(connector);
     if (connector.secretRef && !secret) return deny("connector secret is not configured on the server", "UNAVAILABLE");
-    const client = new McpReadOnlyClient({ endpoint: connector.endpoint, timeoutMs: connector.timeoutMs, maxResponseBytes: connector.maxResponseBytes, bearer: secret, fetchImpl: this.deps.fetchImpl, signal });
+    const client = new McpReadOnlyClient({ endpoint: connector.endpoint, timeoutMs: connector.timeoutMs, maxResponseBytes: connector.maxResponseBytes, bearer: secret, fetchImpl: this.transport, signal });
     return { connector, client, secret };
   }
 
