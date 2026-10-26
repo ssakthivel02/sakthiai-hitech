@@ -21,6 +21,9 @@ export function checkBetaProfile(env: EnvLike, options: ProfileOptions = {}): { 
   const warn = (variable: string, message: string) => f.push({ level: "warn", variable, message });
 
   if (env.NODE_ENV !== "production") fail("NODE_ENV", "must be production for a deployed beta");
+  const deployEnv = (env.SAKTHIAI_DEPLOY_ENV ?? "").trim().toLowerCase();
+  if (!["preview", "production"].includes(deployEnv)) fail("SAKTHIAI_DEPLOY_ENV", "must be explicitly preview or production");
+
 
   // Access: an explicit allowlist, never open signup, never an unset policy (which is "closed" in production, i.e. nobody can sign in).
   if (on(env.AUTH_OPEN_SIGNUP)) fail("AUTH_OPEN_SIGNUP", "open signup must be off in the private beta");
@@ -34,10 +37,29 @@ export function checkBetaProfile(env: EnvLike, options: ProfileOptions = {}): { 
 
   // Shared, fail-closed request limits.
   if ((env.RATE_LIMIT_STORE ?? "").trim().toLowerCase() !== "mysql") fail("RATE_LIMIT_STORE", "must be mysql (shared counters; costly routes refuse when the counter is unavailable)");
-  if (!set(env.RATE_LIMIT_MAX_INSTANCES)) warn("RATE_LIMIT_MAX_INSTANCES", "set to the real instance ceiling (1 for a single instance)");
+  const maxInstancesText = (env.RATE_LIMIT_MAX_INSTANCES ?? "").trim();
+  if (!/^\d+$/.test(maxInstancesText) || Number(maxInstancesText) < 1) {
+    fail("RATE_LIMIT_MAX_INSTANCES", "must be an explicit positive integer instance ceiling");
+  }
 
-  // Data store: the driver verifies the database name; TLS CA when the host is managed.
-  if (!set(env.DATABASE_URL)) fail("DATABASE_URL", "not set");
+  // Data store: pin the intended database and require trusted CA material for the approved managed Aiven host.
+  if (!set(env.DATABASE_URL)) {
+    fail("DATABASE_URL", "not set");
+  } else {
+    try {
+      const databaseUrl = new URL(env.DATABASE_URL!);
+      if (databaseUrl.protocol !== "mysql:") fail("DATABASE_URL", "must use mysql://");
+      const databaseName = decodeURIComponent(databaseUrl.pathname.replace(/^\//, ""));
+      if (set(env.DATABASE_EXPECTED_NAME) && databaseName !== env.DATABASE_EXPECTED_NAME) {
+        fail("DATABASE_EXPECTED_NAME", "does not match the database named by DATABASE_URL");
+      }
+      if (databaseUrl.hostname.endsWith(".aivencloud.com") && !set(env.DATABASE_CA_CERT_B64)) {
+        fail("DATABASE_CA_CERT_B64", "required for the managed Aiven database TLS trust chain");
+      }
+    } catch {
+      fail("DATABASE_URL", "must be a valid mysql:// URL");
+    }
+  }
   if (!set(env.DATABASE_EXPECTED_NAME)) fail("DATABASE_EXPECTED_NAME", "not set: the connection must be pinned to the intended database");
   if (!set(env.JWT_SECRET) || (env.JWT_SECRET?.length ?? 0) < 32) fail("JWT_SECRET", "missing or shorter than 32 characters");
 
