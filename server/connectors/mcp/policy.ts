@@ -1,5 +1,6 @@
 import dns from "node:dns/promises";
 import net from "node:net";
+import { classifyHost, unmapIpv4 } from "../../gateway/hostClass";
 
 /**
  * Connector governance: which endpoints may ever be contacted, which tools count as read-only.
@@ -31,20 +32,32 @@ const isPrivateV4 = (ip: string) => {
   const [a, b] = ip.split(".").map(Number);
   return a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
 };
-const isLinkLocalV4 = (ip: string) => ip.startsWith("169.254.");
-const isMetadata = (ip: string) => ip === "169.254.169.254" || ip.toLowerCase() === "fd00:ec2::254";
 
-/** Resolved-address check (DNS rebinding / internal-network pivots). Link-local and metadata addresses are never allowed. */
+/**
+ * Why a resolved address may not be dialled, or null. Judged on the host the address ROUTES to: IPv4-mapped (::ffff:a.b.c.d), NAT64 (64:ff9b::/96), 6to4
+ * and IPv4-compatible spellings are reduced to their embedded IPv4 first, so `::ffff:169.254.169.254` is the metadata address and `::ffff:10.0.0.5` is a
+ * private one. Link-local and cloud-metadata destinations (169.254/16, fe80::/10, fd00:ec2::/32, 100.100.100.200) are never allowed, whatever the flags.
+ * `hostname` is the name the connector was configured with (it only matters for the explicit loopback development flag).
+ */
+export function mcpAddressProblem(address: string, hostname: string, env: EnvLike): string | null {
+  const ip = address.replace(/^\[|\]$/g, "");
+  const routed = unmapIpv4(ip) ?? ip;
+  if (classifyHost(ip) === "blocked" || classifyHost(routed) === "blocked") return "endpoint resolves to a link-local/metadata address";
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const loopbackAllowed = env.MCP_ALLOW_LOOPBACK_HTTP === "true" && ["localhost", "127.0.0.1", "::1"].includes(host);
+  const class_ = classifyHost(routed);
+  const priv = class_ === "loopback" || class_ === "private" || (net.isIPv4(routed) && isPrivateV4(routed));
+  if (priv && !loopbackAllowed && env.MCP_ALLOW_PRIVATE_NETWORK !== "true") return "endpoint resolves to a private address (set MCP_ALLOW_PRIVATE_NETWORK=true only for an approved internal server)";
+  return null;
+}
+
+/** Early resolved-address check (clear refusal at registration / before a call). It does not by itself stop DNS rebinding; the connection is pinned by createMcpPinnedFetch. */
 export async function assertResolvedAddressAllowed(url: URL, env: EnvLike, lookup: typeof dns.lookup = dns.lookup): Promise<void> {
   const host = url.hostname.replace(/^\[|\]$/g, "");
   const addresses = net.isIP(host) ? [host] : (await lookup(host, { all: true })).map(a => a.address);
-  const loopbackAllowed = env.MCP_ALLOW_LOOPBACK_HTTP === "true" && ["localhost", "127.0.0.1", "::1"].includes(host);
   for (const ip of addresses) {
-    const v6 = ip.includes(":");
-    const lower = ip.toLowerCase();
-    if (isMetadata(ip) || (!v6 && isLinkLocalV4(ip)) || (v6 && lower.startsWith("fe80:"))) throw new Error("endpoint resolves to a link-local/metadata address");
-    const priv = v6 ? lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") : isPrivateV4(ip);
-    if (priv && !loopbackAllowed && env.MCP_ALLOW_PRIVATE_NETWORK !== "true") throw new Error("endpoint resolves to a private address (set MCP_ALLOW_PRIVATE_NETWORK=true only for an approved internal server)");
+    const problem = mcpAddressProblem(ip, host, env);
+    if (problem) throw new Error(problem);
   }
 }
 
