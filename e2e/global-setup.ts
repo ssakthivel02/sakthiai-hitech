@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, existsSync } from "node:fs";
+import { createWriteStream, mkdirSync, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createTestDatabase, type TestDatabase } from "../server/testing/mysqlTestDb";
 import { startFakeClamd, startFakeLlm, startFakeOidc, startFakeS3, type Closeable } from "./support/fakes";
@@ -16,6 +16,13 @@ export default async function globalSetup() {
   mkdirSync("reports/e2e", { recursive: true });
 
   const database: TestDatabase = await createTestDatabase();
+  // Opt-in Sentinel stack (E2E_SENTINEL=1): enables the default-OFF flags and applies the PROPOSED 0013 tables to this THROWAWAY database only.
+  // Unset (the default), the stack is exactly what it was before and no Sentinel table exists.
+  const sentinelStack = process.env.E2E_SENTINEL === "1";
+  if (sentinelStack) {
+    const sql = readFileSync(path.resolve("drizzle/proposals/0014_sentinel_investigations.sql"), "utf8").split("\n").filter(l => !l.trim().startsWith("--")).join("\n");
+    for (const statement of sql.split(";").map(x => x.trim()).filter(Boolean)) await database.pool.promise().query(statement);
+  }
   const fakes: Closeable[] = [];
   fakes.push(await startFakeOidc(PORTS.oidc), await startFakeLlm(PORTS.local, "local"), await startFakeLlm(PORTS.external, "external"), await startFakeS3(PORTS.s3), await startFakeClamd(PORTS.clamd));
 
@@ -31,6 +38,7 @@ export default async function globalSetup() {
       LOCAL_LLM_API_URL: `${urls.local}/v1`, LOCAL_LLM_MODEL: "fake-local-model",
       // An external provider IS configured so that "blocked by default" is a real assertion; GATEWAY_ALLOW_EXTERNAL is intentionally unset.
       LLM_API_URL: `${urls.external}/v1`, LLM_MODEL: "fake-external-model", LLM_API_KEY: "e2e-not-a-real-key",
+      ...(sentinelStack ? { SENTINEL_ENABLED: "true", TASK_WORKER_ENABLED: "true" } : {}),
       GATEWAY_MAX_ATTEMPTS: "1", GATEWAY_TIMEOUT_MS: "5000", GATEWAY_BACKOFF_BASE_MS: "10",
       STORAGE_ENDPOINT: urls.s3, STORAGE_BUCKET: "e2e", STORAGE_REGION: "us-east-1", STORAGE_FORCE_PATH_STYLE: "true", STORAGE_ACCESS_KEY_ID: "e2e", STORAGE_SECRET_ACCESS_KEY: "e2e",
       MALWARE_SCANNER_HOST: "127.0.0.1", MALWARE_SCANNER_PORT: String(PORTS.clamd), MALWARE_SCANNER_TIMEOUT_MS: "3000",

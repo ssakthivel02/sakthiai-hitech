@@ -70,7 +70,7 @@ export class McpConnectorService {
   }
 
   /** Common gate + client construction. Records DENIED audits for refusals. */
-  private async open(actor: McpActor, id: string, action: AuditAction, target?: string): Promise<{ connector: ConnectorRecord; client: McpReadOnlyClient; secret: string | undefined }> {
+  private async open(actor: McpActor, id: string, action: AuditAction, target?: string, signal?: AbortSignal): Promise<{ connector: ConnectorRecord; client: McpReadOnlyClient; secret: string | undefined }> {
     const connector = await this.deps.store.get(actor.workspaceId, id);
     if (!connector) throw new McpPolicyError("NOT_FOUND", "connector not found"); // another workspace's id is indistinguishable from absent
     const deny = async (detail: string, code: McpPolicyError["code"] = "DENIED"): Promise<never> => {
@@ -83,7 +83,7 @@ export class McpConnectorService {
     try { await assertResolvedAddressAllowed(verdict.url, this.env, this.deps.lookup); } catch (error) { return deny(error instanceof Error ? error.message : "endpoint address refused"); }
     const secret = this.secretOf(connector);
     if (connector.secretRef && !secret) return deny("connector secret is not configured on the server", "UNAVAILABLE");
-    const client = new McpReadOnlyClient({ endpoint: connector.endpoint, timeoutMs: connector.timeoutMs, maxResponseBytes: connector.maxResponseBytes, bearer: secret, fetchImpl: this.deps.fetchImpl });
+    const client = new McpReadOnlyClient({ endpoint: connector.endpoint, timeoutMs: connector.timeoutMs, maxResponseBytes: connector.maxResponseBytes, bearer: secret, fetchImpl: this.deps.fetchImpl, signal });
     return { connector, client, secret };
   }
 
@@ -141,8 +141,8 @@ export class McpConnectorService {
     });
   }
 
-  async callTool(actor: McpActor, id: string, toolName: string, args: Record<string, unknown> = {}): Promise<NormalizedResult> {
-    const { connector, client, secret } = await this.open(actor, id, "CALL_TOOL", toolName);
+  async callTool(actor: McpActor, id: string, toolName: string, args: Record<string, unknown> = {}, opts: { signal?: AbortSignal } = {}): Promise<NormalizedResult> {
+    const { connector, client, secret } = await this.open(actor, id, "CALL_TOOL", toolName, opts.signal);
     return this.finish(actor, connector, "CALL_TOOL", toolName, client, async () => {
       if (Buffer.byteLength(JSON.stringify(args ?? {}), "utf8") > MAX_ARGS_BYTES) throw new McpPolicyError("INVALID", "tool arguments too large");
       await client.initialize();
