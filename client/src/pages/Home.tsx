@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import betaCapabilities from "../../../release/beta-capability-contract.json";
+import { ERROR_UI_TEXT, describeApiError, describeModelFailure, describeNoEvidence, type UiError } from "@shared/userFacingError";
 
 export default function Home() {
   const { user, loading, isAuthenticated, logout } = useAuth();
@@ -33,6 +34,10 @@ export default function Home() {
   >([]);
   const [projectName, setProjectName] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  // Every failed or degraded action is shown in one accessible alert; nothing fails silently.
+  const [notice, setNotice] = useState<{ error: UiError; retry?: () => void } | null>(null);
+  const [answerNote, setAnswerNote] = useState("");
+  const [status, setStatus] = useState("");
 
   const fileIngestionCapability = betaCapabilities.capabilities.find(
     capability => capability.id === "file-ingestion",
@@ -49,6 +54,7 @@ export default function Home() {
   const workspaceList = trpc.workspace.list.useQuery(undefined, { enabled: isAuthenticated });
   const ensureWorkspace = trpc.workspace.ensure.useMutation({
     onSuccess: workspace => setWorkspaceId(workspace.id),
+    onError: error => setNotice({ error: describeApiError(error, language), retry: () => ensureWorkspace.mutate() }),
   });
   useEffect(() => {
     if (workspaceList.data?.[0]?.workspace.id) setWorkspaceId(workspaceList.data[0].workspace.id);
@@ -64,9 +70,19 @@ export default function Home() {
     { workspaceId: activeWorkspace! },
     { enabled: Boolean(activeWorkspace) },
   );
+  const addProject = () => {
+    if (!activeWorkspace) return;
+    const input = { workspaceId: activeWorkspace, name: projectName };
+    setNotice(null);
+    setStatus("");
+    createProject.mutate(input, {
+      onError: error => setNotice({ error: describeApiError(error, language), retry: addProject }),
+    });
+  };
   const createProject = trpc.projects.create.useMutation({
     onSuccess: () => {
       setProjectName("");
+      setStatus(ERROR_UI_TEXT[language].projectAdded);
       projects.refetch();
     },
   });
@@ -75,15 +91,43 @@ export default function Home() {
       setFile(null);
       files.refetch();
     },
+    onError: error => setNotice({ error: describeApiError(error, language) }),
   });
+  const sendMessage = () => {
+    if (!activeWorkspace) return;
+    const input = { workspaceId: activeWorkspace, conversationId, message, language };
+    setNotice(null);
+    setStatus("");
+    send.mutate(input, {
+      onError: error => {
+        const described = describeApiError(error, language);
+        // A conversation we may no longer access must not be re-used: the next attempt starts a fresh one.
+        if (described.kind === "denied") setConversationId(undefined);
+        setNotice({ error: described, retry: described.retryable ? sendMessage : undefined });
+      },
+    });
+  };
   const send = trpc.chat.send.useMutation({
     onSuccess: result => {
       setConversationId(result.conversationId);
       setAnswer(result.answer);
       setCitations(result.citations);
+      setAnswerNote("");
+      if (result.grounding === "INSUFFICIENT_EVIDENCE") {
+        setAnswerNote(describeNoEvidence(result.observability?.gateway?.status === "returned", language));
+      } else if (result.grounding === "MODEL_UNAVAILABLE") {
+        // HTTP 200 with a degraded answer: surface the cause class (budget vs. outage) without any provider detail.
+        setNotice({ error: describeModelFailure(result.observability?.gateway?.failureReason, language), retry: sendMessage });
+      }
     },
   });
   const canUse = Boolean(activeWorkspace);
+  const queryError = workspaceList.error ?? projects.error ?? files.error;
+  const shownNotice =
+    notice ??
+    (queryError
+      ? { error: describeApiError(queryError, language), retry: () => { workspaceList.refetch(); projects.refetch(); files.refetch(); } }
+      : null);
 
   const encodedFile = async (current: File) => {
     const bytes = new Uint8Array(await current.arrayBuffer());
@@ -161,6 +205,24 @@ export default function Home() {
           <Badge variant="outline"><ShieldCheck size={14}/> Tenant isolated</Badge>
         </header>
 
+        {shownNotice ? (
+          <div className="error-banner" role="alert">
+            <strong>{ERROR_UI_TEXT[language].title}</strong>
+            <p>{shownNotice.error.message}</p>
+            <div className="error-actions">
+              {shownNotice.retry ? (
+                <Button size="sm" variant="outline" onClick={() => { const retry = shownNotice.retry; setNotice(null); retry?.(); }}>
+                  {ERROR_UI_TEXT[language].retry}
+                </Button>
+              ) : null}
+              {notice ? (
+                <Button size="sm" variant="ghost" onClick={() => setNotice(null)}>{ERROR_UI_TEXT[language].dismiss}</Button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+        <div className="sr-status" role="status" aria-live="polite">{status}</div>
+
         <div className="workspace-grid">
           <section id="chat" className="main-column">
             <Card className="chat-card">
@@ -196,6 +258,7 @@ export default function Home() {
                     <>
                       <div className="answer-label">NEXUS RESPONSE</div>
                       <Streamdown>{answer}</Streamdown>
+                      {answerNote ? <p className="answer-note" role="status">{answerNote}</p> : null}
                       {citations.length > 0 && (
                         <div className="citation-list">
                           <div className="answer-label">CITATIONS</div>
@@ -231,14 +294,7 @@ export default function Home() {
                   />
                   <Button
                     disabled={!canUse || !message.trim() || send.isPending}
-                    onClick={() =>
-                      send.mutate({
-                        workspaceId: activeWorkspace!,
-                        conversationId,
-                        message,
-                        language,
-                      })
-                    }
+                    onClick={sendMessage}
                   >
                     {send.isPending ? "Thinking…" : "Send"}
                   </Button>
@@ -260,7 +316,7 @@ export default function Home() {
                   <Button
                     size="sm"
                     disabled={!projectName.trim() || !canUse}
-                    onClick={() => createProject.mutate({ workspaceId: activeWorkspace!, name: projectName })}
+                    onClick={addProject}
                   >
                     Add
                   </Button>

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { fileUploadsEnabled } from "./gate";
 import { createConfiguredMalwareScanner, inspectFileSafety, type MalwareScanner } from "../security/malwareScanner";
 import { extractDocument, type ExtractedDocument } from "../provenance";
 import type { UploadSession, UploadStore } from "./store";
@@ -23,7 +24,7 @@ export type BeginInput = { projectId?: number | null; filename: string; mimeType
 export type UploadStatus = { uploadId: string; state: UploadSession["state"]; totalChunks: number; chunkSize: number; received: number[]; missing: number[]; expiresAt: string; rejectReason: string | null; lastError: string | null; documentId: number | null };
 
 /** Backend gate. Default OFF. The owner-approval gate that keeps the upload UI disabled stays authoritative; this only allows the API to be exercised. */
-export const resumableIngestionEnabled = (env: NodeJS.ProcessEnv = process.env) => env.FILE_INGESTION_BACKEND_ENABLED === "true";
+export const resumableIngestionEnabled = (env: NodeJS.ProcessEnv = process.env) => fileUploadsEnabled(env);
 
 export const safeUploadFilename = (value: string) => value.normalize("NFKC").replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^\.+/, "").slice(0, 180) || "upload";
 const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex");

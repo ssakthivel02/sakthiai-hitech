@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getWorkspaceForUser } from "../db";
+import { assertFileUploadsEnabled } from "../ingestion/gate";
 import { ingestApprovedReference, updateCreatorShotTiming } from "./referenceLibrary";
 import { TRPCError } from "@trpc/server";
 
@@ -32,6 +33,7 @@ export const creatorReferenceRouter = router({
     label: z.string().trim().min(1).max(180),
     approved: z.literal(true),
   })).mutation(async ({ ctx, input }) => {
+    assertFileUploadsEnabled();
     await requireWorkspace(ctx.user.id, input.workspaceId);
     try {
       return await ingestApprovedReference({

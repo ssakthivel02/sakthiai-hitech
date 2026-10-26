@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
+import { assertFileUploadsEnabled } from "../ingestion/gate";
 import { protectedProcedure, router } from "../_core/trpc";
 import { ingestApprovedAudioMaster, replaceLockedCaptionCues } from "./audioMaster";
 
@@ -44,6 +45,7 @@ export const creatorAudioRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      assertFileUploadsEnabled();
       await requireWorkspace(ctx.user.id, input.workspaceId);
       try {
         const data = Buffer.from(input.dataBase64.replace(/^data:[^;]+;base64,/, ""), "base64");

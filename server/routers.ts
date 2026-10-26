@@ -22,6 +22,7 @@ import { searchTextFor } from "./retrievalStore";
 import { creatorRouter } from "./creator/router";
 import { opsRouter } from "./ops/valueLedger";
 import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
+import { assertFileUploadsEnabled } from "./ingestion/gate";
 import { resolveGroundedOutcome, type ModelResult } from "./grounding";
 
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
@@ -70,6 +71,7 @@ export const appRouter = router({
     }),
     list: protectedProcedure.input(workspaceInput).query(({ ctx, input }) => requireWorkspace(ctx.user.id, input.workspaceId).then(() => listDocuments(input.workspaceId))),
     upload: protectedProcedure.input(workspaceInput.extend({ projectId: z.number().int().positive().optional(), filename: z.string().min(1).max(255), mimeType: z.string().min(1), dataBase64: z.string().min(1) })).mutation(async ({ ctx, input }) => {
+      assertFileUploadsEnabled();
       await requireWorkspace(ctx.user.id, input.workspaceId);
       const buffer = base64ToBuffer(input.dataBase64);
       if (!buffer.length || buffer.byteLength > MAX_FILE_BYTES) throw new TRPCError({ code: "BAD_REQUEST", message: buffer.length ? "File exceeds 12MB limit" : "Empty file" });

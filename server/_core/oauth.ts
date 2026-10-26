@@ -21,6 +21,7 @@ import {
 import { InMemoryRateLimiter } from "./rateLimit";
 import { getLoginTransactionStore, isWellFormedChallenge, newLoginNonce, type LoginTransactionStore } from "./loginTransactions";
 import { sdk } from "./sdk";
+import { prefersHtml, renderSignInFailurePage, type SignInFailure } from "./signinPages";
 import { sessionGenerationFromDate } from "./sessionRevocation";
 
 function getQueryParam(req: Request, key: string): string | undefined {
@@ -30,6 +31,16 @@ function getQueryParam(req: Request, key: string): string | undefined {
 
 const BEGIN_POLICY = { name: "oauth-begin", maxRequests: 600, windowMs: 60_000 } as const; // flood guard for table growth; behind a proxy without trust-proxy req.ip is the proxy, so this is deliberately a high shared ceiling
 const beginLimiter = new InMemoryRateLimiter();
+
+/** Browsers get a recoverable page; API clients keep the JSON body. Status codes are identical either way. */
+function failCallback(req: Request, res: Response, status: number, error: string, kind: SignInFailure) {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
+  if (prefersHtml(req)) {
+    res.status(status).type("html").send(renderSignInFailurePage(kind, res.getHeader("x-request-id")?.toString()));
+    return;
+  }
+  res.status(status).json({ error });
+}
 
 export function registerOAuthRoutes(app: Express, injectedStore?: LoginTransactionStore) {
   const store = () => injectedStore ?? getLoginTransactionStore(db.getDb);
@@ -63,11 +74,11 @@ export function registerOAuthRoutes(app: Express, injectedStore?: LoginTransacti
     const state = getQueryParam(req, "state");
 
     if (!code || !state) {
-      res.status(400).json({ error: "code and state are required" });
+      failCallback(req, res, 400, "code and state are required", "link_invalid");
       return;
     }
 
-    const rejectState = () => res.status(403).json({ error: "invalid oauth state" });
+    const rejectState = () => failCallback(req, res, 403, "invalid oauth state", "link_invalid");
     if (!isAcceptableStateLength(state)) {
       rejectState();
       return;
@@ -103,7 +114,7 @@ export function registerOAuthRoutes(app: Express, injectedStore?: LoginTransacti
       consumed = await store().consume(nonce, decodedState.challenge);
     } catch {
       // Cannot prove the transaction is fresh: fail closed without exposing details.
-      res.status(503).json({ error: "login transaction store unavailable" });
+      failCallback(req, res, 503, "login transaction store unavailable", "unavailable");
       return;
     }
     if (!consumed) {
@@ -125,8 +136,7 @@ export function registerOAuthRoutes(app: Express, injectedStore?: LoginTransacti
       // Preview/beta access restriction: decided before any user row or session exists.
       if (!isIdentityAllowed(loginAccessPolicy(), userInfo)) {
         console.warn("[OIDC] Sign-in refused: identity not on the access allowlist");
-        res.setHeader("Cache-Control", "no-store, max-age=0");
-        res.status(403).json({ error: "account not authorized" });
+        failCallback(req, res, 403, "account not authorized", "not_authorized");
         return;
       }
 
@@ -157,7 +167,7 @@ export function registerOAuthRoutes(app: Express, injectedStore?: LoginTransacti
       res.redirect(302, resolvePostLoginPath(decodedState.returnTo, new URL(redirectUri).origin));
     } catch (error) {
       console.error("[OIDC] Callback failed", error);
-      res.status(500).json({ error: "Authentication callback failed" });
+      failCallback(req, res, 500, "Authentication callback failed", "failed");
     }
   });
 

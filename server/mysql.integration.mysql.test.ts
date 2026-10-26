@@ -65,7 +65,7 @@ describe.skipIf(skipMysqlSuite())("application on real SQL", () => {
   beforeAll(async () => {
     database = await createTestDatabase();
     clamd = await startFakeClamd();
-    Object.assign(process.env, { DATABASE_URL: database.url, DATABASE_EXPECTED_NAME: database.name, JWT_SECRET: "integration-test-secret-not-real-0123456789", VITE_APP_ID: "sakthiai-it", MALWARE_SCANNER_HOST: "127.0.0.1", MALWARE_SCANNER_PORT: String(clamd.port), MALWARE_SCANNER_TIMEOUT_MS: "2000" });
+    Object.assign(process.env, { DATABASE_URL: database.url, DATABASE_EXPECTED_NAME: database.name, JWT_SECRET: "integration-test-secret-not-real-0123456789", VITE_APP_ID: "sakthiai-it", MALWARE_SCANNER_HOST: "127.0.0.1", MALWARE_SCANNER_PORT: String(clamd.port), MALWARE_SCANNER_TIMEOUT_MS: "2000", FILE_INGESTION_BACKEND_ENABLED: "true" }); // this suite exercises the legacy ingestion path, so the upload gate is opened explicitly; the OFF case is asserted below
     for (const key of ["LLM_API_URL", "LOCAL_LLM_API_URL", "EMBEDDING_API_URL", "LOCAL_EMBEDDING_API_URL", "GATEWAY_ALLOW_EXTERNAL"]) delete process.env[key];
     m = {
       db: await import("./db"), sdk: (await import("./_core/sdk")).sdk, routers: await import("./routers"), access: await import("./storageAccess"),
@@ -245,6 +245,21 @@ describe.skipIf(skipMysqlSuite())("application on real SQL", () => {
   });
 
   describe("safe upload (real scanner protocol), storage ownership", () => {
+    it("with the upload gate OFF (the beta default) files.upload is refused for members even with the scanner configured, and nothing is written", async () => {
+      const a = callerFor(userA);
+      const [docsBefore] = await rows<{ n: number }>(sql`SELECT COUNT(*) n FROM documents`);
+      const [chunksBefore] = await rows<{ n: number }>(sql`SELECT COUNT(*) n FROM documentChunks`);
+      const putsBefore = storageState.puts.length;
+      for (const flag of [undefined, "", "false", "1", "TRUE"]) {
+        if (flag === undefined) delete process.env.FILE_INGESTION_BACKEND_ENABLED; else process.env.FILE_INGESTION_BACKEND_ENABLED = flag;
+        await expect(a.files.upload({ workspaceId: wsA, filename: "gated.txt", mimeType: "text/plain", dataBase64: b64("gated content that must never be stored") })).rejects.toMatchObject({ code: "FORBIDDEN", message: "File uploads are not enabled in this beta" });
+      }
+      process.env.FILE_INGESTION_BACKEND_ENABLED = "true";
+      const [docsAfter] = await rows<{ n: number }>(sql`SELECT COUNT(*) n FROM documents`);
+      const [chunksAfter] = await rows<{ n: number }>(sql`SELECT COUNT(*) n FROM documentChunks`);
+      expect([Number(docsAfter.n), Number(chunksAfter.n), storageState.puts.length]).toEqual([Number(docsBefore.n), Number(chunksBefore.n), putsBefore]);
+    });
+
     it("clean upload persists document + chunks with searchText inside the workspace only", async () => {
       const a = callerFor(userA);
       const result = await a.files.upload({ workspaceId: wsA, filename: "temples.txt", mimeType: "text/plain", dataBase64: b64(TAMIL_TXT) });

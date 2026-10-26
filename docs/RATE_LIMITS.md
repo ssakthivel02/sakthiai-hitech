@@ -52,3 +52,6 @@ With `store: mysql`, `missing` and `incompatible` make `/readyz` return 503, bec
 - `server/_core/sharedRateLimit.mysql.test.ts`: independent pools on real MySQL, run by CI on MySQL 8.0 and 8.4 containers. Covers 120 concurrent requests across two policies with exact admission; 120 requests on one row through 2-connection pools; window boundary; backward clock; missing table with recovery; incompatible shape; outage with breaker and recovery; pruning.
 - Mutation checks: counter reset (6 tests fail), backwards window (1), deny policy ignored (9), breaker off (2), shape check off (5).
 - No live multi-instance run exists.
+
+## Private-beta profile
+The beta runs `RATE_LIMIT_STORE=mysql` with `RATE_LIMIT_MAX_INSTANCES=1`, which makes chat-send, file-upload and Creator routes refuse (503, `limits_unavailable` in the UI) rather than run uncounted. `config/beta/beta-production.env.example` and `node scripts/check-beta-profile.mjs --env-file <file>` check this setting together with the other beta posture settings before they are applied. Installing the table (`0013_rate_limit_windows`) remains a guarded, approval-gated migration; until it is applied, do **not** set `RATE_LIMIT_STORE=mysql` (`/readyz` returns 503 for a missing table, by design).

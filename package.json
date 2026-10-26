@@ -20,6 +20,7 @@
     "release:evidence": "tsx scripts/release-evidence.ts",
     "test:e2e": "node scripts/run-e2e.mjs",
     "db:backfill-search-text": "tsx scripts/backfill-search-text.ts",
+    "ops:import-beta-sources": "tsx scripts/import-beta-sources.ts",
     "db:push": "drizzle-kit migrate",
     "creator:runtime:acceptance": "tsx scripts/creator-runtime-acceptance.ts",
     "staging:migration-manifest": "tsx scripts/migration-manifest.ts"

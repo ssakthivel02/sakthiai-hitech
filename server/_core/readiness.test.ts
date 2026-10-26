@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { compareSchema, expectedSchema, probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
+import { compareSchema, expectedSchema, probeDatabaseReadiness, probeSchemaReadiness, storageReadiness } from "./readiness";
 
 describe("database readiness", () => {
   it("passes only when the live database query succeeds", async () => {
@@ -38,5 +38,18 @@ describe("schema readiness", () => {
 
   it("fails closed as unknown when the schema cannot be read", async () => {
     await expect(probeSchemaReadiness(() => Promise.reject(new Error("ECONNRESET")))).resolves.toMatchObject({ status: "unknown" });
+  });
+});
+
+describe("storage readiness follows the enabled beta paths (defect D5)", () => {
+  it("is not required, and does not fail readiness, while uploads are OFF and storage is unconfigured", () => {
+    expect(storageReadiness({ uploadsEnabled: false, configured: false })).toEqual({ state: "not_required", ok: true });
+  });
+  it("reports configured (still ok) when uploads are OFF but storage happens to be configured", () => {
+    expect(storageReadiness({ uploadsEnabled: false, configured: true })).toEqual({ state: "configured", ok: true });
+  });
+  it("is required, and fails readiness when missing, as soon as uploads are enabled", () => {
+    expect(storageReadiness({ uploadsEnabled: true, configured: false })).toEqual({ state: "missing_configuration", ok: false });
+    expect(storageReadiness({ uploadsEnabled: true, configured: true })).toEqual({ state: "configured", ok: true });
   });
 });

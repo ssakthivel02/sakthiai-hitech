@@ -75,3 +75,15 @@ export async function probeSchemaReadiness(readColumns?: () => Promise<ColumnRow
     return { status: "unknown", expectedTables: expected.size, missingTables: [], missingColumns: 0 };
   }
 }
+
+export type StorageReadiness = { state: "configured" | "missing_configuration" | "not_required"; ok: boolean };
+
+/**
+ * Object storage is a dependency of file upload / Creator media only. Chat, projects and retrieval never read or write it
+ * (documents.storageKey is nullable; synthetic sources are stored without an object). So with uploads OFF a missing bucket
+ * must not hold the whole service not-ready; with uploads ON it still must.
+ */
+export function storageReadiness(input: { uploadsEnabled: boolean; configured: boolean }): StorageReadiness {
+  if (input.uploadsEnabled) return input.configured ? { state: "configured", ok: true } : { state: "missing_configuration", ok: false };
+  return { state: input.configured ? "configured" : "not_required", ok: true };
+}

@@ -3,7 +3,7 @@ import { createWriteStream, mkdirSync, existsSync } from "node:fs";
 import path from "node:path";
 import { createTestDatabase, type TestDatabase } from "../server/testing/mysqlTestDb";
 import { startFakeClamd, startFakeLlm, startFakeOidc, startFakeS3, type Closeable } from "./support/fakes";
-import { APP_ORIGIN, PORTS, urls } from "./support/ports";
+import { APP_ORIGIN, BETA_ALLOWED_SUBJECTS, BETA_ORIGIN, PORTS, urls } from "./support/ports";
 
 /**
  * Brings up the whole stack with zero external dependencies: a throwaway MySQL-compatible database (TEST_DATABASE_URL,
@@ -34,24 +34,56 @@ export default async function globalSetup() {
       GATEWAY_MAX_ATTEMPTS: "1", GATEWAY_TIMEOUT_MS: "5000", GATEWAY_BACKOFF_BASE_MS: "10",
       STORAGE_ENDPOINT: urls.s3, STORAGE_BUCKET: "e2e", STORAGE_REGION: "us-east-1", STORAGE_FORCE_PATH_STYLE: "true", STORAGE_ACCESS_KEY_ID: "e2e", STORAGE_SECRET_ACCESS_KEY: "e2e",
       MALWARE_SCANNER_HOST: "127.0.0.1", MALWARE_SCANNER_PORT: String(PORTS.clamd), MALWARE_SCANNER_TIMEOUT_MS: "3000",
+      // This stack exercises the (backend-only) ingestion pipeline, so it opts in explicitly. The beta-posture stack below does not.
+      FILE_INGESTION_BACKEND_ENABLED: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout?.pipe(log); child.stderr?.pipe(log);
 
-  const deadline = Date.now() + 60_000;
-  for (;;) {
-    try { if ((await fetch(`${APP_ORIGIN}/readyz`)).status === 200) break; } catch { /* not up yet */ }
-    if (child.exitCode !== null) throw new Error(`E2E_FAIL: server exited early (${child.exitCode}); see reports/e2e/server.log`);
-    if (Date.now() > deadline) throw new Error("E2E_FAIL: server never became ready; see reports/e2e/server.log");
-    await new Promise(r => setTimeout(r, 300));
-  }
+  // ---- BETA POSTURE: uploads OFF (flag unset), NO object-storage settings, scanner configured anyway, login allowlist, own database.
+  const betaDatabase: TestDatabase = await createTestDatabase();
+  process.env.E2E_BETA_DATABASE_URL = betaDatabase.url;
+  process.env.E2E_BETA_DATABASE_NAME = betaDatabase.name;
+  process.env.E2E_BETA_ALLOWED_SUBJECTS = BETA_ALLOWED_SUBJECTS;
+  const betaLog = createWriteStream("reports/e2e/server-beta.log");
+  const betaChild: ChildProcess = spawn("node", ["dist/index.js"], {
+    env: {
+      PATH: process.env.PATH, HOME: process.env.HOME,
+      NODE_ENV: "test", PORT: String(PORTS.beta),
+      DATABASE_URL: betaDatabase.url, DATABASE_EXPECTED_NAME: betaDatabase.name,
+      JWT_SECRET: "e2e-beta-only-secret-not-a-credential-0123456789abcdef", VITE_APP_ID: "sakthiai-e2e",
+      OIDC_AUTHORIZATION_URL: urls.oidcAuthorize, OIDC_TOKEN_URL: `${urls.oidc}/token`, OIDC_USERINFO_URL: `${urls.oidc}/userinfo`, OIDC_CLIENT_ID: "sakthiai-e2e", OIDC_PROVIDER_NAME: "fake-oidc",
+      LOCAL_LLM_API_URL: `${urls.local}/v1`, LOCAL_LLM_MODEL: "fake-local-model",
+      GATEWAY_MAX_ATTEMPTS: "1", GATEWAY_TIMEOUT_MS: "5000", GATEWAY_BACKOFF_BASE_MS: "10",
+      AUTH_ALLOWED_SUBJECTS: BETA_ALLOWED_SUBJECTS,
+      // A scanner IS configured on purpose: uploads must stay OFF independently of it. No STORAGE_* and no FILE_INGESTION_BACKEND_ENABLED.
+      MALWARE_SCANNER_HOST: "127.0.0.1", MALWARE_SCANNER_PORT: String(PORTS.clamd), MALWARE_SCANNER_TIMEOUT_MS: "3000",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  betaChild.stdout?.pipe(betaLog); betaChild.stderr?.pipe(betaLog);
+
+  const waitReady = async (origin: string, proc: ChildProcess, label: string) => {
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+      try { if ((await fetch(`${origin}/readyz`)).status === 200) return; } catch { /* not up yet */ }
+      if (proc.exitCode !== null) throw new Error(`E2E_FAIL: ${label} server exited early (${proc.exitCode}); see reports/e2e/`);
+      if (Date.now() > deadline) throw new Error(`E2E_FAIL: ${label} server never became ready; see reports/e2e/`);
+      await new Promise(r => setTimeout(r, 300));
+    }
+  };
+  await waitReady(APP_ORIGIN, child, "stack");
+  await waitReady(BETA_ORIGIN, betaChild, "beta-posture");
 
   return async () => {
-    child.kill("SIGTERM");
-    await new Promise(r => { child.once("exit", r); setTimeout(r, 5000); });
-    log.end();
+    for (const proc of [child, betaChild]) {
+      proc.kill("SIGTERM");
+      await new Promise(r => { proc.once("exit", r); setTimeout(r, 5000); });
+    }
+    log.end(); betaLog.end();
     for (const fake of fakes) await fake.close();
     await database.close();
+    await betaDatabase.close();
   };
 }

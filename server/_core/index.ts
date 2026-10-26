@@ -21,7 +21,8 @@ import { ENV } from "./env";
 import { deploymentTier, runtimeMode } from "./deploymentTier";
 import { authenticationReadiness } from "./sessionPolicy";
 import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
-import { probeDatabaseReadiness, probeSchemaReadiness } from "./readiness";
+import { probeDatabaseReadiness, probeSchemaReadiness, storageReadiness } from "./readiness";
+import { fileUploadsEnabled } from "../ingestion/gate";
 import { getAuthenticatedRateLimiter, rateLimitReadiness } from "./sharedRateLimit";
 import { getArtifactIdentity } from "./artifactIdentity";
 import { maintenanceGate, maintenanceModeFromEnv } from "./maintenanceMode";
@@ -164,11 +165,12 @@ async function startServer() {
       gateway = { state: "no_provider_configured", configuredProviders: 0, eligibleProviders: 0, operational: "unverified" };
     }
     const llmReady = gateway.state === "eligible";
-    const storageReady = configured(
-      ENV.storageBucket,
-      ENV.storageAccessKeyId,
-      ENV.storageSecretAccessKey,
-    );
+    // Required only while uploads are enabled: the enabled beta paths (chat, projects, retrieval) do not use object storage.
+    const storage = storageReadiness({
+      uploadsEnabled: fileUploadsEnabled(),
+      configured: configured(ENV.storageBucket, ENV.storageAccessKeyId, ENV.storageSecretAccessKey),
+    });
+    const storageReady = storage.ok;
     const rateLimit = rateLimitReadiness(await getAuthenticatedRateLimiter().verify());
     // A build whose files no longer match its own manifest must not take traffic.
     const artifactIntact = getArtifactIdentity().state !== "mismatch";
@@ -186,7 +188,7 @@ async function startServer() {
         authentication: authState,
         llm: llmReady ? "configured" : "missing_configuration",
         llmGateway: gateway,
-        storage: storageReady ? "configured" : "missing_configuration",
+        storage: storage.state,
         rateLimit: { store: rateLimit.store, state: rateLimit.state },
         artifact: getArtifactIdentity().state,
         embeddings: embeddingStatus(),
