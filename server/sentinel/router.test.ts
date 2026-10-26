@@ -9,6 +9,13 @@ import { createSentinelInvestigateHandler } from "./handler";
 import { FakeTools, fakeCtx, goodModel, ID, WS } from "./testkit";
 import type { BindingCatalog } from "./adapters/contract";
 
+// These tests create dozens of investigations as the same users within a minute, so the per-user request limiter is replaced by an allow-all one here.
+// The limiter itself (policy selection, 429) is covered by rateLimit.test.ts / rateLimitMiddleware.test.ts, and sentinel.create through the REAL
+// middleware by createRateLimit.test.ts.
+vi.mock("../_core/sharedRateLimit", () => ({
+  getAuthenticatedRateLimiter: () => ({ consume: async (_k: string, p: { maxRequests: number; windowMs: number }) => ({ allowed: true, limit: p.maxRequests, remaining: p.maxRequests, resetAt: Date.now() + p.windowMs, retryAfterMs: 0 }), status: () => ({ store: "memory" }), verify: async () => ({ store: "memory" }) }),
+}));
+
 const CONNECTOR = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const FOREIGN_CONNECTOR = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const DISABLED_CONNECTOR = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
@@ -182,6 +189,58 @@ describe("sentinel router", () => {
     // every occurrence of the hostile heading sits inside a fence longer than the backtick run in the payload
     const idx = lines.findIndex((l) => l.trim() === "# INJECTED HEADING");
     if (idx >= 0) { const outer = [...lines.slice(0, idx)].reverse().find((l) => /^`{4,}$/.test(l.trim())); const closer = lines.slice(idx).find((l) => /^`{4,}$/.test(l.trim())); expect(outer).toBeDefined(); expect(closer).toBe(outer); }
+  });
+});
+
+describe("sentinel router: abuse controls", () => {
+  const capped = (cap: number) => {
+    const h = harness();
+    const store = h.store, tasks = h.tasks;
+    // same harness, but with a small cap: rebuild the router around the same store/tasks
+    const deps: SentinelRouterDeps = {
+      store: () => store, tasks: () => tasks as never, mcp: () => catalogFor(WS), enabled: () => true, workerEnabled: () => true, maxActive: () => cap,
+      requireWorkspace: async (u, w) => { if (![1, 2].includes(u) || w !== WS) throw new TRPCError({ code: "FORBIDDEN", message: "Workspace access denied" }); return {}; },
+      isWorkspaceOwner: async (u) => u === 1,
+    };
+    const api = router({ sentinel: createSentinelRouter(deps) });
+    const as = (userId: number) => api.createCaller({ req: {} as TrpcContext["req"], res: { headersSent: false, setHeader: vi.fn() } as unknown as TrpcContext["res"], requestId: "t", user: { id: userId, openId: `u${userId}`, name: "U", email: null, loginMethod: null, role: "user", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date() } as never }).sentinel;
+    return { store, tasks, as };
+  };
+
+  it("refuses a create beyond the per-workspace active cap, counting QUEUED and RUNNING, and frees the slot when one ends", async () => {
+    const h = capped(2);
+    const a = await h.as(1).create(base);
+    const b = await h.as(2).create(base);                  // another member: the cap is per workspace, not per user
+    await expect(h.as(1).create(base)).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS" });
+    expect(h.store.rows.size).toBe(2); expect(h.tasks.tasks.size).toBe(2);   // nothing queued by the refused call
+    h.tasks.tasks.get(b.taskId!)!.state = "RUNNING"; await h.store.markRunning(WS, b.investigationId);
+    await expect(h.as(1).create(base)).rejects.toMatchObject({ code: "TOO_MANY_REQUESTS" });   // RUNNING still counts
+    await h.as(1).cancel({ workspaceId: WS, investigationId: a.investigationId });             // a queued one is cancelled at once
+    const c = await h.as(1).create(base);
+    expect(c.created).toBe(true);
+  });
+
+  it("a row whose durable task already failed does not hold a slot forever (it is reconciled before counting)", async () => {
+    const h = capped(1);
+    const a = await h.as(1).create(base);
+    h.tasks.tasks.get(a.taskId!)!.state = "FAILED"; h.tasks.tasks.get(a.taskId!)!.failureClass = "PROVIDER_UNAVAILABLE";
+    const b = await h.as(1).create(base);
+    expect(b.created).toBe(true);
+    expect((await h.store.get(WS, a.investigationId))!.status).toBe("FAILED");
+  });
+
+  it("an idempotent retry of an existing investigation is not blocked by the cap", async () => {
+    const h = capped(1);
+    const a = await h.as(1).create({ ...base, idempotencyKey: "cap-retry-0001" });
+    const again = await h.as(1).create({ ...base, idempotencyKey: "cap-retry-0001" });
+    expect(again).toMatchObject({ investigationId: a.investigationId, created: false });
+  });
+
+  it("the default cap is 5 and SENTINEL_MAX_ACTIVE_PER_WORKSPACE is bounded", async () => {
+    const { sentinelMaxActive } = await import("./config");
+    expect(sentinelMaxActive({})).toBe(5);
+    expect(sentinelMaxActive({ SENTINEL_MAX_ACTIVE_PER_WORKSPACE: "12" })).toBe(12);
+    for (const bad of ["0", "-1", "51", "abc", "2.5", ""]) expect(sentinelMaxActive({ SENTINEL_MAX_ACTIVE_PER_WORKSPACE: bad }), bad).toBe(5);
   });
 });
 

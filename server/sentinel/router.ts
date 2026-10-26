@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import type { MysqlTaskStore } from "../tasks/store";
-import { SENTINEL_INVESTIGATE_TASK, clampLimits, sentinelEnabled } from "./config";
+import { SENTINEL_INVESTIGATE_TASK, clampLimits, sentinelEnabled, sentinelMaxActive } from "./config";
 import { BindingError, validateBindingsLive } from "./adapters/contract";
 import { LOCALITY_LABEL, classifyEndpoint, connectorCatalog } from "./adapters/connectorInfo";
 import type { BindingCatalog } from "./adapters/contract";
@@ -26,6 +26,7 @@ export interface SentinelRouterDeps {
   /** operator environment (default process.env); only used to describe connector configuration, never returned verbatim */ env?: () => Record<string, string | undefined>;
   /** static gateway readiness (no provider call, no spend); undefined = unknown */ modelReadiness?: () => { state: string; configuredProviders: number; eligibleProviders: number; operational: "verified" | "unverified" } | null;
   /** shared task worker runtime enabled (without it a queued investigation would never run) */ workerEnabled: () => boolean;
+  /** most QUEUED+RUNNING investigations per workspace (default SENTINEL_MAX_ACTIVE_PER_WORKSPACE, 5) */ maxActive?: () => number;
 }
 
 const NAME = /^[\w.\-:]{1,120}$/;
@@ -103,6 +104,16 @@ export function createSentinelRouter(deps: SentinelRouterDeps) {
     }
     return { row: await reconcile(row), events };
   };
+  /**
+   * QUEUED + RUNNING investigations in the workspace after reconciling them against their durable tasks, so a row whose task already died does not
+   * hold a slot forever. Reads at most `cap + 1` per status; the first 20 are reconciled, the rest are counted as active.
+   */
+  const activeCount = async (workspaceId: number, cap: number): Promise<number> => {
+    const store = deps.store();
+    const rows = [...(await store.listPage(workspaceId, { status: "QUEUED", limit: cap + 1 })).items, ...(await store.listPage(workspaceId, { status: "RUNNING", limit: cap + 1 })).items];
+    const head = await Promise.all(rows.slice(0, 20).map((r) => reconcile(r)));
+    return head.filter((r) => !isTerminalStatus(r.status)).length + Math.max(0, rows.length - 20);
+  };
   const taskInfo = async (row: InvestigationRecord) => {
     if (!row.taskId) return null;
     try {
@@ -169,6 +180,9 @@ export function createSentinelRouter(deps: SentinelRouterDeps) {
         }
         return { investigationId: existing.id, taskId: existing.taskId, created: false as const };
       }
+      // Abuse/cost control: a workspace may not queue unbounded investigations (each can make dozens of model calls). An idempotent retry never reaches here.
+      const cap = (deps.maxActive ?? (() => sentinelMaxActive()))();
+      if ((await activeCount(input.workspaceId, cap)) >= cap) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: `This workspace already has ${cap} investigations queued or running; wait for one to finish or cancel one` });
       const services = [...new Set([input.service, ...input.relatedServices])];
       await store.create({
         id, workspaceId: input.workspaceId, createdByUserId: ctx.user.id, title: input.title, severity: input.severity, service: input.service,

@@ -27,6 +27,13 @@ export const sentinelRuntimeConfig = (env: NodeJS.ProcessEnv = process.env): Sen
   cancelPollMs: int(env.SENTINEL_CANCEL_POLL_MS, 500, 50, 10_000),
 });
 
+/**
+ * Most investigations a workspace may have QUEUED or RUNNING at once (default 5, 1-50). Each one can make up to SENTINEL_MAX_MODEL_CALLS model calls
+ * and several connector calls; without a cap one member could fill the shared task queue and the model budget. A soft bound: two creates racing
+ * each other may overshoot by the number of racers.
+ */
+export const sentinelMaxActive = (env: NodeJS.ProcessEnv = process.env): number => int(env.SENTINEL_MAX_ACTIVE_PER_WORKSPACE, 5, 1, 50);
+
 /** Ceilings a caller cannot exceed, and the defaults used when a field is omitted. `max_virtual_ms` is wall milliseconds in production. */
 export const LIMIT_CEILINGS: Readonly<Limits> = Object.freeze({ max_tool_calls: 15, max_steps: 20, max_retries_per_call: 2, max_virtual_ms: 600_000 });
 export const LIMIT_DEFAULTS: Readonly<Limits> = Object.freeze({ max_tool_calls: 8, max_steps: 12, max_retries_per_call: 1, max_virtual_ms: 180_000 });
