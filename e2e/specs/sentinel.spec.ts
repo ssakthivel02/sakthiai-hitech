@@ -3,8 +3,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { login, myWorkspaceId, newIdentity, trpcQuery, type Identity } from "../support/helpers";
 
 /**
- * Sentinel in a real browser against the real built server. Needs the Sentinel-enabled stack: E2E_SENTINEL=1 (SENTINEL_ENABLED + TASK_WORKER_ENABLED
- * and the proposed 0013 tables applied to the THROWAWAY database only). Local fake model, no external provider, no spend.
+ * Sentinel in a real browser against the real built server. Needs the Sentinel-enabled stack: E2E_SENTINEL=1 (SENTINEL_ENABLED + TASK_WORKER_ENABLED;
+ * the 0014 tables come from the migration journal on the THROWAWAY database). Local fake model, no external provider, no spend.
  * Covers: truthful status, the owner-only runtime panel (keyboard, no secrets/URLs in the DOM), owner/stranger isolation, accessibility and mobile layout.
  * Not covered here: running an investigation through a connector (covered by the integration tests with a synthetic MCP server).
  */

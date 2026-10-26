@@ -1,13 +1,3 @@
--- PROPOSAL ONLY. Not in drizzle/meta/_journal.json, not applied anywhere, not referenced by drizzle-kit.
--- Review, then (with explicit owner approval) move into drizzle/ with the next journal entry and apply with the normal migration flow.
--- Purely additive: three new tables, no change to any existing table. Rollback: DROP TABLE sentinelAudit; DROP TABLE sentinelEvents; DROP TABLE sentinelInvestigations;
---
--- Design: sentinelEvents is the durable source of truth (append-only, hash-chained per investigation: prev/hash). Everything the UI shows and the
--- row summary on sentinelInvestigations are derived from it. workspaceId is repeated on every event row so that reads can be scoped
--- without a join, and every store query filters by it (tenant isolation).
--- sentinelAudit has no FK on purpose: audit rows are retained after an investigation is deleted (accountability).
--- Writers are serialised per investigation with SELECT ... FOR UPDATE on the sentinelInvestigations row (see store.mysql.ts); InnoDB is required.
-
 CREATE TABLE `sentinelInvestigations` (
   `id` char(36) NOT NULL,
   `workspaceId` int NOT NULL,

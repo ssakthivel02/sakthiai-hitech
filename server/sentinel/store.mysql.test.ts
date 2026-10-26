@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { createTestDatabase, skipMysqlSuite } from "../testing/mysqlTestDb";
@@ -13,17 +11,15 @@ import { tenantOf } from "./config";
 
 /**
  * Real-SQL integration for the Sentinel store. Runs ONLY against a throwaway database created by server/testing/mysqlTestDb.ts
- * (TEST_DATABASE_URL, loopback, refuses managed hosts). The 0013 PROPOSAL is applied to that throwaway database only; the repository
- * migration journal is untouched.
+ * (TEST_DATABASE_URL, loopback, refuses managed hosts). The journaled migrations (including 0014_sentinel_investigations) are applied to that throwaway database by the harness.
  *   TEST_DATABASE_URL=mysql://user:pass@127.0.0.1:3306 pnpm vitest run server/sentinel/store.mysql.test.ts
  */
 const skip = skipMysqlSuite();
-const proposal = () => readFileSync(path.join(process.cwd(), "drizzle/proposals/0014_sentinel_investigations.sql"), "utf8").split("--> statement-breakpoint").map((s) => s.trim()).filter(Boolean);
 const names = ["sentinelAudit", "sentinelEvents", "sentinelInvestigations"];
 
 let shared: TestDatabase | null = null;
 const dbOf = async () => {
-  if (!shared) { shared = await createTestDatabase(); for (const stmt of proposal()) await shared.pool.promise().query(stmt); }
+  if (!shared) { shared = await createTestDatabase(); }
   return shared;
 };
 afterAll(async () => { await shared?.close(); });

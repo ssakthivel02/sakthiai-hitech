@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { createWriteStream, mkdirSync, existsSync } from "node:fs";
 import path from "node:path";
 import { createTestDatabase, type TestDatabase } from "../server/testing/mysqlTestDb";
 import { startFakeClamd, startFakeLlm, startFakeOidc, startFakeS3, type Closeable } from "./support/fakes";
@@ -16,13 +16,9 @@ export default async function globalSetup() {
   mkdirSync("reports/e2e", { recursive: true });
 
   const database: TestDatabase = await createTestDatabase();
-  // Opt-in Sentinel stack (E2E_SENTINEL=1): enables the default-OFF flags and applies the PROPOSED 0013 tables to this THROWAWAY database only.
-  // Unset (the default), the stack is exactly what it was before and no Sentinel table exists.
+  // Opt-in Sentinel stack (E2E_SENTINEL=1): enables the default-OFF flags. The 0014 tables come from the migration journal like every other table;
+  // unset (the default), the flags stay off and the Sentinel tables sit unused.
   const sentinelStack = process.env.E2E_SENTINEL === "1";
-  if (sentinelStack) {
-    const sql = readFileSync(path.resolve("drizzle/proposals/0014_sentinel_investigations.sql"), "utf8").split("\n").filter(l => !l.trim().startsWith("--")).join("\n");
-    for (const statement of sql.split(";").map(x => x.trim()).filter(Boolean)) await database.pool.promise().query(statement);
-  }
   const fakes: Closeable[] = [];
   fakes.push(await startFakeOidc(PORTS.oidc), await startFakeLlm(PORTS.local, "local"), await startFakeLlm(PORTS.external, "external"), await startFakeS3(PORTS.s3), await startFakeClamd(PORTS.clamd));
 

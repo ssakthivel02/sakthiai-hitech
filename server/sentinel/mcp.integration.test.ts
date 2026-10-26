@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, skipMysqlSuite } from "../testing/mysqlTestDb";
 import type { TestDatabase } from "../testing/mysqlTestDb";
@@ -53,7 +51,6 @@ describe.skipIf(skip)("Sentinel through the governed MCP connector path (synthet
   };
   beforeAll(async () => {
     db = await createTestDatabase();
-    for (const s of readFileSync(path.join(process.cwd(), "drizzle/proposals/0014_sentinel_investigations.sql"), "utf8").split("--> statement-breakpoint").map((x) => x.trim()).filter(Boolean)) await db.pool.promise().query(s);
     fake = await startFakeMcp();
     store = new MysqlSentinelStore(async () => db.db);
     mcpStore = new McpConnectorStore(async () => db.db);
