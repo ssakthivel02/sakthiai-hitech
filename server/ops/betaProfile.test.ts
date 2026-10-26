@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkBetaProfile, type EnvLike } from "./betaProfile";
 
 const good: EnvLike = {
-  NODE_ENV: "production", JWT_SECRET: "x".repeat(40), DATABASE_URL: "mysql://u:p@h/db", DATABASE_EXPECTED_NAME: "db",
+  NODE_ENV: "production", SAKTHIAI_DEPLOY_ENV: "preview", JWT_SECRET: "x".repeat(40), DATABASE_URL: "mysql://u:p@h/db", DATABASE_EXPECTED_NAME: "db",
   AUTH_ALLOWED_SUBJECTS: "sub-1", RATE_LIMIT_STORE: "mysql", RATE_LIMIT_MAX_INSTANCES: "1",
   GATEWAY_ALLOW_EXTERNAL: "false", GATEWAY_ALLOW_METERED: "false",
 };
@@ -10,9 +10,17 @@ const failing = (env: EnvLike, options = {}) => checkBetaProfile(env, options).f
 
 describe("private-beta runtime profile", () => {
   it("accepts the intended posture", () => { expect(checkBetaProfile(good)).toEqual({ ok: true, findings: [] }); });
-  it("requires the shared rate-limit store (fail-closed costly routes)", () => {
+  it("requires an explicit deployment tier", () => {
+    expect(failing({ ...good, SAKTHIAI_DEPLOY_ENV: "" })).toContain("SAKTHIAI_DEPLOY_ENV");
+    expect(failing({ ...good, SAKTHIAI_DEPLOY_ENV: "staging" })).toContain("SAKTHIAI_DEPLOY_ENV");
+    expect(checkBetaProfile({ ...good, SAKTHIAI_DEPLOY_ENV: "production" }).ok).toBe(true);
+  });
+  it("requires the shared rate-limit store and a valid instance ceiling", () => {
     expect(failing({ ...good, RATE_LIMIT_STORE: "" })).toContain("RATE_LIMIT_STORE");
     expect(failing({ ...good, RATE_LIMIT_STORE: "memory" })).toContain("RATE_LIMIT_STORE");
+    expect(failing({ ...good, RATE_LIMIT_MAX_INSTANCES: "" })).toContain("RATE_LIMIT_MAX_INSTANCES");
+    expect(failing({ ...good, RATE_LIMIT_MAX_INSTANCES: "0" })).toContain("RATE_LIMIT_MAX_INSTANCES");
+    expect(failing({ ...good, RATE_LIMIT_MAX_INSTANCES: "many" })).toContain("RATE_LIMIT_MAX_INSTANCES");
   });
   it("refuses open signup and a missing allowlist", () => {
     expect(failing({ ...good, AUTH_OPEN_SIGNUP: "true" })).toContain("AUTH_OPEN_SIGNUP");
@@ -24,6 +32,13 @@ describe("private-beta runtime profile", () => {
     expect(failing({ ...good, CREATOR_PAID_IMAGE_USERS: "1" })).toContain("CREATOR_PAID_IMAGE_USERS");
     const warned = checkBetaProfile({ ...good, STORAGE_BUCKET: "b" }).findings;
     expect(warned).toEqual([expect.objectContaining({ level: "warn", variable: "STORAGE_*" })]);
+  });
+  it("pins the database name and requires Aiven CA trust material", () => {
+    expect(failing({ ...good, DATABASE_EXPECTED_NAME: "other" })).toContain("DATABASE_EXPECTED_NAME");
+    expect(failing({ ...good, DATABASE_URL: "postgres://u:p@h/db" })).toContain("DATABASE_URL");
+    const aiven = { ...good, DATABASE_URL: "mysql://u:p@example.aivencloud.com/db" };
+    expect(failing(aiven)).toContain("DATABASE_CA_CERT_B64");
+    expect(checkBetaProfile({ ...aiven, DATABASE_CA_CERT_B64: "ZmFrZS1jYQ==" }).ok).toBe(true);
   });
   it("keeps hosted/metered models off outside an approved activation", () => {
     expect(failing({ ...good, GATEWAY_ALLOW_EXTERNAL: "true" })).toContain("GATEWAY_ALLOW_EXTERNAL");
