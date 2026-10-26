@@ -26,25 +26,34 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
     return db;
   };
 
-  it("a database at 0010 (before the Creator spend ledger) is NOT ready: 0011's and 0013's tables are reported missing", async () => {
+  it("a database at 0010 (before the Creator spend ledger) is NOT ready: 0011's, 0013's and 0014's tables are reported missing", async () => {
     const db = await migratedThrough("0010_resumable_ingestion");
     try {
       const state = await probeSchemaReadiness(readColumns(db));
-      expect(state).toMatchObject({ status: "behind", missingTables: ["creatorSpendHolds", "creatorSpendWindows", "rateLimitWindows"] });
+      expect(state).toMatchObject({ status: "behind", missingTables: ["creatorSpendHolds", "creatorSpendWindows", "rateLimitWindows", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"] });
     } finally { await db.close(); }
   });
 
-  it("a database at 0011 is NOT ready: exactly the two 0012 audit columns (and 0013's table) are missing", async () => {
+  it("a database at 0011 is NOT ready: exactly the two 0012 audit columns (and 0013's and 0014's tables) are missing", async () => {
     const db = await migratedThrough("0011_creator_spend_ledger");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["rateLimitWindows"], missingColumns: 2 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["rateLimitWindows", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 2 });
     } finally { await db.close(); }
   });
 
-  it("a database at 0012 is NOT ready: only 0013's rate-limit table is missing", async () => {
+  it("a database at 0012 is NOT ready: only 0013's and 0014's tables are missing", async () => {
     const db = await migratedThrough("0012_creator_spend_settlement_audit");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["rateLimitWindows"], missingColumns: 0 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["rateLimitWindows", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
+    } finally { await db.close(); }
+  });
+
+  // Release consequence of journaling Sentinel's tables: a database migrated only through PR #29's 0013 is "behind" until 0014 is applied,
+  // whether or not SENTINEL_ENABLED is on. Applying 0014 is part of the normal journal-driven migration, not a separate step.
+  it("a database at 0013 (PR #29 head) is NOT ready: exactly Sentinel's three 0014 tables are missing", async () => {
+    const db = await migratedThrough("0013_rate_limit_windows");
+    try {
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 
