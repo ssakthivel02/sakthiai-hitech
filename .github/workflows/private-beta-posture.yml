@@ -1,0 +1,69 @@
+name: SakthiAI Private Beta Posture
+
+on:
+  pull_request:
+    paths:
+      - 'server/ops/betaProfile.ts'
+      - 'server/ops/betaProfile.test.ts'
+      - 'server/ops/betaSourceImport.ts'
+      - 'server/ops/betaSourceImport.test.ts'
+      - 'server/ops/betaSourceImport.static.test.ts'
+      - 'scripts/check-beta-profile.mjs'
+      - 'scripts/import-beta-sources.ts'
+      - 'config/beta/**'
+      - 'release/beta-sources/**'
+      - 'e2e/specs/beta-posture.spec.ts'
+      - '.github/workflows/private-beta-posture.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  private-beta-posture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate private-beta profile and operator-only source import
+        run: pnpm exec vitest run server/ops/betaProfile.test.ts server/ops/betaSourceImport.test.ts server/ops/betaSourceImport.static.test.ts
+
+      - name: Validate an inert private-beta configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >/tmp/sakthiai-private-beta-ci.env <<'EOF'
+          NODE_ENV=production
+          SAKTHIAI_DEPLOY_ENV=preview
+          JWT_SECRET=ci-only-placeholder-xxxxxxxxxxxxxxxxxxxxxxxx
+          DATABASE_URL=mysql://ci:ci@localhost/sakthiai_ci
+          DATABASE_EXPECTED_NAME=sakthiai_ci
+          AUTH_ALLOWED_SUBJECTS=ci-beta-user
+          RATE_LIMIT_STORE=mysql
+          RATE_LIMIT_MAX_INSTANCES=1
+          GATEWAY_ALLOW_EXTERNAL=false
+          GATEWAY_ALLOW_METERED=false
+          EOF
+          node scripts/check-beta-profile.mjs --env-file /tmp/sakthiai-private-beta-ci.env
+
+      - name: Assert this gate has no deployment or secret surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          file=.github/workflows/private-beta-posture.yml
+          ! grep -Eq 'secrets\.|environment:|db:push|wrangler|render deploy|aiven|curl .*https?://' "$file"
+          echo "PRIVATE_BETA_POSTURE_GATE_INERT"
