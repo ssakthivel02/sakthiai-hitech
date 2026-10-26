@@ -61,9 +61,4 @@ jobs:
           node scripts/check-beta-profile.mjs --env-file /tmp/sakthiai-private-beta-ci.env
 
       - name: Assert this gate has no deployment or secret surface
-        shell: bash
-        run: |
-          set -euo pipefail
-          file=.github/workflows/private-beta-posture.yml
-          ! grep -Eq 'secrets\.|environment:|db:push|wrangler|render deploy|aiven|curl .*https?://' "$file"
-          echo "PRIVATE_BETA_POSTURE_GATE_INERT"
+        run: node scripts/validate-private-beta-workflow.mjs
