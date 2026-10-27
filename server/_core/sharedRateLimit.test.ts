@@ -72,10 +72,12 @@ describe("store selection", () => {
     expect((AUTHENTICATED_RATE_POLICIES.default as { onSharedFailure?: string }).onSharedFailure ?? "scaled-local").toBe("scaled-local");
   });
 
-  it("the per-process limiter labels itself local and is always ready", async () => {
+  it("the per-process limiter is ready locally but not when production requires a shared store", async () => {
     const l = new ProcessRateLimiter();
     expect((await l.consume("user:1", general)).scope).toBe("local");
-    expect(rateLimitReadiness(await l.verify())).toEqual({ store: "memory", state: "local", ready: true });
+    const status = await l.verify();
+    expect(rateLimitReadiness(status)).toEqual({ store: "memory", state: "local", ready: true });
+    expect(rateLimitReadiness(status, { requireShared: true })).toEqual({ store: "memory", state: "local", ready: false });
   });
 });
 
