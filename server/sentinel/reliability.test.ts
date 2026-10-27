@@ -11,6 +11,13 @@ import { McpReadOnlyClient, McpClientError } from "../connectors/mcp/client";
 import { McpDiagnosticTransport } from "./adapters/mcpDiagnosticTransport";
 import type { NormalizedResult } from "../connectors/mcp";
 
+// This file creates several investigations as the same user within a minute, so the per-user request limiter is replaced by an allow-all one here.
+// The limiter itself is covered by rateLimit.test.ts / rateLimitMiddleware.test.ts, and sentinel.create through the REAL middleware by createRateLimit.test.ts.
+vi.mock("../_core/sharedRateLimit", () => ({
+  getAuthenticatedRateLimiter: () => ({ consume: async (_k: string, p: { maxRequests: number; windowMs: number }) => ({ allowed: true, limit: p.maxRequests, remaining: p.maxRequests, resetAt: Date.now() + p.windowMs, retryAfterMs: 0 }), status: () => ({ store: "memory" }), verify: async () => ({ store: "memory" }) }),
+}));
+
+
 type T = { id: string; workspaceId: number; state: string; input: unknown; idempotencyKey?: string; attempt: number; maxAttempts: number; cancelRequested: boolean; failureClass: string | null; progressNote: null };
 class Tasks {
   tasks = new Map<string, T>(); failCreate = 0;
