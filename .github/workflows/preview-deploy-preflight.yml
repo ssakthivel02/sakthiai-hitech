@@ -8,6 +8,8 @@ on:
       - ".env.example"
       - "server/_core/mysql.ts"
       - "server/_core/index.ts"
+      - "server/_core/artifactIdentity.ts"
+      - "server/_core/sharedRateLimit.ts"
       - "server/db.ts"
       - ".github/workflows/preview-db-setup.yml"
       - ".github/workflows/preview-http-smoke.yml"
@@ -72,6 +74,8 @@ jobs:
           grep -q '/releasez' "$smoke"
           grep -q 'ssakthivel02/sakthiai-hitech' "$smoke"
           grep -q 'exactCommitKnown' "$smoke"
+          grep -q "artifact?.state !== 'verified'" "$smoke"
+          grep -q 'artifactIdentityReady' server/_core/index.ts
 
       - name: Validate deployed readiness contract
         shell: bash
@@ -84,6 +88,8 @@ jobs:
           grep -q 'authentication' "$smoke"
           grep -q 'llm' "$smoke"
           grep -q 'storage' "$smoke"
+          grep -q 'rateLimit' "$smoke"
+          grep -q "state !== 'shared'" "$smoke"
 
       - name: Validate qualification order and required gates
         run: node scripts/validate-runtime-qualification-order.mjs
