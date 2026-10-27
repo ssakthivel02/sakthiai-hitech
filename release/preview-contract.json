@@ -33,7 +33,9 @@
     "database": true,
     "auth": true,
     "llm": true,
-    "storage": true
+    "storage": "configured-or-not-required-when-uploads-off",
+    "rateLimit": "mysql-shared",
+    "artifact": "verified-exact-commit"
   },
   "production": {
     "approved": false,
