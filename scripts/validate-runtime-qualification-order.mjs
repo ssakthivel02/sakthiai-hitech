@@ -42,6 +42,10 @@ for (const gate of [
 ]) {
   if (!gates.has(gate)) failures.push(`preview contract missing required gate: ${gate}`);
 }
+const readinessContract = contract.runtimeReadiness ?? {};
+if (readinessContract.rateLimit !== "mysql-shared") failures.push("preview contract must require mysql-shared rate limiting");
+if (readinessContract.artifact !== "verified-exact-commit") failures.push("preview contract must require a verified exact-commit artifact");
+if (readinessContract.storage !== "configured-or-not-required-when-uploads-off") failures.push("preview contract must encode the upload-disabled storage posture");
 
 for (const token of [
   "probeSchemaReadiness",
