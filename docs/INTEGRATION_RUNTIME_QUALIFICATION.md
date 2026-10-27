@@ -94,28 +94,53 @@ STOP if the deployed service identity, ownership, auto-deploy state or secret-ma
 5. Capture fresh non-secret recovery evidence: service state plus latest usable backup timestamp/identifier.
 6. Do not migrate if database identity or recovery evidence is uncertain.
 
-### Gate 3 — exact-commit deployment
+### Gate 3 — guarded read-only database inspect
 
-1. Deploy only the frozen PR #29 exact SHA through the existing Render service.
+1. Freeze and record the exact approved PR #29 SHA.
+2. Dispatch **SakthiAI Preview DB Setup** from that exact PR #29 ref with `mode=inspect`, `approved_commit=<exact SHA>`, and the fresh recovery point.
+3. Require the bind job to prove `approved_commit == github.sha`.
+4. Require the inspect environment's SELECT-only principal, verified TLS, exact `sakthiai_preview` target, journal/hash prefix validation, schema classification, and recovery-point checks to PASS.
+5. Review the uploaded migration evidence before authorizing any write.
+
+STOP if inspect reports journal/hash drift, orphan/partial migration objects, rows newer than the recovery point, wrong privileges, wrong database, unverified TLS, or any SHA mismatch.
+
+### Gate 4 — separately approve and apply reviewed migrations
+
+This gate is a **separate write authorization** from inspect.
+
+1. Re-read PR #29 and require the exact inspected SHA to remain current and fully green.
+2. Reconfirm the same fresh recovery evidence remains valid.
+3. Dispatch the guarded workflow with `mode=migrate`, the same exact `approved_commit`, and approved recovery point.
+4. Require only the reviewed migration journal to be applied; do not generate migrations on the runtime host.
+5. Require post-migration preservation checks, a no-op migrator rerun, and search-text backfill idempotency to PASS.
+6. Require the migration evidence to show the full repository journal applied, including `0013_rate_limit_windows`.
+
+STOP if PR #29 moves between inspect and migrate; restart from Gate 0 and re-inspect the new exact SHA.
+
+### Gate 5 — exact-commit deployment and readiness proof
+
+Only after Gate 4 is green:
+
+1. Deploy only the same frozen PR #29 exact SHA through the existing `sakthiai-hitech-preview` Render service.
 2. Do not deploy a branch tip such as `latest` without recording the exact commit.
-3. Request `/releasez`; require the exact approved PR #29 SHA.
+3. Request `/releasez`; require the exact approved PR #29 SHA and verified artifact identity.
 4. Request `/healthz`; require HTTP 200 / `alive`.
 5. Request `/readyz`; require HTTP 200 / `ready`.
-6. Verify `/readyz` proves database/auth/LLM/storage readiness and does not overclaim live scanner availability.
+6. Verify readiness proves the current database schema, auth configuration, eligible LLM route, storage posture, MySQL-backed rate-limit store and intact artifact.
 
-STOP on any SHA mismatch or readiness failure.
+**Why migration precedes readiness:** the application deliberately returns `/readyz` 503 with `database=schema_mismatch` when the database is behind the build. Therefore deployment/readiness acceptance must never be used as a prerequisite for the migration that makes the schema current.
 
-### Gate 4 — database migration and non-paid Creator acceptance
+STOP on any SHA, artifact, schema or readiness mismatch.
 
-1. Reconfirm the target is only `sakthiai_preview`.
-2. Apply only the reviewed migration set with the existing apply-only migration command.
-3. Do not generate new migration artifacts on the runtime host.
-4. Run `pnpm creator:runtime:acceptance`.
-5. Require schema probe and storage write/read canary PASS.
-6. Authenticate to an approved workspace and open `/creator/runtime`.
-7. Run the non-paid runtime/data-plane verification and require `VERIFIED` before any provider spend is considered.
+### Gate 6 — non-paid Creator acceptance
 
-### Gate 5 — Core live security acceptance
+1. Run `pnpm creator:runtime:acceptance` against the exact deployed SHA.
+2. Require schema probe and storage/data-plane checks appropriate to the enabled beta posture.
+3. Authenticate to an approved workspace and open `/creator/runtime`.
+4. Run the non-paid runtime/data-plane verification and require `VERIFIED`.
+5. Do not enable paid image/video generation.
+
+### Gate 7 — Core live security acceptance
 
 Use two fresh disposable non-admin identities created/logged in **after** the PR #29 deployment so their session cookies contain the current generation/JTI format.
 
@@ -129,7 +154,7 @@ Run the Core runtime security acceptance against the exact same PR #29 SHA and r
 
 Because file ingestion is currently disabled, do not claim live clean/EICAR scanner acceptance unless a separately approved live scanner runtime has been provisioned and proven. The source-level fail-closed malware gate remains required regardless.
 
-### Gate 6 — browser/human acceptance
+### Gate 8 — browser/human acceptance
 
 Before any external beta claim, verify on the exact deployed PR #29 SHA:
 
@@ -144,7 +169,7 @@ Before any external beta claim, verify on the exact deployed PR #29 SHA:
 
 ## Paid-provider stop gate
 
-Completing Gates 0–6 does **not** authorize a paid media/model request.
+Completing Gates 0–8 does **not** authorize a paid media/model request.
 
 A first Gemini/Veo/image/video generation test requires a separate explicit owner approval defining a bounded spend/test scope. Until then, stop after non-paid Creator/runtime/security qualification.
 
