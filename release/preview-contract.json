@@ -14,12 +14,17 @@
     "engine": "mysql",
     "provider": "aiven",
     "expectedDatabase": "sakthiai_preview",
-    "forbiddenDatabases": ["defaultdb", "ramaverse_preview", "kirthiverse_preview"],
+    "forbiddenDatabases": [
+      "defaultdb",
+      "ramaverse_preview",
+      "kirthiverse_preview"
+    ],
     "verifiedTlsRequired": true,
     "caEnvironmentVariable": "DATABASE_CA_CERT_B64"
   },
   "requiredPreviewGates": [
     "quality-gate",
+    "private-beta-posture",
     "preview-deployment-preflight",
     "preview-db-setup",
     "preview-http-smoke"
