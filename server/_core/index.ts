@@ -171,7 +171,7 @@ async function startServer() {
       configured: configured(ENV.storageBucket, ENV.storageAccessKeyId, ENV.storageSecretAccessKey),
     });
     const storageReady = storage.ok;
-    const rateLimit = rateLimitReadiness(await getAuthenticatedRateLimiter().verify());
+    const rateLimit = rateLimitReadiness(await getAuthenticatedRateLimiter().verify(), { requireShared: process.env.NODE_ENV === "production" });
     // Production must serve a verified build manifest bound to this exact deployed commit.
     // Development may omit the manifest, but any detected mismatch still fails readiness.
     const artifact = getArtifactIdentity();
