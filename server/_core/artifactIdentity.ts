@@ -70,6 +70,14 @@ export function readArtifactIdentity(distDir: string): ArtifactIdentity {
   }
 }
 
+export function artifactIdentityReady(identity: ArtifactIdentity, runtimeCommit: string, production: boolean): boolean {
+  if (!production) return identity.state !== "mismatch";
+  if (identity.state !== "verified") return false;
+  const commit = runtimeCommit.trim().toLowerCase();
+  const manifestCommit = identity.manifestCommit.trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(commit) && manifestCommit === commit;
+}
+
 let cached: ArtifactIdentity | null = null;
 /** The dist directory is the directory of the running bundle (dist/index.js). In development there is no manifest. */
 export function getArtifactIdentity(): ArtifactIdentity {
