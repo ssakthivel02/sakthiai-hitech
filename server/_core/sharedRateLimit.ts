@@ -230,11 +230,20 @@ export class MysqlRateLimiter implements RateLimiter {
 
   async verify(now = Date.now()): Promise<RateLimiterStatus> {
     this.lastSeen = now;
-    if (this.schema === "ok" && now - this.schemaCheckedAt < this.schemaRecheckMs) return this.status();
+    if (this.schema === "ok" && now - this.schemaCheckedAt < this.schemaRecheckMs && this.consecutiveFailures === 0 && now >= this.breakerOpenUntil) return this.status();
     try {
       const db = await withTimeout(this.getDb(), this.timeoutMs);
-      if (db) await withTimeout(this.checkSchema(db, now), this.timeoutMs);
-    } catch { /* an unreachable database is reported by the database readiness probe */ }
+      if (db) {
+        await withTimeout(this.checkSchema(db, now), this.timeoutMs);
+        if (this.schema === "ok") {
+          // A successful bounded readiness probe is explicit recovery evidence: clear stale
+          // outage/breaker state only after the shared table is reachable and shape-valid.
+          this.consecutiveFailures = 0;
+          this.lastFailureClass = null;
+          this.breakerOpenUntil = 0;
+        }
+      }
+    } catch { /* an unreachable database is reported by this limiter as non-shared and by the database readiness probe */ }
     return this.status();
   }
 
