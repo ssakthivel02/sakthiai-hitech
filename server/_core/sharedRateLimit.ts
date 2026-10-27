@@ -312,5 +312,7 @@ export function getAuthenticatedRateLimiter(): RateLimiter {
 /** Readiness: a configured shared store whose table is missing or has the wrong shape is a deployment error. */
 export function rateLimitReadiness(status: RateLimiterStatus): { store: string; state: string; ready: boolean } {
   if (status.store === "memory") return { store: "memory", state: "local", ready: true };
-  return { store: "mysql", state: status.state, ready: status.state !== "missing" && status.state !== "incompatible" };
+  // A configured MySQL limiter is deployment-ready only when the shared table is verified and the
+  // store is currently healthy. unchecked/degraded states must not let /readyz overclaim a global quota.
+  return { store: "mysql", state: status.state, ready: status.state === "shared" };
 }
