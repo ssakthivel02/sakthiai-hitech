@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { computeArtifactDigest, readArtifactIdentity } from "./artifactIdentity";
+import { artifactIdentityReady, computeArtifactDigest, readArtifactIdentity } from "./artifactIdentity";
 // @ts-expect-error plain ESM build script without type declarations
 import { buildEnvironmentFingerprint, computeArtifactDigest as scriptDigest } from "../../scripts/release-manifest.mjs";
 
@@ -81,5 +81,24 @@ describe("built-artifact identity", () => {
     expect(readArtifactIdentity(path.join(root, "dist"))).toEqual({ state: "absent" });
     writeFileSync(path.join(root, "dist", "release-manifest.json"), "{not json");
     expect(readArtifactIdentity(path.join(root, "dist")).state).toBe("mismatch");
+  });
+
+  it("production readiness requires a verified artifact bound to the exact runtime commit", () => {
+    const commit = "a".repeat(40);
+    expect(artifactIdentityReady({ state: "absent" }, commit, true)).toBe(false);
+    expect(artifactIdentityReady({ state: "absent" }, "unknown", false)).toBe(true);
+    const verified = {
+      state: "verified" as const,
+      digest: "d".repeat(64),
+      recordedDigest: "d".repeat(64),
+      fileCount: 3,
+      manifestCommit: commit,
+      serverDigest: "s".repeat(64),
+      clientDigest: "c".repeat(64),
+      buildEnvironmentFingerprint: "f".repeat(64),
+    };
+    expect(artifactIdentityReady(verified, commit, true)).toBe(true);
+    expect(artifactIdentityReady(verified, "b".repeat(40), true)).toBe(false);
+    expect(artifactIdentityReady({ ...verified, state: "mismatch" }, commit, true)).toBe(false);
   });
 });
