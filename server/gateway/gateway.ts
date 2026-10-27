@@ -6,6 +6,7 @@ import { CircuitBreaker, type BreakerConfig, type BreakerStore } from "./circuit
 import type { GatewayConfig } from "./config";
 import { createOpenAiCompatibleAdapter } from "./openaiCompatible";
 import { createResolvedAddressGuard } from "./hostClass";
+import { createPinnedFetch, localSlotAddressPolicy } from "./pinnedFetch";
 import {
   ERROR_TRAITS,
   ProviderCallError,
@@ -20,6 +21,25 @@ import {
   type ProviderRuntimeStatus,
   type RuntimeState,
 } from "./types";
+
+type RecentCall = {
+  at: string; workspaceId: number; status: "returned" | "failed"; reason?: string; providerId?: string; modelId?: string; endpointProfile?: string;
+  tokens?: number; cost?: { amount: number; unit: string }; fellBack: boolean; sequence: string[]; latencyMs: number;
+};
+export type RuntimeSnapshot = {
+  generatedAt: string; processStartedAt: string;
+  policyCeiling: { allowExternal: boolean; allowMetered: boolean };
+  budgetStore: "none" | "memory" | "mysql";
+  providers: Array<ProviderRuntimeStatus & { runtimeClass: "local" | "hosted"; modelId?: string; invalidReason?: string; eligibleForWorkspace: boolean }>;
+  workspace: {
+    policy: { externalEnabled: boolean; meteredEnabled: boolean | null; maxRequests: number | null; maxTokens: number | null; maxCost: number | null } | null; policyError: boolean;
+    usageToday: { requests: number; tokens: number; cost: number; estimatedCommits: number } | null; usageError: boolean;
+    remaining: { requests: number | null; tokens: number | null; cost: number | null } | null;
+    costUnit: string | null; costBasis: string;
+  };
+  counters: { budget_denied: number; policy_denied: number; other_failed: number; returned: number; fellBack: number; scope: string };
+  recent: Array<Omit<RecentCall, "workspaceId">>;
+};
 
 export type GatewayReadiness = {
   state: "eligible" | "no_provider_configured" | "not_permitted_by_policy" | "default_budget_denies_metered";
@@ -80,7 +100,11 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
             endpointProfile: binding.endpointProfile,
             apiKey: binding.apiKey,
             timeoutMs: binding.timeoutMs,
-            ...(binding.kind === "self_hosted" ? { noRedirect: true, ...(binding.resolveGuard ? { hostGuard: createResolvedAddressGuard() } : {}) } : {}),
+            // The local slot dials only through the pinned fetch: the address policy runs inside the socket's own lookup, so a name cannot pass a check and then
+            // connect somewhere else (DNS rebinding), and link-local / cloud-metadata addresses are refused as a terminal bad_request. The early guard stays as a cheap pre-check.
+            ...(binding.kind === "self_hosted"
+              ? { noRedirect: true, fetchImpl: createPinnedFetch({ policy: localSlotAddressPolicy, refusal: () => new ProviderCallError("bad_request") }), ...(binding.resolveGuard ? { hostGuard: createResolvedAddressGuard() } : {}) }
+              : {}),
             maxAttempts: config.retry.maxAttempts,
             totalDeadlineMs: config.retry.totalDeadlineMs,
             backoffBaseMs: config.retry.backoffBaseMs,
@@ -218,10 +242,29 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     return { state, configuredProviders: configured, eligibleProviders: usable.length, operational: verified ? "verified" : "unverified" };
   }
 
+  /** Per-process, prompt-free and secret-free memory of recent outcomes for the runtime view. Not durable; resets on restart. */
+  const recentCalls: RecentCall[] = [];
+  const deniedCounts = { budget_denied: 0, policy_denied: 0, other_failed: 0, returned: 0, fellBack: 0 };
+  const startedProcessAt = now();
+  function remember(request: GatewayRequest, outcome: GatewayOutcome, attempts: AttemptRecord[]) {
+    const fellBack = outcome.status === "returned" && attempts.some(a => a.outcome !== "ok");
+    if (outcome.status === "returned") { deniedCounts.returned += 1; if (fellBack) deniedCounts.fellBack += 1; }
+    else if (outcome.reason === "budget_denied") deniedCounts.budget_denied += 1;
+    else if (outcome.reason === "policy_denied") deniedCounts.policy_denied += 1;
+    else deniedCounts.other_failed += 1;
+    recentCalls.push({
+      at: new Date(now()).toISOString(), workspaceId: request.workspaceId, status: outcome.status,
+      ...(outcome.status === "failed" ? { reason: outcome.reason } : { providerId: outcome.providerId, modelId: outcome.modelId, ...(outcome.endpointProfile ? { endpointProfile: outcome.endpointProfile } : {}), tokens: outcome.usage?.totalTokens, cost: outcome.usage?.cost ? { amount: outcome.usage.cost.amount, unit: outcome.usage.cost.unit } : undefined }),
+      fellBack, sequence: attempts.slice(0, 6).map(a => `${a.providerId}:${String(a.outcome).slice(0, 60)}`), latencyMs: outcome.latencyMs,
+    });
+    if (recentCalls.length > 100) recentCalls.splice(0, recentCalls.length - 100);
+  }
+
   async function invokeInner(request: GatewayRequest): Promise<GatewayOutcome> {
     const startedAt = now();
     const attempts: AttemptRecord[] = [];
     const finish = (outcome: GatewayOutcome): GatewayOutcome => {
+      try { remember(request, outcome, attempts); } catch { /* telemetry must never affect a governed call */ }
       log({
         event: "gateway.invoke",
         requestId: request.requestId,
@@ -394,7 +437,44 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     return Promise.all([...ids].map(statusOf));
   }
 
-  return { invoke, probe, status, readiness, breaker, budgetStore };
+  /**
+   * Read-only snapshot for the runtime/budget view of ONE workspace. No provider call, no reservation, no spend.
+   * Contains no URL, key, prompt or reply. Cost is configured-rate x reported tokens (an estimate, never an invoice).
+   * Recent outcomes and counters are per-process since start; budget usage is as durable as the configured budget store.
+   */
+  async function runtimeSnapshot(workspaceId: number): Promise<RuntimeSnapshot> {
+    const providers = await status();
+    let policy: WorkspaceBudgetPolicy | null = null; let policyError = false;
+    try { policy = await policyResolver.resolve(workspaceId); } catch { policyError = true; }
+    let usage: Awaited<ReturnType<BudgetStore["usage"]>> | null = null; let usageError = false;
+    if (budgetStore) { try { usage = await budgetStore.usage(workspaceId); } catch { usageError = true; } }
+    const left = (limit: number | undefined, used: number | undefined) => (limit === undefined || used === undefined ? null : Math.max(0, limit - used));
+    const unit = config.budget.rates?.unit ?? null;
+    return {
+      generatedAt: new Date(now()).toISOString(),
+      processStartedAt: new Date(startedProcessAt).toISOString(),
+      policyCeiling: { allowExternal: config.policy.allowExternal, allowMetered: config.policy.allowMetered },
+      budgetStore: config.budget.store,
+      providers: providers.map(p => {
+        const binding = config.bindings.find(b => b.providerId === p.providerId);
+        const invalid = config.invalid.find(i => i.providerId === p.providerId);
+        return { ...p, runtimeClass: p.kind === "self_hosted" ? "local" as const : "hosted" as const, ...(binding ? { modelId: binding.model } : {}), ...(invalid ? { invalidReason: invalid.reason } : {}), eligibleForWorkspace: !!binding && (p.kind === "self_hosted" || (config.policy.allowExternal && !!policy?.externalEnabled && (p.billingMode !== "metered_api" || (config.policy.allowMetered && policy.meteredEnabled !== false)))) };
+      }),
+      workspace: {
+        policy: policy ? { externalEnabled: policy.externalEnabled, meteredEnabled: policy.meteredEnabled ?? null, maxRequests: policy.maxRequests ?? null, maxTokens: policy.maxTokens ?? null, maxCost: policy.maxCost ?? null } : null,
+        policyError,
+        usageToday: usage ? { requests: usage.requests, tokens: usage.tokens, cost: usage.cost, estimatedCommits: usage.estimatedCommits } : null,
+        usageError,
+        remaining: policy && usage ? { requests: left(policy.maxRequests, usage.requests), tokens: left(policy.maxTokens, usage.tokens), cost: left(policy.maxCost, usage.cost) } : null,
+        costUnit: unit,
+        costBasis: "estimate: configured rate x provider-reported tokens; not an invoice",
+      },
+      counters: { ...deniedCounts, scope: "all workspaces, this process since start" },
+      recent: recentCalls.filter(c => c.workspaceId === workspaceId).slice(-25).reverse().map(({ workspaceId: _w, ...rest }) => rest),
+    };
+  }
+
+  return { invoke, probe, status, readiness, runtimeSnapshot, breaker, budgetStore };
 }
 
 export type ProviderGateway = ReturnType<typeof createProviderGateway>;

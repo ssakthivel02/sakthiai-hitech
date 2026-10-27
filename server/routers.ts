@@ -21,6 +21,7 @@ import { embeddingStatus, tryEmbed, serializeEmbedding } from "./embeddings";
 import { searchTextFor } from "./retrievalStore";
 import { creatorRouter } from "./creator/router";
 import { opsRouter } from "./ops/valueLedger";
+import { createSentinelRouter, getSharedSentinelStore } from "./sentinel";
 import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
 import { assertFileUploadsEnabled } from "./ingestion/gate";
 import { resolveGroundedOutcome, type ModelResult } from "./grounding";
@@ -152,6 +153,17 @@ export const appRouter = router({
     get: protectedProcedure.input(workspaceInput.extend({ taskId: z.string().uuid() })).query(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); const task = await sharedTaskStore().get(input.workspaceId, input.taskId); if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "Task not found" }); return toView(task); }),
     list: protectedProcedure.input(workspaceInput.extend({ state: z.enum(TASK_STATES).optional(), limit: z.number().int().min(1).max(200).optional() })).query(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); return (await sharedTaskStore().list(input.workspaceId, { state: input.state, limit: input.limit })).map(toView); }),
     cancel: protectedProcedure.input(workspaceInput.extend({ taskId: z.string().uuid() })).mutation(async ({ ctx, input }) => { await requireWorkspace(ctx.user.id, input.workspaceId); const task = await sharedTaskStore().cancel(input.workspaceId, input.taskId); if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "Task not found" }); return toView(task); }),
+  }),
+  /** Owner-only, read-only runtime/budget view of the Provider Gateway for one workspace. No provider call, no spend, no URL/key/prompt in the payload. */
+  modelRuntime: router({
+    status: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => { await requireWorkspaceOwner(ctx.user.id, input.workspaceId); return getProviderGateway().runtimeSnapshot(input.workspaceId); }),
+  }),
+  /** Sentinel read-only incident investigation. Default OFF (SENTINEL_ENABLED); every procedure is workspace-authorised and tenant-scoped. */
+  sentinel: createSentinelRouter({
+    store: getSharedSentinelStore, tasks: sharedTaskStore, mcp: sharedMcp,
+    requireWorkspace, isWorkspaceOwner: async (userId, workspaceId) => (await getWorkspaceRole(userId, workspaceId)) === "owner",
+    workerEnabled: () => asyncAnswersEnabled(),
+    modelReadiness: () => getProviderGateway().readiness(),
   }),
 });
 export type AppRouter = typeof appRouter;

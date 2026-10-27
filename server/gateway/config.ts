@@ -94,6 +94,8 @@ export function validateLocalSlotUrl(raw: string, env: EnvLike, allowlistVar: "L
     return "names a hosted provider; configure it as the external provider (LLM_*) so policy and budget apply, not as the local provider";
   }
   switch (classifyHost(host)) {
+    case "blocked":
+      return "is a link-local or cloud-metadata address, which is never allowed for any model endpoint (listing it in an allowlist does not change that)";
     case "loopback":
     case "unroutable":
       return null;

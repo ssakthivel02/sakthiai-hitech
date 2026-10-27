@@ -202,6 +202,24 @@ describe.skipIf(skipMysqlSuite())("governed read-only MCP connector on real SQL"
     await expect(svc.readResource(wsA, view.id, "doc://handbook")).rejects.toThrow(/audit sink down/);
   });
 
+  it("DNS rebinding: a name that passes the early address check but answers with the metadata address when the connection is made is refused, and nothing is sent", async () => {
+    const rebindEnv = { MCP_ALLOWED_ENDPOINTS: "https://mcp.rebind.example", MCP_SECRET_FAKE_TOKEN: SECRET };
+    let lookups = 0;
+    const publicLookup = (async () => [{ address: "93.184.216.34", family: 4 }]) as never;
+    const svc = new McpConnectorService({ store, env: rebindEnv, lookup: publicLookup }); // NO fetchImpl: the real pinned transport
+    const view = await svc.register(wsA, { name: `rebind-${++counter}`, endpoint: "https://mcp.rebind.example/mcp", secretRef: "FAKE_TOKEN" });
+    await svc.setEnabled(wsA, view.id, true);
+    // the early check (first lookup) sees a public address; every later lookup (the connection's own) sees the flip
+    lookups = 0;
+    const flipping = (async () => { lookups++; return (lookups === 1 ? ["93.184.216.34"] : ["169.254.169.254"]).map((address) => ({ address, family: 4 })); }) as never;
+    const svc2 = new McpConnectorService({ store, env: rebindEnv, lookup: flipping });
+    const error = await svc2.discover(wsA, view.id).then(() => null, e => e as McpPolicyError);
+    expect(error).toBeInstanceOf(McpPolicyError);
+    expect(error!.code).toBe("UNAVAILABLE");
+    expect(lookups).toBeGreaterThanOrEqual(2); // early check + the connection's own lookup: the second one is the one that was enforced
+    expect(JSON.stringify(error!.message)).not.toMatch(/169\.254|rebind/);
+  });
+
   it("database unavailable: operations reject", async () => {
     const svc = new McpConnectorService({ store: new McpConnectorStore(async () => null), env });
     await expect(svc.list(1)).rejects.toThrow(/unavailable/);

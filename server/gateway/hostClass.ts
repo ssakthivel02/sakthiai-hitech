@@ -6,14 +6,21 @@ import { lookup as dnsLookup } from "node:dns/promises";
  * budget, so it may only ever point at the operator's own compute: this machine, or a private-network host the operator named explicitly.
  *
  *   loopback   localhost, 127.0.0.0/8, ::1 (also the IPv4-mapped form of those)
- *   private    RFC 1918, 169.254/16, 100.64/10 (CGNAT, e.g. tailnets), fc00::/7, fe80::/10 (and IPv4-mapped forms of those)
+ *   private    RFC 1918, 100.64/10 (CGNAT, e.g. tailnets), fc00::/7 (and IPv4-mapped forms of those)
+ *   blocked    link-local (169.254/16, fe80::/10), cloud-metadata endpoints (169.254.169.254, fd00:ec2::/32, 100.100.100.200, metadata.* names), including
+ *              the same addresses reached through IPv4-mapped, NAT64 (64:ff9b::/96), 6to4 and IPv4-compatible IPv6 forms. NEVER allowed: no allowlist
+ *              or override can admit it, because a model endpoint has no legitimate reason to live there and a request to it is a credential-theft primitive.
  *   internal   a name that is not a global DNS name: single label, or .local .internal .lan .home.arpa .svc .cluster.local .localdomain .localhost
  *   unroutable *.invalid (RFC 6761: can never resolve, so no destination can be reached)
  *   public     everything else, including 0.0.0.0, public IP literals, and every ordinary DNS name
  *
  * Pure functions plus one injectable resolver. Nothing here performs a request.
  */
-export type HostClass = "loopback" | "private" | "internal" | "unroutable" | "public";
+export type HostClass = "loopback" | "private" | "internal" | "unroutable" | "blocked" | "public";
+
+/** Names that front a cloud metadata service. Matched exactly or as a parent domain, so an allowlist entry can never admit them. */
+const METADATA_HOSTS: readonly string[] = ["metadata", "instance-data", "metadata.google.internal", "metadata.goog", "instance-data.ec2.internal", "metadata.tencentyun.com", "metadata.platformequinix.com", "metadata.azure.internal"];
+const isMetadataName = (host: string): boolean => METADATA_HOSTS.some((m) => host === m || host.endsWith(`.${m}`));
 
 const INTERNAL_SUFFIXES: readonly string[] = [".local", ".internal", ".lan", ".home.arpa", ".svc", ".cluster.local", ".localdomain", ".localhost"];
 
@@ -28,7 +35,8 @@ function classifyIpv4(host: string): HostClass {
   const o = host.split(".").map(Number);
   const [a, b] = [o[0]!, o[1]!];
   if (a === 127) return "loopback";
-  if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127)) return "private";
+  if ((a === 169 && b === 254) || (a === 100 && b === 100 && o[2] === 100 && o[3] === 200)) return "blocked"; // link-local (incl. 169.254.169.254) and the Alibaba metadata address
+  if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return "private";
   return "public"; // includes 0.0.0.0/8, multicast, reserved and every global address
 }
 
@@ -56,16 +64,42 @@ function parseIpv6(host: string): number[] | null {
   return out.some(Number.isNaN) ? null : out;
 }
 
+const v4String = (hi: number, lo: number): string => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+
+/**
+ * The IPv4 address an IPv6 literal carries, for the forms that route to that IPv4 host: IPv4-mapped ::ffff:a.b.c.d, the deprecated IPv4-compatible
+ * ::a.b.c.d, NAT64 64:ff9b::/96 (RFC 6052) and 6to4 2002:AABB:CCDD::/48. Null for every other address.
+ */
+function embeddedIpv4(g: number[]): string | null {
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return v4String(g[6]!, g[7]!);
+  if (g.slice(0, 6).every((x) => x === 0) && (g[6]! !== 0 || g[7]! > 1)) return v4String(g[6]!, g[7]!);
+  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0)) return v4String(g[6]!, g[7]!);
+  if (g[0] === 0x2002) return v4String(g[1]!, g[2]!);
+  return null;
+}
+
+/** The embedded IPv4 of an IPv6 address literal as dotted text (see embeddedIpv4), or null. Exported so other address policies judge the real destination. */
+export function unmapIpv4(address: string): string | null {
+  const host = normalizeHost(address);
+  if (!isIPv6(host)) return null;
+  const g = parseIpv6(host);
+  return g ? embeddedIpv4(g) : null;
+}
+
 function classifyIpv6(host: string): HostClass {
   const g = parseIpv6(host);
   if (!g) return "public"; // unparseable: never treat as local
-  if (g.slice(0, 7).every((x) => x === 0)) return g[7] === 1 ? "loopback" : "public"; // ::1 only; :: and ::a.b.c.d (deprecated) are not local
-  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) { // IPv4-mapped ::ffff:a.b.c.d
-    return classifyIpv4(`${g[6]! >> 8}.${g[6]! & 255}.${g[7]! >> 8}.${g[7]! & 255}`);
+  if (g.slice(0, 7).every((x) => x === 0)) { // ::1 is loopback; :: is not local; ::a.b.c.d (deprecated) is local only if blocked
+    if (g[7] === 1) return "loopback";
+    return classifyIpv4(v4String(g[6]!, g[7]!)) === "blocked" ? "blocked" : "public";
   }
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return classifyIpv4(v4String(g[6]!, g[7]!)); // IPv4-mapped ::ffff:a.b.c.d
+  if ((g[0]! & 0xffc0) === 0xfe80) return "blocked"; // fe80::/10 link-local
+  if (g[0] === 0xfd00 && g[1] === 0x0ec2) return "blocked"; // fd00:ec2::/32 (AWS IMDS over IPv6)
   if ((g[0]! & 0xfe00) === 0xfc00) return "private"; // fc00::/7
-  if ((g[0]! & 0xffc0) === 0xfe80) return "private"; // fe80::/10
-  return "public"; // includes 64:ff9b::/96 (NAT64), 2002::/16 (6to4), 2001::/32 (Teredo) and all global unicast
+  // NAT64 and 6to4 reach their embedded IPv4 host: never local, and a blocked IPv4 stays blocked. 2001::/32 (Teredo) and all global unicast are public.
+  const embedded = embeddedIpv4(g);
+  return embedded && classifyIpv4(embedded) === "blocked" ? "blocked" : "public";
 }
 
 export function classifyHost(hostname: string): HostClass {
@@ -74,6 +108,7 @@ export function classifyHost(hostname: string): HostClass {
   if (isIPv4(host)) return classifyIpv4(host);
   if (isIPv6(host)) return classifyIpv6(host);
   if (!/^[a-z0-9._-]+$/.test(host)) return "public"; // anything that is not a plain DNS-label string (stray colons, brackets, zone ids, unicode) is never local
+  if (isMetadataName(host)) return "blocked";
   if (host === "localhost") return "loopback";
   if (host === "invalid" || host.endsWith(".invalid")) return "unroutable";
   if (!host.includes(".") || INTERNAL_SUFFIXES.some((s) => host.endsWith(s))) return "internal";
@@ -103,9 +138,9 @@ export type Resolver = (hostname: string) => Promise<string[]>;
 const defaultResolver: Resolver = async (hostname) => (await dnsLookup(hostname, { all: true, verbatim: true })).map((r) => r.address);
 
 /**
- * Request-time check for a hostname that passed configuration: EVERY address it resolves to must be loopback or private. An empty or failed
- * resolution fails closed. Limitation (documented): the HTTP client resolves again when it connects, so a name that flips between this check and the
- * connection (DNS rebinding) is not excluded; use an IP literal in LOCAL_LLM_ALLOWED_HOSTS to remove that window.
+ * Early (pre-request) check for a hostname that passed configuration: EVERY address it resolves to must be loopback or private (never blocked). An
+ * empty or failed resolution fails closed. This check ALONE cannot stop DNS rebinding, because the HTTP client would resolve again at connect time;
+ * the connection itself is pinned by createPinnedFetch (pinnedFetch.ts), which validates the very addresses it dials.
  */
 export function createResolvedAddressGuard(resolve: Resolver = defaultResolver): (hostname: string) => Promise<boolean> {
   return async (hostname) => {

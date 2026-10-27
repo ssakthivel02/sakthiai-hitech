@@ -83,7 +83,7 @@ describe("local slot cannot front a hosted provider", () => {
   });
 
   const PRIVATE = [
-    "http://10.1.2.3:8000", "http://192.168.1.20:11434", "http://172.20.0.5:8000", "http://100.64.0.9:11434", "http://169.254.10.10:8000", "http://[fd00::5]:8000", "http://[fe80::1]:8000",
+    "http://10.1.2.3:8000", "http://192.168.1.20:11434", "http://172.20.0.5:8000", "http://100.64.0.9:11434", "http://[fd00::5]:8000",
     "http://ollama:11434", "http://ollama.internal:11434", "https://llm.corp.lan", "http://gpu-box.local:8000", "https://llm.svc.cluster.local", "http://a.localhost:8000",
   ];
   it.each(PRIVATE)("private-network target %s is refused until the exact host is listed in LOCAL_LLM_ALLOWED_HOSTS", (url) => {
@@ -94,6 +94,23 @@ describe("local slot cannot front a hosted provider", () => {
     const c = loadGatewayConfig(local(url, { LOCAL_LLM_ALLOWED_HOSTS: ` x.lan , ${hostname.toUpperCase()}. ` }));
     expect(c.bindings, url).toHaveLength(1);
     expect(c.bindings[0]).toMatchObject({ kind: "self_hosted", billingMode: "local_compute" });
+  });
+
+  const BLOCKED = [
+    "http://169.254.169.254/v1", "http://169.254.10.10:8000", "http://[fe80::1]:8000", "http://[::ffff:169.254.169.254]/", "http://[::ffff:a9fe:a9fe]/", "http://[64:ff9b::a9fe:a9fe]/",
+    "http://[fd00:ec2::254]/", "http://100.100.100.200/", "http://metadata.google.internal/", "http://metadata/", "http://instance-data/", "https://x.metadata.goog/",
+    "http://2852039166/", "http://0xa9fea9fe/",
+  ];
+  it.each(BLOCKED)("link-local / cloud-metadata target %s is refused even when the exact host IS listed in the allowlist (no override exists)", (url) => {
+    const hostname = new URL(url).hostname.replace(/^\[|\]$/g, "");
+    for (const allow of [undefined, hostname, `${hostname}, ${new URL(url).host}`]) {
+      const env = allow === undefined ? {} : { LOCAL_LLM_ALLOWED_HOSTS: allow };
+      expect(validateLocalSlotUrl(url, env), `${url} / ${allow}`).toMatch(/link-local or cloud-metadata/i);
+      const c = loadGatewayConfig(local(url, env));
+      expect(c.bindings, url).toHaveLength(0);
+      expect(c.invalid).toHaveLength(1);
+      expect(JSON.stringify(c.invalid).replace("link-local or cloud-metadata", "")).not.toContain(hostname); // the reason never echoes the configured host (the fixed wording is excluded)
+    }
   });
 
   it("wildcards, CIDR ranges and port-suffixed entries in the allowlist approve nothing", () => {

@@ -15,6 +15,8 @@ export type McpClientConfig = {
   maxResponseBytes: number;
   bearer?: string;
   fetchImpl?: typeof fetch;
+  /** Caller-side abort (an attempt timeout or a cancellation). Aborting it stops the in-flight request so it cannot outlive its attempt. */
+  signal?: AbortSignal;
 };
 
 const PROTOCOL_VERSION = "2025-03-26";
@@ -76,6 +78,12 @@ export class McpReadOnlyClient {
   private async post(payload: unknown, expectId?: number): Promise<{ result?: unknown; error?: { code?: number; message?: string } } | null> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    const outer = this.config.signal;
+    const onOuterAbort = () => controller.abort();
+    if (outer) {
+      if (outer.aborted) { clearTimeout(timer); throw new McpClientError("TIMEOUT", "call aborted by the caller (timeout or cancellation)"); }
+      outer.addEventListener("abort", onOuterAbort, { once: true });
+    }
     try {
       const response = await (this.config.fetchImpl ?? fetch)(this.config.endpoint, {
         method: "POST", redirect: "error", signal: controller.signal,
@@ -95,9 +103,9 @@ export class McpReadOnlyClient {
       return parseRpc(response.headers.get("content-type") ?? "", text, expectId);
     } catch (error) {
       if (error instanceof McpClientError) throw error;
-      if ((error as { name?: string })?.name === "AbortError") throw new McpClientError("TIMEOUT", "server did not answer in time");
+      if ((error as { name?: string })?.name === "AbortError") throw new McpClientError("TIMEOUT", outer?.aborted ? "call aborted by the caller (timeout or cancellation)" : "server did not answer in time");
       throw new McpClientError("UNAVAILABLE", "server unreachable");
-    } finally { clearTimeout(timer); }
+    } finally { clearTimeout(timer); outer?.removeEventListener("abort", onOuterAbort); }
   }
 
   private async rpc<T>(method: string, params: unknown, schema: z.ZodType<T>): Promise<T> {

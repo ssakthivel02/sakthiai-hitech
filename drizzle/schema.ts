@@ -1,4 +1,4 @@
-import { bigint, boolean, char, customType, date, datetime, decimal, index, int, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { bigint, boolean, char, customType, date, datetime, decimal, double, index, int, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -351,6 +351,70 @@ export const rateLimitWindows = mysqlTable("rateLimitWindows", {
   count: int("count").default(0).notNull(),
   expiresAt: bigint("expiresAt", { mode: "number" }).notNull(),
 }, table => [index("rateLimitWindows_expiresAt_idx").on(table.expiresAt)]);
+
+/**
+ * SakthiAI Sentinel (read-only incident investigation; default OFF behind SENTINEL_ENABLED). Raw-SQL store: server/sentinel/store.mysql.ts.
+ * sentinelEvents is the append-only, hash-chained source of truth (prev/hash per investigation); the row summary is derived from it.
+ * workspaceId is repeated on every event row and every store query filters by it (tenant isolation). sentinelAudit has no FK on purpose:
+ * audit rows outlive a deleted investigation. Writers are serialised per investigation with SELECT ... FOR UPDATE (InnoDB required).
+ */
+const mediumText = customType<{ data: string }>({ dataType: () => "mediumtext" });
+
+export const sentinelInvestigations = mysqlTable("sentinelInvestigations", {
+  id: char("id", { length: 36 }).primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  createdByUserId: int("createdByUserId").notNull(),
+  taskId: char("taskId", { length: 36 }),
+  title: varchar("title", { length: 200 }).notNull(),
+  severity: mysqlEnum("severity", ["low", "medium", "high", "critical"]).notNull(),
+  service: varchar("service", { length: 120 }).notNull(),
+  firedAt: varchar("firedAt", { length: 40 }).notNull(),
+  description: text("description").notNull(),
+  objective: text("objective").notNull(),
+  specJson: mediumText("specJson").notNull(),
+  status: mysqlEnum("status", ["QUEUED", "RUNNING", "COMPLETED", "ABSTAINED", "FAILED", "CANCELLED"]).default("QUEUED").notNull(),
+  stopReason: varchar("stopReason", { length: 64 }),
+  outcome: mysqlEnum("outcome", ["DIAGNOSIS", "ABSTAIN"]),
+  label: varchar("label", { length: 64 }),
+  confidence: double("confidence"),
+  verified: boolean("verified"),
+  traceHead: char("traceHead", { length: 64 }),
+  eventCount: int("eventCount").default(0).notNull(),
+  errorMessage: varchar("errorMessage", { length: 500 }),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+  updatedAt: datetime("updatedAt", { fsp: 3 }).notNull(),
+  startedAt: datetime("startedAt", { fsp: 3 }),
+  finishedAt: datetime("finishedAt", { fsp: 3 }),
+}, table => [
+  index("sentinelInvestigations_workspace_created_idx").on(table.workspaceId, table.createdAt),
+  index("sentinelInvestigations_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
+  index("sentinelInvestigations_task_idx").on(table.taskId),
+]);
+
+export const sentinelEvents = mysqlTable("sentinelEvents", {
+  investigationId: char("investigationId", { length: 36 }).notNull(),
+  workspaceId: int("workspaceId").notNull(),
+  seq: int("seq").notNull(),
+  type: varchar("type", { length: 48 }).notNull(),
+  vt: double("vt").notNull(),
+  payloadJson: mediumText("payloadJson").notNull(),
+  prev: char("prev", { length: 64 }).notNull(),
+  hash: char("hash", { length: 64 }).notNull(),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+}, table => [
+  primaryKey({ name: "sentinelEvents_investigationId_seq_pk", columns: [table.investigationId, table.seq] }),
+  index("sentinelEvents_workspace_idx").on(table.workspaceId, table.investigationId, table.seq),
+]);
+
+export const sentinelAudit = mysqlTable("sentinelAudit", {
+  id: bigint("id", { mode: "number" }).autoincrement().primaryKey(),
+  investigationId: char("investigationId", { length: 36 }).notNull(),
+  workspaceId: int("workspaceId").notNull(),
+  actorUserId: int("actorUserId").notNull(),
+  action: mysqlEnum("action", ["CREATE", "CANCEL_REQUESTED", "EXPORT_REPORT", "DELETE"]).notNull(),
+  detail: varchar("detail", { length: 500 }),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+}, table => [index("sentinelAudit_investigation_idx").on(table.workspaceId, table.investigationId, table.id)]);
 
 /**
  * Server-issued OAuth login transactions shared by every application instance. Only SHA-256 digests are stored

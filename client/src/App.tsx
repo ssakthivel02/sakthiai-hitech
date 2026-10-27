@@ -8,6 +8,7 @@ import Creator from "./pages/Creator";
 import CreatorRuntime from "./pages/CreatorRuntime";
 import Home from "./pages/Home";
 import IntelligenceDashboard from "./pages/IntelligenceDashboard";
+import Sentinel from "./pages/Sentinel";
 
 function Router() {
   return (
@@ -16,6 +17,9 @@ function Router() {
       <Route path={"/creator"} component={Creator} />
       <Route path={"/creator/runtime"} component={CreatorRuntime} />
       <Route path={"/intelligence"} component={IntelligenceDashboard} />
+      <Route path={"/sentinel"} component={Sentinel} />
+      <Route path={"/sentinel/connectors"} component={Sentinel} />
+      <Route path={"/sentinel/:id"} component={Sentinel} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
     </Switch>
