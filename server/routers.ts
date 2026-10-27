@@ -21,6 +21,8 @@ import { embeddingStatus, tryEmbed, serializeEmbedding } from "./embeddings";
 import { searchTextFor } from "./retrievalStore";
 import { creatorRouter } from "./creator/router";
 import { opsRouter } from "./ops/valueLedger";
+import { artifactsRouter, workspaceSearchRouter } from "./artifacts/router";
+import { insertedId } from "./artifacts/store";
 import { malwareScannerConfigurationStatus } from "./security/malwareScanner";
 import { assertFileUploadsEnabled } from "./ingestion/gate";
 import { resolveGroundedOutcome, type ModelResult } from "./grounding";
@@ -53,6 +55,8 @@ export const appRouter = router({
   system: systemRouter,
   ops: opsRouter,
   creator: creatorRouter,
+  artifacts: artifactsRouter,
+  search: workspaceSearchRouter,
   auth: router({ me: publicProcedure.query(opts => opts.ctx.user), logout: protectedProcedure.mutation(async ({ ctx }) => { await sdk.revokeAllSessions(ctx.user.openId); const options = getSessionCookieOptions(ctx.req); ctx.res.clearCookie(COOKIE_NAME, { ...options, maxAge: -1 }); return { success: true } as const; }) }),
   runtime: router({ status: publicProcedure.query(() => ({ health: "alive" as const, readiness: process.env.DATABASE_URL ? "configured" as const : "degraded" as const, embeddings: embeddingStatus(), scanner: { configuration: malwareScannerConfigurationStatus(), liveProbe: "not_checked" as const, requiredForCurrentReadiness: false as const, fileIngestion: "coming_soon" as const } })) }),
   workspace: router({ list: protectedProcedure.query(({ ctx }) => listUserWorkspaces(ctx.user.id)), ensure: protectedProcedure.mutation(({ ctx }) => ensureWorkspace(ctx.user)) }),
@@ -113,15 +117,15 @@ export const appRouter = router({
       const retrievalStarted = Date.now(); const matches = await searchChunks(input.workspaceId, input.message); const retrievalLatencyMs = Date.now() - retrievalStarted;
       const citations: Citation[] = toCitations(matches);
       await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "user", content: input.message });
-      if (!matches.length) { const answer = "INSUFFICIENT_EVIDENCE"; await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: answer, citationsJson: "[]" }); return { conversationId, answer, citations: [], grounding: "INSUFFICIENT_EVIDENCE" as const, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } }; }
+      if (!matches.length) { const answer = "INSUFFICIENT_EVIDENCE"; const insufficient = await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: answer, citationsJson: "[]" }); return { conversationId, assistantMessageId: insertedId(insufficient), answer, citations: [], grounding: "INSUFFICIENT_EVIDENCE" as const, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId } }; }
       let model: ModelResult = { status: "failed" };
       let gatewayOutcome: GatewayOutcome;
       try { gatewayOutcome = await getProviderGateway().invoke({ requestId: ctx.requestId, workspaceId: input.workspaceId, messages: [{ role: "system", content: groundedSystemPrompt(input.language, matches) }, { role: "user", content: input.message }], intents: ["conversation"], requiredCapabilities: ["chat"], optionalCapabilities: input.language === "ta" ? ["multilingual"] : [] }); } catch { gatewayOutcome = { status: "failed", reason: "internal_error", attempts: [], latencyMs: 0 }; }
       if (gatewayOutcome.status === "returned") model = { status: "returned", content: gatewayOutcome.content };
       const outcome = resolveGroundedOutcome({ language: input.language, evidenceCount: matches.length, model });
       const answerCitations = outcome.includeCitations ? citations : [];
-      await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: outcome.answer, citationsJson: JSON.stringify(answerCitations) });
-      return { conversationId, answer: outcome.answer, citations: answerCitations, grounding: outcome.grounding, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId, gateway: { status: gatewayOutcome.status, providerId: gatewayOutcome.status === "returned" ? gatewayOutcome.providerId : undefined, failureReason: gatewayOutcome.status === "failed" ? gatewayOutcome.reason : undefined, attempts: gatewayOutcome.attempts.length } } };
+      const assistantInsert = await db.insert(messages).values({ conversationId, workspaceId: input.workspaceId, role: "assistant", content: outcome.answer, citationsJson: JSON.stringify(answerCitations) });
+      return { conversationId, assistantMessageId: insertedId(assistantInsert), answer: outcome.answer, citations: answerCitations, grounding: outcome.grounding, observability: { chatLatencyMs: Date.now() - started, retrievalLatencyMs, requestId: ctx.requestId, gateway: { status: gatewayOutcome.status, providerId: gatewayOutcome.status === "returned" ? gatewayOutcome.providerId : undefined, failureReason: gatewayOutcome.status === "failed" ? gatewayOutcome.reason : undefined, attempts: gatewayOutcome.attempts.length } } };
     }),
     sendAsync: protectedProcedure.input(workspaceInput.extend({ conversationId: z.number().int().positive().optional(), message: z.string().trim().min(1).max(12000), language: z.enum(["en", "ta"]).default("en"), idempotencyKey: z.string().min(8).max(128).optional() })).mutation(async ({ ctx, input }) => {
       if (!asyncAnswersEnabled()) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Asynchronous answers are not enabled" });

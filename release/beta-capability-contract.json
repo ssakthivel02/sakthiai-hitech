@@ -46,6 +46,16 @@
       "ownerApproved": false
     },
     {
+      "id": "workspace-artifacts-search",
+      "name": "Saved artifacts and workspace search",
+      "status": "preview",
+      "publicLabel": "Preview",
+      "reason": "Saving a grounded answer as a persistent artifact, workspace-scoped search over artifacts and files, and the artifact viewer exist in source and pass local real-SQL tests, but no browser pass, CI run or deployed runtime verification exists for this commit.",
+      "repositoryEvidence": ["server/artifacts/store.ts", "server/artifacts/router.ts", "client/src/pages/Artifacts.tsx", "drizzle/0014_workspace_artifacts.sql"],
+      "runtimeEvidence": false,
+      "ownerApproved": false
+    },
+    {
       "id": "intelligence-control-plane",
       "name": "Intelligence control plane",
       "status": "preview",
