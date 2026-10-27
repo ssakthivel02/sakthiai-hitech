@@ -136,6 +136,17 @@ describe("shared limiter: explicit failure policy", () => {
     expect(rateLimitReadiness(await new MysqlRateLimiter(async () => fakeDb() as never).verify())).toMatchObject({ ready: true, state: "shared" });
   });
 
+  it("a successful readiness probe clears stale degraded state only after the shared store is healthy", async () => {
+    const goodDb = fakeDb();
+    let healthy = false;
+    const l = new MysqlRateLimiter(async () => (healthy ? goodDb : null) as never, { failureThreshold: 100, schemaRecheckMs: 0 });
+    expect((await l.consume("user:recover", general, 1_000)).scope).toBe("local-degraded");
+    expect(rateLimitReadiness(await l.verify(1_001))).toMatchObject({ ready: false });
+    healthy = true;
+    expect(rateLimitReadiness(await l.verify(2_000))).toMatchObject({ store: "mysql", state: "shared", ready: true });
+    expect(l.status()).toMatchObject({ consecutiveFailures: 0, breaker: "closed", lastFailureClass: null });
+  });
+
   it("bounded failures: a hanging store times out, the breaker stops calling it, and it recovers after the cooldown", async () => {
     let healthy = false;
     const hanging = fakeDb({ hangTx: true });
