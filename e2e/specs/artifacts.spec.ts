@@ -76,6 +76,35 @@ test.describe("persistent artifacts and workspace search", () => {
     await alice.request.dispose(); await bob.request.dispose();
   });
 
+  test("file links on the built server: link an existing file by id (nothing copied), other tenants cannot link or see it, unlink, delete clears links", async () => {
+    const alice = await signedIn("artifact-links"); const bob = await signedIn("artifact-links-bob");
+    expect((await uploadText(alice.request, alice.ws, "temple.txt", TAMIL_DOC)).status).toBe(200);
+    expect((await uploadText(bob.request, bob.ws, "bob-private.txt", "Bob private notes about the Murugan temple")).status).toBe(200);
+    const aliceFile = (await trpcQuery<any[]>(alice.request, "files.list", { workspaceId: alice.ws })).data!.find(f => f.filename === "temple.txt")!.id;
+    const bobFile = (await trpcQuery<any[]>(bob.request, "files.list", { workspaceId: bob.ws })).data!.find(f => f.filename === "bob-private.txt")!.id;
+
+    const answer = await trpcMutate<any>(alice.request, "chat.send", { workspaceId: alice.ws, message: "When does the Murugan temple open?", language: "en" });
+    const id = (await trpcMutate<any>(alice.request, "artifacts.saveFromMessage", { workspaceId: alice.ws, conversationId: answer.data.conversationId, messageId: answer.data.assistantMessageId })).data.artifact.id;
+
+    const linked = await trpcMutate<any>(alice.request, "artifacts.attachFile", { workspaceId: alice.ws, artifactId: id, documentId: aliceFile });
+    expect(linked.status, JSON.stringify(linked)).toBe(200);
+    expect(linked.data).toMatchObject({ created: true, reference: { documentId: aliceFile, status: "available", filename: "temple.txt" } });
+    expect(JSON.stringify(linked.data)).not.toMatch(/extractedText|storageKey/);
+    expect((await trpcMutate(alice.request, "artifacts.attachFile", { workspaceId: alice.ws, artifactId: id, documentId: bobFile })).code).toBe("NOT_FOUND");
+    expect((await trpcMutate(bob.request, "artifacts.attachFile", { workspaceId: alice.ws, artifactId: id, documentId: bobFile })).code).toBe("FORBIDDEN");
+    expect((await trpcQuery(bob.request, "artifacts.get", { workspaceId: alice.ws, artifactId: id })).code).toBe("FORBIDDEN");
+
+    const opened = await trpcQuery<any>(alice.request, "artifacts.get", { workspaceId: alice.ws, artifactId: id });
+    expect(opened.data.fileReferences.map((r: any) => [r.documentId, r.status])).toEqual([[aliceFile, "available"]]);
+    expect((await trpcMutate<any>(alice.request, "artifacts.detachFile", { workspaceId: alice.ws, artifactId: id, documentId: aliceFile })).data).toEqual({ detached: true });
+    expect((await trpcQuery<any>(alice.request, "artifacts.get", { workspaceId: alice.ws, artifactId: id })).data.fileReferences).toEqual([]);
+
+    expect((await trpcMutate<any>(alice.request, "artifacts.attachFile", { workspaceId: alice.ws, artifactId: id, documentId: aliceFile })).status).toBe(200);
+    expect((await trpcMutate<any>(alice.request, "artifacts.delete", { workspaceId: alice.ws, artifactId: id })).data).toEqual({ deleted: true });
+    expect((await trpcQuery<any[]>(alice.request, "files.list", { workspaceId: alice.ws })).data!.map(f => f.id)).toContain(aliceFile);
+    await alice.request.dispose(); await bob.request.dispose();
+  });
+
   test("answers without evidence, or with the model unavailable, cannot be saved", async () => {
     const { request, ws } = await signedIn("artifact-refusals");
     expect((await uploadText(request, ws, "temple.txt", TAMIL_DOC)).status).toBe(200);
@@ -124,5 +153,7 @@ test.describe("persistent artifacts and workspace search", () => {
     expect((await trpcMutate(request, "artifacts.saveFromMessage", { workspaceId: 1, conversationId: 1, messageId: 1 })).code).toBe("UNAUTHORIZED");
     expect((await trpcMutate(request, "artifacts.update", { workspaceId: 1, artifactId: 1, title: "x" })).code).toBe("UNAUTHORIZED");
     expect((await trpcMutate(request, "artifacts.delete", { workspaceId: 1, artifactId: 1 })).code).toBe("UNAUTHORIZED");
+    expect((await trpcMutate(request, "artifacts.attachFile", { workspaceId: 1, artifactId: 1, documentId: 1 })).code).toBe("UNAUTHORIZED");
+    expect((await trpcMutate(request, "artifacts.detachFile", { workspaceId: 1, artifactId: 1, documentId: 1 })).code).toBe("UNAUTHORIZED");
   });
 });

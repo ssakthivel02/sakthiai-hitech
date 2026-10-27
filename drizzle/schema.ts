@@ -124,6 +124,24 @@ export const artifacts = mysqlTable("artifacts", {
   uniqueIndex("artifacts_workspace_source_message_uq").on(table.workspaceId, table.sourceMessageId),
 ]);
 
+/**
+ * An artifact's links to files that already exist in the same workspace. Only ids are stored: no extracted text, storage
+ * key or bytes are copied, so the uploaded file stays the single source of truth. Scope is enforced twice: at association
+ * (the document must be in the artifact's workspace) and at retrieval (the join re-applies documents.workspaceId, so a
+ * deleted or out-of-scope file resolves to "unavailable" without its name). Rows go with their artifact on delete.
+ */
+export const artifactFileReferences = mysqlTable("artifactFileReferences", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  artifactId: int("artifactId").notNull(),
+  documentId: int("documentId").notNull(),
+  addedByUserId: int("addedByUserId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  uniqueIndex("artifactFileReferences_artifact_document_uq").on(table.artifactId, table.documentId),
+  index("artifactFileReferences_workspace_document_idx").on(table.workspaceId, table.documentId),
+]);
+
 /** SakthiAI Creator owns orchestration state; media providers remain replaceable workers. */
 export const creatorProjects = mysqlTable("creatorProjects", {
   id: int("id").autoincrement().primaryKey(),

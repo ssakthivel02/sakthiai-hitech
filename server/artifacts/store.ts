@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, sql, type SQL } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/mysql2";
-import { artifacts, conversations, messages, projects, type Citation } from "../../drizzle/schema";
+import { artifactFileReferences, artifacts, conversations, documents, messages, projects, type Citation } from "../../drizzle/schema";
 import { INSUFFICIENT_EVIDENCE_SENTINEL, modelUnavailableMessage } from "../grounding";
 import { crossScriptTag, isLowInformationQuery, normalizeRetrievalTerms, normalizeRetrievalText, scoreRetrievalCandidate } from "../retrieval";
 import { likePattern, MAX_QUERY_TERMS, searchTextFor } from "../retrievalStore";
@@ -27,8 +27,10 @@ export const DEFAULT_ARTIFACT_TITLE = "Saved answer";
 /** Candidate rows pulled from SQL before ranking in JS (bounded; content is up to MAX_ARTIFACT_CONTENT_CHARS each). */
 export const ARTIFACT_SEARCH_CANDIDATE_LIMIT = 100;
 const SNIPPET_CODE_POINTS = 240;
+/** Upper bound on linked files per artifact (enforced under a row lock, so concurrent attaches cannot overshoot it). */
+export const MAX_FILE_REFERENCES_PER_ARTIFACT = 20;
 
-export type ArtifactErrorCode = "CONVERSATION_DENIED" | "MESSAGE_NOT_FOUND" | "NOT_SAVEABLE" | "TOO_LARGE" | "PROJECT_DENIED" | "NOT_FOUND" | "MODIFY_DENIED" | "INVALID";
+export type ArtifactErrorCode = "CONVERSATION_DENIED" | "MESSAGE_NOT_FOUND" | "NOT_SAVEABLE" | "TOO_LARGE" | "PROJECT_DENIED" | "NOT_FOUND" | "MODIFY_DENIED" | "INVALID" | "FILE_NOT_FOUND" | "REFERENCE_LIMIT";
 export class ArtifactError extends Error {
   constructor(readonly code: ArtifactErrorCode, message: string) { super(message); this.name = "ArtifactError"; }
 }
@@ -261,9 +263,97 @@ export async function updateArtifact(db: Db, input: { workspaceId: number; actor
   return updated;
 }
 
-/** Permanently deletes the artifact row only. The source conversation, message and uploaded files are untouched; the same answer can be saved again. */
+/**
+ * Permanently deletes the artifact and its file links (one transaction, artifact row locked so a concurrent attach cannot
+ * leave a link behind). The source conversation, message and the uploaded files themselves are untouched; the same answer
+ * can be saved again.
+ */
 export async function deleteArtifact(db: Db, input: { workspaceId: number; actor: ArtifactActor; artifactId: number }): Promise<{ deleted: true }> {
-  await loadManageable(db, input.workspaceId, input.actor, input.artifactId);
-  await db.delete(artifacts).where(and(eq(artifacts.workspaceId, input.workspaceId), eq(artifacts.id, input.artifactId)));
+  await db.transaction(async tx => {
+    await lockManageable(tx as unknown as Db, input.workspaceId, input.actor, input.artifactId);
+    await tx.delete(artifactFileReferences).where(and(eq(artifactFileReferences.workspaceId, input.workspaceId), eq(artifactFileReferences.artifactId, input.artifactId)));
+    await tx.delete(artifacts).where(and(eq(artifacts.workspaceId, input.workspaceId), eq(artifacts.id, input.artifactId)));
+  });
   return { deleted: true };
+}
+
+// ---- links to existing workspace files (no content duplication) ----
+
+/** Same rule as loadManageable, but takes a row lock inside the caller's transaction (attach / detach / delete serialize per artifact). */
+async function lockManageable(tx: Db, workspaceId: number, actor: ArtifactActor, artifactId: number) {
+  const row = (await tx.select({ id: artifacts.id, createdByUserId: artifacts.createdByUserId }).from(artifacts)
+    .where(and(eq(artifacts.workspaceId, workspaceId), eq(artifacts.id, artifactId))).limit(1).for("update"))[0];
+  if (!row) throw new ArtifactError("NOT_FOUND", "Artifact not found");
+  if (row.createdByUserId !== actor.userId && !actor.isWorkspaceOwner) throw new ArtifactError("MODIFY_DENIED", "Only the member who saved this artifact or a workspace owner can change it");
+  return row;
+}
+
+/**
+ * A linked file as the reader sees it NOW. "available" carries metadata only (never extracted text, storage key or bytes);
+ * the file is opened through the existing workspace files surface. "unavailable" means the document no longer exists in
+ * this workspace (deleted, rolled back, or out of scope): its name is not disclosed and the link can only be removed.
+ */
+export type ArtifactFileReference =
+  | { documentId: number; status: "available"; filename: string; mimeType: string; projectId: number | null; pageCount: number; uploadedAt: Date; addedByUserId: number; linkedAt: Date }
+  | { documentId: number; status: "unavailable"; addedByUserId: number; linkedAt: Date };
+
+type ReferenceRow = { documentId: number; addedByUserId: number; linkedAt: Date; docId: number | null; filename: string | null; mimeType: string | null; projectId: number | null; pageCount: number | null; uploadedAt: Date | null };
+/** Pure: resolves a joined row; a missing document side (LEFT JOIN miss) is always "unavailable". */
+export function toFileReference(row: ReferenceRow): ArtifactFileReference {
+  if (row.docId === null || row.filename === null || row.mimeType === null || row.uploadedAt === null) {
+    return { documentId: row.documentId, status: "unavailable", addedByUserId: row.addedByUserId, linkedAt: row.linkedAt };
+  }
+  return { documentId: row.documentId, status: "available", filename: row.filename, mimeType: row.mimeType, projectId: row.projectId, pageCount: row.pageCount ?? 1, uploadedAt: row.uploadedAt, addedByUserId: row.addedByUserId, linkedAt: row.linkedAt };
+}
+
+/**
+ * Retrieval-time scope: the reference rows are filtered by workspaceId, and the document join re-applies the SAME
+ * workspaceId, so a document that was removed or does not belong to this workspace can never contribute metadata.
+ */
+export async function listFileReferences(db: Db, workspaceId: number, artifactId: number): Promise<ArtifactFileReference[]> {
+  const rows = await db.select({
+    documentId: artifactFileReferences.documentId, addedByUserId: artifactFileReferences.addedByUserId, linkedAt: artifactFileReferences.createdAt,
+    docId: documents.id, filename: documents.filename, mimeType: documents.mimeType, projectId: documents.projectId, pageCount: documents.pageCount, uploadedAt: documents.createdAt,
+  }).from(artifactFileReferences)
+    .leftJoin(documents, and(eq(documents.id, artifactFileReferences.documentId), eq(documents.workspaceId, workspaceId)))
+    .where(and(eq(artifactFileReferences.workspaceId, workspaceId), eq(artifactFileReferences.artifactId, artifactId)))
+    .orderBy(asc(artifactFileReferences.id));
+  return rows.map(toFileReference);
+}
+
+/**
+ * Links an existing workspace file to an artifact. Creator or workspace owner only (same rule as rename/move/delete).
+ * Association-time scope: the document must exist in the artifact's workspace; an id from another workspace is reported
+ * exactly like a missing one. Idempotent per (artifact, document). Nothing from the file is copied.
+ */
+export async function attachFileReference(db: Db, input: { workspaceId: number; actor: ArtifactActor; artifactId: number; documentId: number }): Promise<{ reference: ArtifactFileReference; created: boolean }> {
+  const created = await db.transaction(async tx => {
+    await lockManageable(tx as unknown as Db, input.workspaceId, input.actor, input.artifactId);
+    const document = (await tx.select({ id: documents.id }).from(documents)
+      .where(and(eq(documents.id, input.documentId), eq(documents.workspaceId, input.workspaceId))).limit(1))[0];
+    if (!document) throw new ArtifactError("FILE_NOT_FOUND", "File not found");
+    const scope = and(eq(artifactFileReferences.workspaceId, input.workspaceId), eq(artifactFileReferences.artifactId, input.artifactId));
+    const existing = await tx.select({ id: artifactFileReferences.id }).from(artifactFileReferences)
+      .where(and(scope, eq(artifactFileReferences.documentId, input.documentId))).limit(1);
+    if (existing[0]) return false;
+    const [{ n }] = await tx.select({ n: count() }).from(artifactFileReferences).where(scope);
+    if (Number(n) >= MAX_FILE_REFERENCES_PER_ARTIFACT) throw new ArtifactError("REFERENCE_LIMIT", `An artifact can link at most ${MAX_FILE_REFERENCES_PER_ARTIFACT} files`);
+    await tx.insert(artifactFileReferences).values({ workspaceId: input.workspaceId, artifactId: input.artifactId, documentId: input.documentId, addedByUserId: input.actor.userId });
+    return true;
+  });
+  const reference = (await listFileReferences(db, input.workspaceId, input.artifactId)).find(r => r.documentId === input.documentId);
+  if (!reference) throw new ArtifactError("NOT_FOUND", "Artifact not found");
+  return { reference, created };
+}
+
+/** Removes one link (never the file). Works for "unavailable" links too, so a dangling reference can always be cleaned up. */
+export async function detachFileReference(db: Db, input: { workspaceId: number; actor: ArtifactActor; artifactId: number; documentId: number }): Promise<{ detached: boolean }> {
+  return db.transaction(async tx => {
+    await lockManageable(tx as unknown as Db, input.workspaceId, input.actor, input.artifactId);
+    const result = await tx.delete(artifactFileReferences).where(and(
+      eq(artifactFileReferences.workspaceId, input.workspaceId), eq(artifactFileReferences.artifactId, input.artifactId), eq(artifactFileReferences.documentId, input.documentId),
+    ));
+    const affected = (result as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0;
+    return { detached: affected > 0 };
+  });
 }

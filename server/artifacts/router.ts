@@ -3,7 +3,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb, getWorkspaceForUser, getWorkspaceRole, searchChunks } from "../db";
 import { isLowInformationQuery } from "../retrieval";
-import { ArtifactError, createArtifactFromMessage, deleteArtifact, getArtifact, listArtifacts, searchArtifacts, updateArtifact, type ArtifactErrorCode } from "./store";
+import { ArtifactError, attachFileReference, createArtifactFromMessage, deleteArtifact, detachFileReference, getArtifact, listArtifacts, listFileReferences, searchArtifacts, updateArtifact, type ArtifactErrorCode } from "./store";
 import { groupDocumentHits } from "./workspaceSearch";
 
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -19,7 +19,7 @@ async function requireDb() {
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
   return db;
 }
-const errorCode = { CONVERSATION_DENIED: "FORBIDDEN", PROJECT_DENIED: "FORBIDDEN", MESSAGE_NOT_FOUND: "NOT_FOUND", NOT_FOUND: "NOT_FOUND", NOT_SAVEABLE: "PRECONDITION_FAILED", TOO_LARGE: "PAYLOAD_TOO_LARGE", MODIFY_DENIED: "FORBIDDEN", INVALID: "BAD_REQUEST" } as const satisfies Record<ArtifactErrorCode, TRPCError["code"]>;
+const errorCode = { CONVERSATION_DENIED: "FORBIDDEN", PROJECT_DENIED: "FORBIDDEN", MESSAGE_NOT_FOUND: "NOT_FOUND", NOT_FOUND: "NOT_FOUND", NOT_SAVEABLE: "PRECONDITION_FAILED", TOO_LARGE: "PAYLOAD_TOO_LARGE", MODIFY_DENIED: "FORBIDDEN", INVALID: "BAD_REQUEST", FILE_NOT_FOUND: "NOT_FOUND", REFERENCE_LIMIT: "PRECONDITION_FAILED" } as const satisfies Record<ArtifactErrorCode, TRPCError["code"]>;
 /** Membership was already proven by requireWorkspace; the role decides whether the caller may change artifacts saved by others. */
 async function actorFor(userId: number, workspaceId: number) { return { userId, isWorkspaceOwner: (await getWorkspaceRole(userId, workspaceId)) === "owner" }; }
 async function guard<T>(run: () => Promise<T>): Promise<T> {
@@ -61,9 +61,27 @@ export const artifactsRouter = router({
     .input(workspaceInput.extend({ artifactId: z.number().int().positive() }))
     .query(async ({ ctx, input }) => {
       await requireWorkspace(ctx.user.id, input.workspaceId);
-      const artifact = await getArtifact(await requireDb(), input.workspaceId, input.artifactId);
+      const db = await requireDb();
+      const artifact = await getArtifact(db, input.workspaceId, input.artifactId);
       if (!artifact) throw new TRPCError({ code: "NOT_FOUND", message: "Artifact not found" });
-      return artifact;
+      // Re-resolved on every read: membership was just re-checked, and each linked file is re-scoped to this workspace.
+      return { ...artifact, fileReferences: await listFileReferences(db, input.workspaceId, input.artifactId) };
+    }),
+  /** Links an existing file of the same workspace (by id; nothing is copied). Creator or workspace owner only. Idempotent. */
+  attachFile: protectedProcedure
+    .input(workspaceInput.extend({ artifactId: z.number().int().positive(), documentId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      const db = await requireDb();
+      return guard(async () => attachFileReference(db, { workspaceId: input.workspaceId, actor: await actorFor(ctx.user.id, input.workspaceId), artifactId: input.artifactId, documentId: input.documentId }));
+    }),
+  /** Removes a link (never the file); also clears links whose file is no longer available. Creator or workspace owner only. */
+  detachFile: protectedProcedure
+    .input(workspaceInput.extend({ artifactId: z.number().int().positive(), documentId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      const db = await requireDb();
+      return guard(async () => detachFileReference(db, { workspaceId: input.workspaceId, actor: await actorFor(ctx.user.id, input.workspaceId), artifactId: input.artifactId, documentId: input.documentId }));
     }),
 });
 

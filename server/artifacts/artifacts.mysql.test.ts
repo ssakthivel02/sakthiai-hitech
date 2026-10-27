@@ -365,6 +365,138 @@ describe.skipIf(skipMysqlSuite())("workspace artifacts + universal search on rea
     });
   });
 
+  describe("file references: links to existing workspace files (no content duplication)", () => {
+    const grounded = async (user: any, question: string) => {
+      stubGateway("The Murugan temple opens at 6am. [1]");
+      const c = callerFor(user);
+      const send = await c.chat.send({ workspaceId: wsA, message: question });
+      expect(send.grounding).toBe("GROUNDED_EVIDENCE");
+      return (await c.artifacts.saveFromMessage({ workspaceId: wsA, conversationId: send.conversationId, messageId: send.assistantMessageId! })).artifact;
+    };
+    const docId = async (workspaceId: number, filename: string) => Number((await rows<{ id: number }>(sql`SELECT id FROM documents WHERE workspaceId = ${workspaceId} AND filename = ${filename}`))[0].id);
+    const insertDoc = async (workspaceId: number, filename: string) => {
+      await database.db.execute(sql`INSERT INTO documents (workspaceId, filename, mimeType, extractedText, contentHash, pageCount) VALUES (${workspaceId}, ${filename}, 'text/plain', 'reference fixture text', ${"e".repeat(64)}, 1)`);
+      return docId(workspaceId, filename);
+    };
+    const linkRows = async (artifactId: number) => Number((await rows<{ n: number }>(sql`SELECT COUNT(*) n FROM artifactFileReferences WHERE artifactId = ${artifactId}`))[0].n);
+    const counts = async () => (await rows<{ d: number; c: number; a: number }>(sql`SELECT (SELECT COUNT(*) FROM documents) d, (SELECT COUNT(*) FROM documentChunks) c, (SELECT COUNT(*) FROM artifacts) a`))[0];
+
+    it("migration 0015 created artifactFileReferences with a unique (artifactId, documentId) key and no content columns", async () => {
+      const cols = (await rows<{ c: string }>(sql`SELECT COLUMN_NAME c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ${database.name} AND TABLE_NAME = 'artifactFileReferences' ORDER BY ORDINAL_POSITION`)).map(r => r.c);
+      expect(cols).toEqual(["id", "workspaceId", "artifactId", "documentId", "addedByUserId", "createdAt"]);
+      const uq = await rows<{ col: string; nu: number }>(sql`SELECT COLUMN_NAME col, NON_UNIQUE nu FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ${database.name} AND TABLE_NAME = 'artifactFileReferences' AND INDEX_NAME = 'artifactFileReferences_artifact_document_uq' ORDER BY SEQ_IN_INDEX`);
+      expect(uq.map(r => r.col)).toEqual(["artifactId", "documentId"]);
+      expect(Number(uq[0].nu)).toBe(0);
+    });
+
+    it("links an existing file by id: metadata only, nothing copied, idempotent; artifact content and evidence untouched", async () => {
+      const a = callerFor(userA);
+      const art = await grounded(userA, "Murugan temple opens link test");
+      const temples = await docId(wsA, "temples.txt");
+      const before = await counts();
+      const first = await a.artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId: temples });
+      expect(first.created).toBe(true);
+      expect(first.reference).toMatchObject({ documentId: temples, status: "available", filename: "temples.txt", mimeType: "text/plain", addedByUserId: userA.id });
+      expect(Object.keys(first.reference).sort()).toEqual(["addedByUserId", "documentId", "filename", "linkedAt", "mimeType", "pageCount", "projectId", "status", "uploadedAt"]);
+      const second = await a.artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId: temples });
+      expect(second.created).toBe(false);
+      expect(await linkRows(art.id)).toBe(1);
+      expect(await counts()).toEqual(before); // no document, chunk or artifact row was created or copied
+      const opened = await a.artifacts.get({ workspaceId: wsA, artifactId: art.id });
+      expect(opened.fileReferences.map(r => [r.documentId, r.status])).toEqual([[temples, "available"]]);
+      expect(opened.content).toBe(art.content);
+      expect(opened.citations).toEqual(art.citations);
+      expect(JSON.stringify(opened.fileReferences)).not.toMatch(/storageKey|extractedText/);
+    });
+
+    it("association-time scope: another workspace's file is indistinguishable from a missing one; another tenant cannot attach, detach or read links", async () => {
+      const a = callerFor(userA); const b = callerFor(userB);
+      const art = await grounded(userA, "Murugan temple opens scope test");
+      const bSecret = await docId(wsB, "b-secret.txt");
+      for (const documentId of [bSecret, 987654]) {
+        await expect(a.artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId })).rejects.toMatchObject({ code: "NOT_FOUND", message: "File not found" });
+      }
+      expect(await linkRows(art.id)).toBe(0);
+      await expect(b.artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId: bSecret })).rejects.toMatchObject({ code: "FORBIDDEN", message: "Workspace access denied" });
+      await expect(b.artifacts.get({ workspaceId: wsA, artifactId: art.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      for (const call of [
+        () => b.artifacts.attachFile({ workspaceId: wsB, artifactId: art.id, documentId: bSecret }),
+        () => b.artifacts.detachFile({ workspaceId: wsB, artifactId: art.id, documentId: bSecret }),
+      ]) await expect(call()).rejects.toMatchObject({ code: "NOT_FOUND", message: "Artifact not found" });
+      expect(await linkRows(art.id)).toBe(0);
+    });
+
+    it("creator/owner rule: a plain member sees links but cannot add or remove them on another member's artifact; the owner can", async () => {
+      const a = callerFor(userA); const c = callerFor(userC);
+      const temples = await docId(wsA, "temples.txt");
+      const mine = await grounded(userA, "Murugan temple opens owner links");
+      await a.artifacts.attachFile({ workspaceId: wsA, artifactId: mine.id, documentId: temples });
+      expect((await c.artifacts.get({ workspaceId: wsA, artifactId: mine.id })).fileReferences).toHaveLength(1);
+      await expect(c.artifacts.detachFile({ workspaceId: wsA, artifactId: mine.id, documentId: temples })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      const extra = await insertDoc(wsA, "member-attempt.txt");
+      await expect(c.artifacts.attachFile({ workspaceId: wsA, artifactId: mine.id, documentId: extra })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(await linkRows(mine.id)).toBe(1);
+      const hers = await grounded(userC, "Murugan temple opens member links");
+      expect((await c.artifacts.attachFile({ workspaceId: wsA, artifactId: hers.id, documentId: temples })).created).toBe(true);
+      expect(await a.artifacts.detachFile({ workspaceId: wsA, artifactId: hers.id, documentId: temples })).toEqual({ detached: true });
+      expect(await a.artifacts.detachFile({ workspaceId: wsA, artifactId: hers.id, documentId: temples })).toEqual({ detached: false });
+      await database.db.execute(sql`DELETE FROM documents WHERE id = ${extra}`);
+    });
+
+    it("retrieval-time scope: a removed or out-of-scope file resolves to 'unavailable' without its name, and the link can still be removed", async () => {
+      const a = callerFor(userA);
+      const art = await grounded(userA, "Murugan temple opens removal test");
+      const gone = await insertDoc(wsA, "zz-removed-file.txt");
+      const moved = await insertDoc(wsA, "zz-moved-away.txt");
+      await a.artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId: gone });
+      await a.artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId: moved });
+      await database.db.execute(sql`DELETE FROM documents WHERE id = ${gone}`);
+      await database.db.execute(sql`UPDATE documents SET workspaceId = ${wsB} WHERE id = ${moved}`);
+      const opened = await a.artifacts.get({ workspaceId: wsA, artifactId: art.id });
+      expect(opened.fileReferences).toEqual([
+        { documentId: gone, status: "unavailable", addedByUserId: userA.id, linkedAt: expect.any(Date) },
+        { documentId: moved, status: "unavailable", addedByUserId: userA.id, linkedAt: expect.any(Date) },
+      ]);
+      expect(JSON.stringify(opened)).not.toMatch(/zz-removed-file|zz-moved-away/);
+      // a file that is no longer in scope cannot be (re)linked either
+      await expect(a.artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId: gone })).rejects.toMatchObject({ code: "NOT_FOUND", message: "File not found" });
+      expect(await a.artifacts.detachFile({ workspaceId: wsA, artifactId: art.id, documentId: gone })).toEqual({ detached: true });
+      expect(await a.artifacts.detachFile({ workspaceId: wsA, artifactId: art.id, documentId: moved })).toEqual({ detached: true });
+      expect((await a.artifacts.get({ workspaceId: wsA, artifactId: art.id })).fileReferences).toEqual([]);
+      await database.db.execute(sql`DELETE FROM documents WHERE id = ${moved}`);
+    });
+
+    it("revoked membership: a removed member immediately loses the artifact and its links", async () => {
+      await m.db.upsertUser({ openId: "art-user-d", name: "Devi", email: "art-user-d@example.test", loginMethod: "test" });
+      const userD = await m.db.getUserByOpenId("art-user-d");
+      await database.db.insert(m.schema.workspaceMembers).values({ workspaceId: wsA, userId: userD.id, role: "member" });
+      const art = await grounded(userA, "Murugan temple opens revoke test");
+      await callerFor(userA).artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId: await docId(wsA, "temples.txt") });
+      const d = callerFor(userD);
+      expect((await d.artifacts.get({ workspaceId: wsA, artifactId: art.id })).fileReferences).toHaveLength(1);
+      await database.db.execute(sql`DELETE FROM workspaceMembers WHERE workspaceId = ${wsA} AND userId = ${userD.id}`);
+      await expect(d.artifacts.get({ workspaceId: wsA, artifactId: art.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(d.artifacts.detachFile({ workspaceId: wsA, artifactId: art.id, documentId: await docId(wsA, "temples.txt") })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("links are bounded under concurrency, and deleting the artifact removes its links atomically but never the files", async () => {
+      const a = callerFor(userA);
+      const art = await grounded(userA, "Murugan temple opens bound test");
+      const ids: number[] = [];
+      for (let i = 0; i < 25; i++) ids.push(await insertDoc(wsA, `zz-bound-${String(i).padStart(2, "0")}.txt`));
+      const outcomes = await Promise.allSettled(ids.map(documentId => a.artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId })));
+      expect(outcomes.filter(o => o.status === "fulfilled")).toHaveLength(20);
+      for (const o of outcomes.filter((o): o is PromiseRejectedResult => o.status === "rejected")) expect(o.reason).toMatchObject({ code: "PRECONDITION_FAILED" });
+      expect(await linkRows(art.id)).toBe(20);
+      const docsBefore = (await counts()).d;
+      expect(await a.artifacts.delete({ workspaceId: wsA, artifactId: art.id })).toEqual({ deleted: true });
+      expect(await linkRows(art.id)).toBe(0);
+      expect((await counts()).d).toBe(docsBefore);
+      await expect(a.artifacts.attachFile({ workspaceId: wsA, artifactId: art.id, documentId: ids[0] })).rejects.toMatchObject({ code: "NOT_FOUND", message: "Artifact not found" });
+      await database.db.execute(sql`DELETE FROM documents WHERE filename LIKE 'zz-bound-%'`);
+    });
+  });
+
   describe("search behaviour on real SQL", () => {
     const seed = async (workspaceId: number, title: string, content: string) => {
       await database.db.insert(m.schema.artifacts).values({ workspaceId, createdByUserId: userA.id, kind: "chat_answer", title, language: "en", content, contentHash: "0".repeat(64), searchText: searchTextFor(`${title}\n${content}`) });

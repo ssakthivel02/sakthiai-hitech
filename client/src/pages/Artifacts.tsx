@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
-import { ArrowLeft, FileText, Pencil, Search, Trash2 } from "lucide-react";
+import { ArrowLeft, FileText, Link2, Pencil, Search, Trash2, Unlink } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { startLogin } from "@/const";
@@ -70,6 +70,65 @@ function ArtifactActions({ workspaceId, artifact, projects, onDeleted }: { works
         {busy ? <p role="status" className="text-sm text-muted-foreground">Saving…</p> : null}
         {failure && !busy ? <p role="alert" className="text-sm text-destructive">{failure.data?.code === "FORBIDDEN" ? "Only the member who saved this artifact or a workspace owner can change it." : `Could not complete that: ${errorText(failure)}`}</p> : null}
       </div>
+    </section>
+  );
+}
+
+type LinkedFile =
+  | { documentId: number; status: "available"; filename: string; mimeType: string; projectId: number | null }
+  | { documentId: number; status: "unavailable" };
+
+/** Links to files already in this workspace. Only ids are stored server-side; a removed file shows as unavailable without its name. */
+function LinkedFiles({ workspaceId, artifactId, references, projectName }: { workspaceId: number; artifactId: number; references: LinkedFile[]; projectName: (id: number | null) => string | undefined }) {
+  const utils = trpc.useUtils();
+  const [choice, setChoice] = useState("");
+  const files = trpc.files.list.useQuery({ workspaceId });
+  const refresh = () => utils.artifacts.get.invalidate({ workspaceId, artifactId });
+  const attach = trpc.artifacts.attachFile.useMutation({ onSuccess: async () => { setChoice(""); await refresh(); } });
+  const detach = trpc.artifacts.detachFile.useMutation({ onSuccess: refresh });
+  const linked = new Set(references.map(reference => reference.documentId));
+  const candidates = (files.data ?? []).filter(file => !linked.has(file.id));
+  const failure = attach.error ?? detach.error;
+  const busy = attach.isPending || detach.isPending;
+  const submit = (event: FormEvent) => { event.preventDefault(); if (choice) { detach.reset(); attach.mutate({ workspaceId, artifactId, documentId: Number(choice) }); } };
+  return (
+    <section aria-labelledby="artifact-files">
+      <h2 id="artifact-files" className="mb-1 text-sm font-semibold">Linked files ({references.length})</h2>
+      <p className="mb-2 text-xs text-muted-foreground">Links to files already in this workspace. Nothing is copied.</p>
+      {references.length ? (
+        <ul className="space-y-2">
+          {references.map(reference => (
+            <li key={reference.documentId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm">
+              {reference.status === "available" ? (
+                <span>
+                  <strong>{reference.filename}</strong>
+                  <span className="block text-xs text-muted-foreground">{reference.mimeType}{projectName(reference.projectId) ? ` · Project: ${projectName(reference.projectId)}` : ""}</span>
+                </span>
+              ) : (
+                <span>
+                  <strong>File no longer available</strong>
+                  <span className="block text-xs text-muted-foreground">It is no longer in this workspace. You can remove the link.</span>
+                </span>
+              )}
+              <Button type="button" size="sm" variant="ghost" disabled={busy}
+                aria-label={reference.status === "available" ? `Unlink ${reference.filename}` : "Remove link to unavailable file"}
+                onClick={() => { attach.reset(); detach.mutate({ workspaceId, artifactId, documentId: reference.documentId }); }}>
+                <Unlink size={14} aria-hidden="true" /> Unlink
+              </Button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <form onSubmit={submit} className="mt-2 flex flex-wrap items-center gap-2">
+        <label htmlFor="artifact-link-file" className="sr-only">File to link</label>
+        <select id="artifact-link-file" value={choice} onChange={event => setChoice(event.target.value)} disabled={busy || !candidates.length} className="h-9 min-w-0 max-w-full rounded-md border bg-background px-2 text-sm">
+          <option value="">{candidates.length ? "Choose a workspace file" : "No other files to link"}</option>
+          {candidates.map(file => <option key={file.id} value={file.id}>{file.filename}</option>)}
+        </select>
+        <Button type="submit" size="sm" variant="outline" disabled={busy || !choice}><Link2 size={14} aria-hidden="true" /> Link file</Button>
+      </form>
+      {busy ? <p role="status" className="text-sm text-muted-foreground">Saving…</p> : null}
+      {failure && !busy ? <p role="alert" className="text-sm text-destructive">{failure.data?.code === "FORBIDDEN" ? "Only the member who saved this artifact or a workspace owner can change its linked files." : `Could not complete that: ${errorText(failure)}`}</p> : null}
     </section>
   );
 }
@@ -268,6 +327,7 @@ export default function Artifacts() {
                       ))}
                     </ol>
                   </section>
+                  <LinkedFiles workspaceId={workspaceId!} artifactId={opened.data.id} references={opened.data.fileReferences} projectName={projectName} />
                   <ArtifactActions workspaceId={workspaceId!} artifact={opened.data} projects={projects.data ?? []} onDeleted={() => navigate(withQuery("/artifacts"))} />
                 </CardContent>
               </Card>

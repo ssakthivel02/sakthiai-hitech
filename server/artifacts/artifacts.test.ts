@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { modelUnavailableMessage } from "../grounding";
 import {
   deriveArtifactTitle, excerptText, insertedId, isSaveableAnswer, MAX_ARTIFACT_TITLE_CODE_POINTS, parseCitations,
-  rankArtifactCandidates, sanitizeTitle, snippetFor, truncateText,
+  rankArtifactCandidates, sanitizeTitle, snippetFor, toFileReference, truncateText,
 } from "./store";
 import { groupDocumentHits, type ChunkHit } from "./workspaceSearch";
 
@@ -166,14 +166,29 @@ describe("tenant-isolation guards (static)", () => {
   const router = readFileSync(new URL("./router.ts", import.meta.url), "utf8");
 
   it("every artifacts query is scoped by workspaceId in SQL", () => {
-    // list x2 (with/without project filter), get-by-id, search, the source-message lookup used for idempotent saves, and the lifecycle ownership lookup
-    expect(store.split("eq(artifacts.workspaceId, workspaceId)").length - 1).toBe(6);
+    // list x2 (with/without project filter), get-by-id, search, the source-message lookup used for idempotent saves, and the lifecycle ownership lookups (plain + row-locked)
+    expect(store.split("eq(artifacts.workspaceId, workspaceId)").length - 1).toBe(7);
     // the lifecycle writes (update, delete) are workspace-scoped in their own WHERE, and both go through the same ownership gate first
     expect(store.split(".where(and(eq(artifacts.workspaceId, input.workspaceId), eq(artifacts.id, input.artifactId)))").length - 1).toBe(2);
-    expect(store.match(/await loadManageable\(/g)!.length).toBe(2);
+    // update uses the plain gate; delete, attachFile and detachFile use the row-locked gate inside their transaction
+    expect(store.match(/await loadManageable\(/g)!.length).toBe(1);
+    expect(store.match(/await lockManageable\(/g)!.length).toBe(3);
     expect(store).toContain("row.createdByUserId !== actor.userId && !actor.isWorkspaceOwner");
     expect(store).toContain("eq(projects.workspaceId, input.workspaceId)");
     expect(store.match(/\.from\(artifacts\)/g)!.length).toBe(store.match(/\.from\(artifacts\)[\s\S]*?\.where\(/g)!.length);
+  });
+  it("file references are scoped by workspace at association AND retrieval, and never read file content", () => {
+    // every reference read/write is filtered by the artifact's workspace
+    const refQueries = store.match(/\.(from|delete)\(artifactFileReferences\)[\s\S]*?\.where\([\s\S]*?\);/g)!;
+    expect(refQueries.length).toBeGreaterThanOrEqual(3);
+    for (const q of refQueries) expect(q).toMatch(/eq\(artifactFileReferences\.workspaceId, (input\.)?workspaceId\)|\bscope\b/);
+    // association: the document must be in the caller's workspace; retrieval: the join re-applies the same workspace
+    expect(store).toContain("eq(documents.id, input.documentId), eq(documents.workspaceId, input.workspaceId)");
+    expect(store).toContain(".leftJoin(documents, and(eq(documents.id, artifactFileReferences.documentId), eq(documents.workspaceId, workspaceId)))");
+    // only ids/metadata: file content and storage location are never selected for references
+    const refSection = store.slice(store.indexOf("// ---- links to existing workspace files"));
+    expect(refSection).not.toMatch(/documents\.(extractedText|storageKey)/);
+    expect(router).toContain("fileReferences: await listFileReferences(db, input.workspaceId, input.artifactId)");
   });
   it("saving requires the saver to own the conversation and reads an ASSISTANT message of that conversation and workspace", () => {
     expect(store).toContain("eq(conversations.userId, input.userId)");
@@ -189,7 +204,7 @@ describe("tenant-isolation guards (static)", () => {
   });
   it("every router procedure is authenticated and checks workspace membership before touching data; the client cannot supply content or citations", () => {
     const procedures = router.match(/\w+: protectedProcedure\b/g)!.length;
-    expect(procedures).toBe(6);
+    expect(procedures).toBe(8);
     expect(router).not.toContain("publicProcedure");
     expect(router.match(/await requireWorkspace\(ctx\.user\.id, input\.workspaceId\)/g)!.length).toBe(procedures);
     const saveInput = router.slice(router.indexOf("saveFromMessage"), router.indexOf(".mutation("));
@@ -197,6 +212,27 @@ describe("tenant-isolation guards (static)", () => {
     // update can only change title/project (never content, evidence or provenance); the role comes from the server, never from input
     const updateInput = router.slice(router.indexOf("update: protectedProcedure"), router.indexOf(".mutation(", router.indexOf("update: protectedProcedure")));
     expect(updateInput).not.toMatch(/content|citations|sourceMessageId|createdBy|role|owner/i);
-    expect(router.match(/actor: await actorFor\(ctx\.user\.id, input\.workspaceId\)/g)!.length).toBe(2);
+    // update, delete, attachFile, detachFile: the actor's role is always derived server-side
+    expect(router.match(/actor: await actorFor\(ctx\.user\.id, input\.workspaceId\)/g)!.length).toBe(4);
+    for (const name of ["attachFile", "detachFile"]) {
+      const input = router.slice(router.indexOf(`${name}: protectedProcedure`), router.indexOf(".mutation(", router.indexOf(`${name}: protectedProcedure`)));
+      expect(input, name).not.toMatch(/content|filename|storageKey|createdBy|role|owner/i);
+    }
+  });
+});
+
+describe("toFileReference (retrieval-time resolution of a linked file)", () => {
+  const base = { documentId: 7, addedByUserId: 3, linkedAt: new Date("2026-10-27T00:00:00Z") };
+  it("a joined, in-scope document is available with metadata only", () => {
+    const uploadedAt = new Date("2026-10-01T00:00:00Z");
+    expect(toFileReference({ ...base, docId: 7, filename: "a.pdf", mimeType: "application/pdf", projectId: null, pageCount: 3, uploadedAt }))
+      .toEqual({ ...base, status: "available", filename: "a.pdf", mimeType: "application/pdf", projectId: null, pageCount: 3, uploadedAt });
+  });
+  it("a LEFT JOIN miss (deleted or out-of-scope document) is unavailable and carries no file metadata", () => {
+    const resolved = toFileReference({ ...base, docId: null, filename: null, mimeType: null, projectId: null, pageCount: null, uploadedAt: null });
+    expect(resolved).toEqual({ ...base, status: "unavailable" });
+  });
+  it("a partially populated join is treated as unavailable (fails closed)", () => {
+    expect(toFileReference({ ...base, docId: 7, filename: "leak.txt", mimeType: null, projectId: 1, pageCount: 1, uploadedAt: new Date() }).status).toBe("unavailable");
   });
 });

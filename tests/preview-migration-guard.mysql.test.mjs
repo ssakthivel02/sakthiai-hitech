@@ -290,13 +290,13 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
     await exec(db.url, "INSERT INTO rateLimitWindows (bucketKey, windowStart, count, expiresAt) VALUES ('chat:1', 1, 3, 9999999999999)");
     const pre = await db.guard("pre");
     expect(pre.problems).toEqual([]);
-    expect(pre.report.pendingTags).toEqual(["0014_workspace_artifacts"]);
+    expect(pre.report.pendingTags).toEqual(["0014_workspace_artifacts", "0015_artifact_file_references"]);
     expect(pre.report.classification).toMatchObject({ state: "CONSISTENT_PREFIX", orphanPending: [], missingApplied: [] });
     await drizzleMigrate(db.url, path.join(root, "drizzle"));
     const post = await db.guard("post");
     expect(post.problems).toEqual([]);
     expect(post.report.applied).toBe(journal.entries.length);
-    expect(await tables(db.url)).toEqual(expect.arrayContaining(["artifacts", "rateLimitWindows"]));
+    expect(await tables(db.url)).toEqual(expect.arrayContaining(["artifacts", "artifactFileReferences", "rateLimitWindows"]));
     const c = await mysql.createConnection(db.url);
     try { expect((await c.query("SELECT count FROM rateLimitWindows WHERE bucketKey = 'chat:1'"))[0][0].count).toBe(3); } finally { await c.end(); }
     await drizzleMigrate(db.url, path.join(root, "drizzle"));
