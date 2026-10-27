@@ -91,7 +91,7 @@ describe.skipIf(skipMysqlSuite())("workspace artifacts + universal search on rea
   });
   afterAll(async () => { clamd?.server.close(); m?.gateway.setProviderGatewayForTests(null); await database?.close(); });
 
-  it("migration 0013 created artifacts with mediumtext content/searchText and the (workspaceId, sourceMessageId) unique key", async () => {
+  it("migration 0014 created artifacts with mediumtext content/searchText and the (workspaceId, sourceMessageId) unique key", async () => {
     const columns = await rows<{ c: string; t: string }>(sql`SELECT COLUMN_NAME c, DATA_TYPE t FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ${database.name} AND TABLE_NAME = 'artifacts'`);
     const type = Object.fromEntries(columns.map(c => [c.c, c.t]));
     expect(type).toMatchObject({ content: "mediumtext", searchText: "mediumtext", citationsJson: "text", title: "varchar", language: "enum" });

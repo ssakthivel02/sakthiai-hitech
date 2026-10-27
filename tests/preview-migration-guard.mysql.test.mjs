@@ -275,4 +275,51 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
     expect(pre.problems).toEqual([]);
     expect(pre.report.recoveryUncoveredTables).toEqual([{ table: "documentChunks", rows: 2 }]);
   });
+  // --- PR #29 / Artifacts 0013 collision (resolved by renumbering the artifacts migration to 0014) ---------------------
+  const scratchWithGuard = async (prefix, folder) => {
+    const s = await createScratchDatabase(base, prefix); cleanup.push(() => dropScratchDatabase(base, s.name));
+    await drizzleMigrate(s.url, folder);
+    const reportDir = mkdtempSync(path.join(tmpdir(), "guard-report-")); cleanup.push(async () => rmSync(reportDir, { recursive: true, force: true }));
+    const recoveryPoint = new Date(Date.now() + 1000).toISOString();
+    return { ...s, guard: mode => runGuard(mode, { databaseUrl: s.url, expectedDatabase: s.name, recoveryPoint, root, reportDir }) };
+  };
+  const tables = async url => { const c = await mysql.createConnection(url); try { return (await c.query("SHOW TABLES"))[0].map(r => Object.values(r)[0]); } finally { await c.end(); } };
+
+  it("a database migrated by PR #29 alone (through 0013_rate_limit_windows) upgrades to 0014 under the guard, preserving limiter rows", async () => {
+    const db = await scratchWithGuard("sakthi_rr", folderUpTo("0013_rate_limit_windows"));
+    await exec(db.url, "INSERT INTO rateLimitWindows (bucketKey, windowStart, count, expiresAt) VALUES ('chat:1', 1, 3, 9999999999999)");
+    const pre = await db.guard("pre");
+    expect(pre.problems).toEqual([]);
+    expect(pre.report.pendingTags).toEqual(["0014_workspace_artifacts"]);
+    expect(pre.report.classification).toMatchObject({ state: "CONSISTENT_PREFIX", orphanPending: [], missingApplied: [] });
+    await drizzleMigrate(db.url, path.join(root, "drizzle"));
+    const post = await db.guard("post");
+    expect(post.problems).toEqual([]);
+    expect(post.report.applied).toBe(journal.entries.length);
+    expect(await tables(db.url)).toEqual(expect.arrayContaining(["artifacts", "rateLimitWindows"]));
+    const c = await mysql.createConnection(db.url);
+    try { expect((await c.query("SELECT count FROM rateLimitWindows WHERE bucketKey = 'chat:1'"))[0][0].count).toBe(3); } finally { await c.end(); }
+    await drizzleMigrate(db.url, path.join(root, "drizzle"));
+    expect((await db.guard("rerun")).problems).toEqual([]);
+  });
+
+  it("a database that ran the superseded Artifacts-branch 0013 is refused before any write; an unguarded migrate would skip the rate-limit table", async () => {
+    // Rebuild the exact history the Artifacts branch (3382b05) would have recorded: slot 13 = workspace_artifacts, same `when`.
+    const dir = mkdtempSync(path.join(tmpdir(), "guard-legacy-")); mkdirSync(path.join(dir, "meta"));
+    cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
+    const through12 = journal.entries.slice(0, journal.entries.findIndex(e => e.tag === "0012_creator_spend_settlement_audit") + 1);
+    for (const e of through12) cpSync(path.join(root, "drizzle", `${e.tag}.sql`), path.join(dir, `${e.tag}.sql`));
+    cpSync(path.join(root, "drizzle/0014_workspace_artifacts.sql"), path.join(dir, "0013_workspace_artifacts.sql"));
+    const legacyEntries = [...through12, { idx: 13, version: "5", when: 1790726400000, tag: "0013_workspace_artifacts", breakpoints: true }];
+    writeFileSync(path.join(dir, "meta/_journal.json"), JSON.stringify({ ...journal, entries: legacyEntries }));
+    const db = await scratchWithGuard("sakthi_rr", dir);
+
+    const pre = await db.guard("pre");
+    expect(pre.problems.join("\n")).toMatch(/applied migration #14 \(0013_rate_limit_windows\) hash .* does not match/);
+
+    // Why the guard is mandatory: the drizzle migrator compares `when` only. 0013_rate_limit_windows (same `when`) is
+    // skipped and 0014 re-runs CREATE TABLE artifacts, which fails part-way. Never run db:push without `pre` passing.
+    await expect(drizzleMigrate(db.url, path.join(root, "drizzle"))).rejects.toThrow(/CREATE TABLE `artifacts`/);
+    expect(await tables(db.url)).not.toContain("rateLimitWindows");
+  });
 });
