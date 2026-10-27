@@ -97,7 +97,7 @@ jobs:
           if (deps.storage === 'not_required' && deps.scanner?.fileIngestion !== 'coming_soon') {
             throw new Error('Storage may be not_required only while file ingestion remains coming_soon.');
           }
-          if (deps.rateLimit?.store !== 'mysql' || deps.rateLimit?.state !== 'ready') {
+          if (deps.rateLimit?.store !== 'mysql' || deps.rateLimit?.state !== 'shared') {
             throw new Error(`SakthiAI shared rate limiter is not ready: ${JSON.stringify(deps.rateLimit)}`);
           }
           if (deps.artifact !== 'verified') {
