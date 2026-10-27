@@ -43,11 +43,14 @@ jobs:
           for (const forbidden of contract.database.forbiddenDatabases) {
             if (render.includes(`value: ${forbidden}`)) fail(`render.yaml must not target forbidden database ${forbidden}`);
           }
-          for (const gate of ['quality-gate','preview-deployment-preflight','preview-db-setup','preview-http-smoke']) {
+          for (const gate of ['quality-gate','private-beta-posture','preview-deployment-preflight','preview-db-setup','preview-http-smoke']) {
             if (!contract.requiredPreviewGates.includes(gate)) fail(`Required gate missing: ${gate}`);
           }
-          for (const dep of ['database','auth','llm','storage']) {
+          for (const dep of ['database','auth','llm']) {
             if (contract.runtimeReadiness?.[dep] !== true) fail(`Readiness dependency missing: ${dep}`);
           }
+          if (contract.runtimeReadiness?.storage !== 'configured-or-not-required-when-uploads-off') fail('Storage readiness posture drifted');
+          if (contract.runtimeReadiness?.rateLimit !== 'mysql-shared') fail('Preview must require the shared MySQL limiter');
+          if (contract.runtimeReadiness?.artifact !== 'verified-exact-commit') fail('Preview must require a verified exact-commit artifact');
           console.log('SakthiAI preview release contract is internally consistent.');
           NODE
