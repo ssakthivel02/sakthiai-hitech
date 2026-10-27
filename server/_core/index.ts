@@ -193,7 +193,7 @@ async function startServer() {
         llmGateway: gateway,
         storage: storage.state,
         rateLimit: { store: rateLimit.store, state: rateLimit.state },
-        artifact: artifactIntact ? "verified" : artifact.state,
+        artifact: artifactIntact ? "verified" : artifact.state === "verified" ? "commit_mismatch" : artifact.state,
         embeddings: embeddingStatus(),
         taskWorker: getTaskRuntime().status(),
         uploadCleanup: getUploadCleanupRunner().status(),
