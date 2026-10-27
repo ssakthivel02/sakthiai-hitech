@@ -1,4 +1,4 @@
-import { bigint, boolean, char, customType, date, datetime, decimal, index, int, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { bigint, boolean, char, customType, date, datetime, decimal, index, int, mediumtext, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -93,6 +93,54 @@ export const messages = mysqlTable("messages", {
   citationsJson: text("citationsJson"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [index("messages_workspaceId_conversationId_createdAt_idx").on(table.workspaceId, table.conversationId, table.createdAt)]);
+
+/**
+ * Persistent workspace artifacts: durable, searchable outputs the user chose to keep (today: a grounded chat answer
+ * with the evidence it was grounded on). Content lives in the database (no object-storage key), so access is decided
+ * ONLY by workspace membership + the workspaceId predicate on every query; nothing here is reachable through /api/storage.
+ * (workspaceId, sourceMessageId) is unique so saving the same answer twice is idempotent (NULL source ids never collide).
+ * searchText is searchTextFor(title + content): the same normalized + transliteration-key index the chunk retrieval uses.
+ */
+export const artifacts = mysqlTable("artifacts", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  projectId: int("projectId"),
+  createdByUserId: int("createdByUserId").notNull(),
+  kind: varchar("kind", { length: 32 }).default("chat_answer").notNull(),
+  title: varchar("title", { length: 180 }).notNull(),
+  language: mysqlEnum("language", ["en", "ta"]).default("en").notNull(),
+  content: mediumtext("content").notNull(),
+  contentHash: char("contentHash", { length: 64 }).notNull(),
+  /** Evidence copied server-side from the source assistant message (never client-supplied). */
+  citationsJson: text("citationsJson"),
+  sourceConversationId: int("sourceConversationId"),
+  sourceMessageId: int("sourceMessageId"),
+  searchText: mediumtext("searchText").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  index("artifacts_workspace_updated_idx").on(table.workspaceId, table.updatedAt),
+  index("artifacts_workspace_project_idx").on(table.workspaceId, table.projectId),
+  uniqueIndex("artifacts_workspace_source_message_uq").on(table.workspaceId, table.sourceMessageId),
+]);
+
+/**
+ * An artifact's links to files that already exist in the same workspace. Only ids are stored: no extracted text, storage
+ * key or bytes are copied, so the uploaded file stays the single source of truth. Scope is enforced twice: at association
+ * (the document must be in the artifact's workspace) and at retrieval (the join re-applies documents.workspaceId, so a
+ * deleted or out-of-scope file resolves to "unavailable" without its name). Rows go with their artifact on delete.
+ */
+export const artifactFileReferences = mysqlTable("artifactFileReferences", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  artifactId: int("artifactId").notNull(),
+  documentId: int("documentId").notNull(),
+  addedByUserId: int("addedByUserId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  uniqueIndex("artifactFileReferences_artifact_document_uq").on(table.artifactId, table.documentId),
+  index("artifactFileReferences_workspace_document_idx").on(table.workspaceId, table.documentId),
+]);
 
 /** SakthiAI Creator owns orchestration state; media providers remain replaceable workers. */
 export const creatorProjects = mysqlTable("creatorProjects", {

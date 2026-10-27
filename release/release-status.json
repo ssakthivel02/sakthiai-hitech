@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
   "purpose": "Public-safe release evidence ledger rendered on /intelligence. Records what was OBSERVED, when, and by which kind of check. No hostnames, service identifiers, account names or credentials. Unknown is never healthy; an observation older than freshnessDays is shown as stale and treated as unknown.",
-  "observedAt": "2026-10-25T03:06:00Z",
+  "observedAt": "2026-10-27T10:25:00Z",
   "freshnessDays": 7,
   "verdicts": {
     "preview": "no-go",
@@ -12,12 +12,12 @@
     "link": "https://github.com/ssakthivel02/sakthiai-hitech/pull/29",
     "lastCiVerifiedCommit": "33be89a244aefd03e8f112c5256877153c9e76f8",
     "ciEvidence": "18/18 check runs successful at 33be89a (incl. mysql-integration on MySQL 8.0, mysql-84-compatibility on MySQL 8.4, e2e, release-artifact and release-evidence with the artifactIdentity gate), read 25 Oct 2026; 89239c5 had 19/19 including the path-filtered preflight",
-    "note": "Commits pushed after the CI-verified commit are source-implemented only until their own CI run is read. The exact head is whatever this page's build reports below."
+    "note": "Commits pushed after the CI-verified commit are source-implemented only until their own CI run is read. A local integration of this candidate with persistent Artifacts and file links (migrations 0014-0015) is qualified locally only (real MySQL 8.0 and 8.4, browser e2e) and is not yet pushed, so it has no CI run. The exact head is whatever this page's build reports below."
   },
   "deployment": {
     "observedCommit": "469c668e71ceaae800e8605c5814e7017035fdbc",
-    "observedAt": "2026-10-25T02:34:00Z",
-    "method": "Hosting provider API, read-only, 25 Oct 2026: one web service, auto-deploy off, latest live deploy 469c668 (10 Oct), not suspended, start command still pnpm start",
+    "observedAt": "2026-10-27T10:25:00Z",
+    "method": "Hosting provider API, read-only, 27 Oct 2026: one web service, auto-deploy off, latest live deploy 469c668 (10 Oct), not suspended, start command still pnpm start",
     "note": "The preview serves an older commit than the CI-verified candidate. Deploying the candidate is an owner-approved, gated action."
   },
   "dashboardLink": "https://github.com/ssakthivel02/sakthiai-hitech/issues/1",
@@ -45,8 +45,8 @@
       "id": "preview-database",
       "name": "Preview database inspected and migrated",
       "state": "blocked",
-      "evidence": "No read-only inspection of the preview database exists for the candidate. Pending migrations for the preview are 0011-0013 (all additive). Inspect mode at the candidate ref is source-verified read-only. The default-branch copy of the workflow is an unguarded migrator; a separate fail-closed replacement is prepared on a maintenance branch, not merged.",
-      "blocker": "Delete the legacy repository secret first; then owner approval for power-on and an inspect dispatch from the candidate ref (never the default branch); then a separately approved migrate run."
+      "evidence": "No read-only inspection of the preview database exists for the candidate. Pending migrations for the preview are expected to be 0011-0015 (all additive; not assumed until inspected). The default-branch workflow is now the fail-closed stub (merged 25 Oct); the guarded inspect mode exists only at the candidate ref. A superseded Artifacts branch also numbered its migration 0013; if any shared database applied it, the guard refuses before writing (tested on MySQL 8.0 and 8.4).",
+      "blocker": "Owner approval for power-on and a read-only inspect dispatch from the candidate ref (with a real recovery point); then a separately approved migrate run."
     },
     {
       "id": "session-isolation",
@@ -79,7 +79,7 @@
       "id": "multi-instance-limits",
       "name": "Request limits shared across instances",
       "state": "source_implemented",
-      "evidence": "Shared limiter with an explicit failure policy (costly routes refuse, others use a scaled per-process bound), bounded failures and readiness reporting; its table is migration 0013. Tested on real MySQL with independent connection pools. Not deployed; the default stays per-process, which is correct for one instance."
+      "evidence": "Shared limiter with an explicit failure policy (costly routes refuse, others use a scaled per-process bound), bounded failures and readiness reporting; readiness now recovers once a bounded probe finds the shared table healthy again. Its table is migration 0013. Tested on real MySQL 8.0 and 8.4 with independent connection pools. Not deployed; the default stays per-process, which is correct for one instance."
     },
     {
       "id": "production-environment",

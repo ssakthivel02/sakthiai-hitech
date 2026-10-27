@@ -230,8 +230,13 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
       const u = new URL(db.url); u.username = user; u.password = pw;
       return u.toString();
     };
-    // the documented A2 form: `_` escaped, so the grant names exactly this database (partial_revokes OFF, the default)
-    const on = `\`${db.name.replace(/[_%]/g, "\\$&")}\`.*`;
+    // Mode-aware: the server's partial_revokes decides the correct grant form, and the guard must follow the same rule.
+    //   OFF (MySQL default): the documented A2 form, `_` escaped, names exactly this database.
+    //   ON (some managed services): names are literal, so the unescaped name is the exact grant.
+    const prConn = await mysql.createConnection(base);
+    const partialRevokes = await prConn.query("SELECT @@GLOBAL.partial_revokes AS pr").then(([r]) => Number(r[0].pr) === 1).finally(() => prConn.end());
+    const escapedOn = `\`${db.name.replace(/[_%]/g, "\\$&")}\`.*`;
+    const on = partialRevokes ? `\`${db.name}\`.*` : escapedOn;
     const inspectUrl = await principal("gi", [`SELECT ON ${on}`]);
     const migratorUrl = await principal("gm", [`SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX ON ${on}`]);
     const appUrl = await principal("ga", [`SELECT, INSERT, UPDATE, DELETE ON ${on}`]);
@@ -246,14 +251,22 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
     for (const [url, role] of [[migratorUrl, "inspect"], [appUrl, "inspect"], [appUrl, "migrate"], [dropUrl, "migrate"], [globalUrl, "inspect"], [inspectUrl, "migrate"], [inspectUrl, undefined]]) {
       expect((await grants(url, role)).problems.length, `${new URL(url).username} as ${role}`).toBeGreaterThan(0);
     }
-    expect(ok.report.partialRevokes).toBe(false);
-    // an unescaped `_` is a live wildcard: the grant also opens a look-alike database, and the guard must refuse it
-    const decoy = db.name.replace("_", "X");
-    await exec(base, `CREATE DATABASE \`${decoy}\``, `CREATE TABLE \`${decoy}\`.t (id int)`);
-    cleanup.push(() => exec(base, `DROP DATABASE IF EXISTS \`${decoy}\``));
-    const wildUrl = await principal("gw", [`SELECT ON \`${db.name}\`.*`]);
-    await expect(exec(wildUrl, `SELECT COUNT(*) FROM \`${decoy}\`.t`)).resolves.toBeUndefined(); // no "denied": the wildcard reaches it
-    expect((await grants(wildUrl, "inspect")).problems.join()).toMatch(/wildcard database grant/);
+    expect(ok.report.partialRevokes).toBe(partialRevokes);
+    if (!partialRevokes) {
+      // an unescaped `_` is a live wildcard: the grant also opens a look-alike database, and the guard must refuse it
+      const decoy = db.name.replace("_", "X");
+      await exec(base, `CREATE DATABASE \`${decoy}\``, `CREATE TABLE \`${decoy}\`.t (id int)`);
+      cleanup.push(() => exec(base, `DROP DATABASE IF EXISTS \`${decoy}\``));
+      const wildUrl = await principal("gw", [`SELECT ON \`${db.name}\`.*`]);
+      await expect(exec(wildUrl, `SELECT COUNT(*) FROM \`${decoy}\`.t`)).resolves.toBeUndefined(); // no "denied": the wildcard reaches it
+      expect((await grants(wildUrl, "inspect")).problems.join()).toMatch(/wildcard database grant/);
+    } else {
+      // with partial_revokes ON the escaped A2 form is a literal (different) name: it grants nothing here and must be refused
+      // (the principal cannot even open the target database, so the guard fails closed by refusing or by throwing)
+      const escapedUrl = await principal("ge", [`SELECT ON ${escapedOn}`]);
+      const refusal = await grants(escapedUrl, "inspect").then(r => r.problems.join("\n"), e => String(e?.message ?? e));
+      expect(refusal).toMatch(/partial_revokes ON|denied|does not cover/i);
+    }
     // the inspect principal really cannot write, so inspect mode is read-only by privilege as well as by workflow
     await expect(exec(inspectUrl, "CREATE TABLE should_fail (id int)")).rejects.toThrow(/denied/);
     await expect(exec(inspectUrl, "INSERT INTO users (openId) VALUES ('x')")).rejects.toThrow(/denied/);
@@ -274,5 +287,52 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
     const pre = await db.guard("pre");
     expect(pre.problems).toEqual([]);
     expect(pre.report.recoveryUncoveredTables).toEqual([{ table: "documentChunks", rows: 2 }]);
+  });
+  // --- PR #29 / Artifacts 0013 collision (resolved by renumbering the artifacts migration to 0014) ---------------------
+  const scratchWithGuard = async (prefix, folder) => {
+    const s = await createScratchDatabase(base, prefix); cleanup.push(() => dropScratchDatabase(base, s.name));
+    await drizzleMigrate(s.url, folder);
+    const reportDir = mkdtempSync(path.join(tmpdir(), "guard-report-")); cleanup.push(async () => rmSync(reportDir, { recursive: true, force: true }));
+    const recoveryPoint = new Date(Date.now() + 1000).toISOString();
+    return { ...s, guard: mode => runGuard(mode, { databaseUrl: s.url, expectedDatabase: s.name, recoveryPoint, root, reportDir }) };
+  };
+  const tables = async url => { const c = await mysql.createConnection(url); try { return (await c.query("SHOW TABLES"))[0].map(r => Object.values(r)[0]); } finally { await c.end(); } };
+
+  it("a database migrated by PR #29 alone (through 0013_rate_limit_windows) upgrades to 0014 under the guard, preserving limiter rows", async () => {
+    const db = await scratchWithGuard("sakthi_rr", folderUpTo("0013_rate_limit_windows"));
+    await exec(db.url, "INSERT INTO rateLimitWindows (bucketKey, windowStart, count, expiresAt) VALUES ('chat:1', 1, 3, 9999999999999)");
+    const pre = await db.guard("pre");
+    expect(pre.problems).toEqual([]);
+    expect(pre.report.pendingTags).toEqual(["0014_workspace_artifacts", "0015_artifact_file_references"]);
+    expect(pre.report.classification).toMatchObject({ state: "CONSISTENT_PREFIX", orphanPending: [], missingApplied: [] });
+    await drizzleMigrate(db.url, path.join(root, "drizzle"));
+    const post = await db.guard("post");
+    expect(post.problems).toEqual([]);
+    expect(post.report.applied).toBe(journal.entries.length);
+    expect(await tables(db.url)).toEqual(expect.arrayContaining(["artifacts", "artifactFileReferences", "rateLimitWindows"]));
+    const c = await mysql.createConnection(db.url);
+    try { expect((await c.query("SELECT count FROM rateLimitWindows WHERE bucketKey = 'chat:1'"))[0][0].count).toBe(3); } finally { await c.end(); }
+    await drizzleMigrate(db.url, path.join(root, "drizzle"));
+    expect((await db.guard("rerun")).problems).toEqual([]);
+  });
+
+  it("a database that ran the superseded Artifacts-branch 0013 is refused before any write; an unguarded migrate would skip the rate-limit table", async () => {
+    // Rebuild the exact history the Artifacts branch (3382b05) would have recorded: slot 13 = workspace_artifacts, same `when`.
+    const dir = mkdtempSync(path.join(tmpdir(), "guard-legacy-")); mkdirSync(path.join(dir, "meta"));
+    cleanup.push(async () => rmSync(dir, { recursive: true, force: true }));
+    const through12 = journal.entries.slice(0, journal.entries.findIndex(e => e.tag === "0012_creator_spend_settlement_audit") + 1);
+    for (const e of through12) cpSync(path.join(root, "drizzle", `${e.tag}.sql`), path.join(dir, `${e.tag}.sql`));
+    cpSync(path.join(root, "drizzle/0014_workspace_artifacts.sql"), path.join(dir, "0013_workspace_artifacts.sql"));
+    const legacyEntries = [...through12, { idx: 13, version: "5", when: 1790726400000, tag: "0013_workspace_artifacts", breakpoints: true }];
+    writeFileSync(path.join(dir, "meta/_journal.json"), JSON.stringify({ ...journal, entries: legacyEntries }));
+    const db = await scratchWithGuard("sakthi_rr", dir);
+
+    const pre = await db.guard("pre");
+    expect(pre.problems.join("\n")).toMatch(/applied migration #14 \(0013_rate_limit_windows\) hash .* does not match/);
+
+    // Why the guard is mandatory: the drizzle migrator compares `when` only. 0013_rate_limit_windows (same `when`) is
+    // skipped and 0014 re-runs CREATE TABLE artifacts, which fails part-way. Never run db:push without `pre` passing.
+    await expect(drizzleMigrate(db.url, path.join(root, "drizzle"))).rejects.toThrow(/CREATE TABLE `artifacts`/);
+    expect(await tables(db.url)).not.toContain("rateLimitWindows");
   });
 });

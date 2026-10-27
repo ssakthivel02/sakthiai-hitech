@@ -1,5 +1,7 @@
 import { expect, type APIRequestContext, type BrowserContext, type Page } from "@playwright/test";
-import { urls } from "./ports";
+import { createHash, randomBytes } from "node:crypto";
+import { OAUTH_PKCE_COOKIE, OAUTH_STATE_COOKIE, encodeOAuthState } from "../../shared/const";
+import { APP_ORIGIN, urls } from "./ports";
 
 export const TAMIL_DOC = "முருகன் கோவில் பழநியில் உள்ளது. The Murugan temple opens at 6am.\nவழிபாடு காலை ஆறு மணிக்கு தொடங்கும்.";
 export const EICAR = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
@@ -57,4 +59,26 @@ export async function ask(page: Page, text: string) {
   const box = page.locator("textarea");
   await box.fill(text);
   await page.getByRole("button", { name: "Send" }).click();
+}
+
+/**
+ * Browser-less login through the fake OIDC provider: the same server-issued nonce, S256 PKCE, state and callback the UI uses,
+ * driven over HTTP. The session cookie lands in `request`'s own cookie jar. Use for API-level journeys; use `login(page)` for UI checks.
+ */
+export async function apiLogin(request: APIRequestContext, identity: Identity, returnTo = "/") {
+  await setNextUser(identity);
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const begin = await request.post(`${APP_ORIGIN}/api/oauth/begin`, { data: { challenge }, headers: { "content-type": "application/json" } });
+  expect(begin.ok(), `oauth begin (${begin.status()})`).toBe(true);
+  const { nonce } = (await begin.json()) as { nonce: string };
+  const state = encodeOAuthState({ redirectUri: `${APP_ORIGIN}/api/oauth/callback`, nonce, challenge, returnTo });
+  const authorize = new URL(urls.oidcAuthorize);
+  authorize.search = new URLSearchParams({ response_type: "code", client_id: "sakthiai-e2e", redirect_uri: `${APP_ORIGIN}/api/oauth/callback`, scope: "openid profile email", state, code_challenge: challenge, code_challenge_method: "S256" }).toString();
+  const granted = await request.get(authorize.toString(), { maxRedirects: 0 });
+  expect(granted.status(), "oidc authorize").toBe(302);
+  const callback = await request.get(granted.headers()["location"]!, { maxRedirects: 0, headers: { cookie: `${OAUTH_STATE_COOKIE}=${nonce}; ${OAUTH_PKCE_COOKIE}=${verifier}` } });
+  expect(callback.status(), `oauth callback: ${await callback.text().catch(() => "")}`).toBe(302);
+  const me = await trpcQuery<{ id: number } | null>(request, "auth.me");
+  expect(me.data, "session established").toBeTruthy();
 }

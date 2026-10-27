@@ -697,6 +697,60 @@
       "runtimeQualification": "RUNTIME_UNVERIFIED",
       "ci": "CI_PENDING",
       "knownLimitation": "Only builds that contain it can use it; the preview's current build (469c668) cannot. Changing the variable needs a restart."
+    },
+    {
+      "capability": "workspace_artifacts",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "Home 'Save as artifact' (GROUNDED_EVIDENCE answers only) -> artifacts.saveFromMessage (ids only; content and citations copied server-side from the stored assistant message; saver must own the conversation; idempotent per (workspaceId, sourceMessageId)) -> artifacts table (migration 0013) -> artifacts.list / artifacts.get -> /artifacts/:id viewer with evidence list; artifacts.update (rename, move project; re-indexes search) and artifacts.delete (saver or workspace owner only) from the viewer; artifacts.attachFile/detachFile link existing same-workspace files by id (no content copied; creator or workspace owner; row-locked, max 20), and artifacts.get re-resolves each link against the current workspace (missing/out-of-scope file -> 'unavailable', name withheld); delete removes links atomically",
+      "sourceFiles": [
+        "server/artifacts/store.ts",
+        "server/artifacts/router.ts",
+        "server/routers.ts",
+        "drizzle/schema.ts",
+        "drizzle/0014_workspace_artifacts.sql",
+        "drizzle/0015_artifact_file_references.sql",
+        "client/src/pages/Artifacts.tsx",
+        "client/src/pages/Home.tsx"
+      ],
+      "tests": [
+        "server/artifacts/artifacts.test.ts",
+        "server/artifacts/artifacts.mysql.test.ts",
+        "e2e/specs/artifacts.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql",
+        "pnpm test:e2e"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Only chat answers can be saved (kind chat_answer); no manual create, no content editing or versioning, no soft-delete/undo or audit record for delete. File links are by reference only: the viewer lists linked files but does not preview or download them from the artifact; there is no user-facing file delete yet, so 'unavailable' links arise only from ingestion rollback or out-of-band removal. Rename/move/delete/link changes are limited to the saver or a workspace owner. Real-SQL tests (local MySQL 8.0.46) and a browser-less API e2e on the built server passed locally on the unpushed integration branch; no browser pass, no CI run and no deployed-runtime verification. Migrations 0014/0015 have not been applied to any shared database; whether any shared database ran the superseded artifacts 0013 is UNKNOWN until a guarded read-only inspect."
+    },
+    {
+      "capability": "workspace_search",
+      "truthModel": "PARTIAL",
+      "status": "TESTED_LOCAL",
+      "runtimePath": "search.workspace (membership check, workspaceId predicate in every SQL query) -> artifacts lexical search with Tamil/Tanglish keys + existing searchChunks for uploaded files; returned as two separately ranked groups -> /artifacts search UI with ?q= URL state",
+      "sourceFiles": [
+        "server/artifacts/store.ts",
+        "server/artifacts/workspaceSearch.ts",
+        "server/artifacts/router.ts",
+        "client/src/pages/Artifacts.tsx"
+      ],
+      "tests": [
+        "server/artifacts/artifacts.test.ts",
+        "server/artifacts/artifacts.mysql.test.ts",
+        "e2e/specs/artifacts.spec.ts"
+      ],
+      "workflowGate": [
+        "pnpm test",
+        "pnpm test:mysql",
+        "pnpm test:e2e"
+      ],
+      "runtimeQualification": "RUNTIME_UNVERIFIED",
+      "ci": "CI_PENDING",
+      "knownLimitation": "Artifact search is lexical only (no embeddings or reranker); documents and artifacts are not merged into one ranked list; no project or conversation search; not qualified at scale or on a real database; no browser pass."
     }
   ]
 }
