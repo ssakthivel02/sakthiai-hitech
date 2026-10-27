@@ -122,15 +122,16 @@ describe("shared limiter: explicit failure policy", () => {
     expect(s.store === "mysql" && s.counts.shared).toBe(0);
   });
 
-  it("missing and incompatible tables make readiness fail; an outage alone does not (the database probe reports it)", async () => {
+  it("shared-store readiness is true only when the MySQL limiter is healthy and verified", async () => {
     for (const [shape, state] of [[[], "missing"], [GOOD_SHAPE.map(r => (r.c === "bucketKey" ? { ...r, len: 64 } : r)), "incompatible"]] as const) {
       const l = new MysqlRateLimiter(async () => fakeDb({ shape: shape as never }) as never);
       expect(rateLimitReadiness(await l.verify())).toEqual({ store: "mysql", state, ready: false });
     }
     const down = new MysqlRateLimiter(async () => null);
     await down.consume("user:1", general, 1);
-    expect(rateLimitReadiness(await down.verify())).toMatchObject({ ready: true, state: "degraded" });
-    expect(rateLimitReadiness(await new MysqlRateLimiter(async () => fakeDb() as never).verify())).toMatchObject({ ready: true });
+    expect(rateLimitReadiness(await down.verify())).toMatchObject({ ready: false, state: "degraded" });
+    expect(rateLimitReadiness(await new MysqlRateLimiter(async () => null).verify())).toMatchObject({ ready: false, state: "unchecked" });
+    expect(rateLimitReadiness(await new MysqlRateLimiter(async () => fakeDb() as never).verify())).toMatchObject({ ready: true, state: "shared" });
   });
 
   it("bounded failures: a hanging store times out, the breaker stops calling it, and it recovers after the cooldown", async () => {
