@@ -24,7 +24,7 @@ import { buildHttpRequestLog, sanitizeRequestId } from "./httpTelemetry";
 import { probeDatabaseReadiness, probeSchemaReadiness, storageReadiness } from "./readiness";
 import { fileUploadsEnabled } from "../ingestion/gate";
 import { getAuthenticatedRateLimiter, rateLimitReadiness } from "./sharedRateLimit";
-import { getArtifactIdentity } from "./artifactIdentity";
+import { artifactIdentityReady, getArtifactIdentity } from "./artifactIdentity";
 import { maintenanceGate, maintenanceModeFromEnv } from "./maintenanceMode";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -172,8 +172,11 @@ async function startServer() {
     });
     const storageReady = storage.ok;
     const rateLimit = rateLimitReadiness(await getAuthenticatedRateLimiter().verify());
-    // A build whose files no longer match its own manifest must not take traffic.
-    const artifactIntact = getArtifactIdentity().state !== "mismatch";
+    // Production must serve a verified build manifest bound to this exact deployed commit.
+    // Development may omit the manifest, but any detected mismatch still fails readiness.
+    const artifact = getArtifactIdentity();
+    const runtimeCommit = process.env.RENDER_GIT_COMMIT?.trim() || process.env.GIT_COMMIT?.trim() || "unknown";
+    const artifactIntact = artifactIdentityReady(artifact, runtimeCommit, process.env.NODE_ENV === "production");
     const ready = databaseReady && schemaCurrent && authReady && llmReady && storageReady && rateLimit.ready && artifactIntact;
 
     res.status(ready ? 200 : 503).json({
@@ -190,7 +193,7 @@ async function startServer() {
         llmGateway: gateway,
         storage: storage.state,
         rateLimit: { store: rateLimit.store, state: rateLimit.state },
-        artifact: getArtifactIdentity().state,
+        artifact: artifactIntact ? "verified" : artifact.state,
         embeddings: embeddingStatus(),
         taskWorker: getTaskRuntime().status(),
         uploadCleanup: getUploadCleanupRunner().status(),
