@@ -55,7 +55,12 @@ jobs:
           if (String(release.commit).toLowerCase() !== expected) {
             throw new Error(`Deployed commit ${String(release.commit)} does not match expected commit ${expected}.`);
           }
-          console.log(`SakthiAI exact deployed commit PASS: ${expected}`);
+          if (release.artifact?.state !== 'verified') throw new Error(`Deployed artifact is not verified: ${String(release.artifact?.state)}`);
+          if (String(release.artifact?.manifestCommit).toLowerCase() !== expected) {
+            throw new Error(`Artifact manifest commit ${String(release.artifact?.manifestCommit)} does not match expected commit ${expected}.`);
+          }
+          if (!/^[0-9a-f]{64}$/.test(String(release.artifact?.digest ?? ''))) throw new Error('Deployed artifact digest is missing or invalid.');
+          console.log(`SakthiAI exact deployed commit + artifact PASS: ${expected}`);
           NODE
 
       - name: Verify live, ready and root surfaces
@@ -81,12 +86,24 @@ jobs:
             throw new Error('SakthiAI /readyz did not report ready.');
           }
           const deps = ready.dependencies || {};
-          for (const key of ['database', 'authentication', 'llm', 'storage']) {
+          for (const key of ['database', 'authentication', 'llm']) {
             if (deps[key] !== 'configured') {
               throw new Error(`SakthiAI dependency ${key} is not configured: ${String(deps[key])}`);
             }
           }
-          console.log('SakthiAI dependency readiness payload PASS');
+          if (!['configured', 'not_required'].includes(deps.storage)) {
+            throw new Error(`SakthiAI storage posture is invalid: ${String(deps.storage)}`);
+          }
+          if (deps.storage === 'not_required' && deps.scanner?.fileIngestion !== 'coming_soon') {
+            throw new Error('Storage may be not_required only while file ingestion remains coming_soon.');
+          }
+          if (deps.rateLimit?.store !== 'mysql' || deps.rateLimit?.state !== 'ready') {
+            throw new Error(`SakthiAI shared rate limiter is not ready: ${JSON.stringify(deps.rateLimit)}`);
+          }
+          if (deps.artifact !== 'verified') {
+            throw new Error(`SakthiAI readiness artifact state is not verified: ${String(deps.artifact)}`);
+          }
+          console.log('SakthiAI dependency + private-beta readiness payload PASS');
           NODE
 
           if grep -Eqi "forge\.manus\.im|vite-plugin-manus-runtime|manuspre\.computer|manus\.computer|WebDevAuthPublicService|/app-auth|/__manus__/" /tmp/root.html; then
