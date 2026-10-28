@@ -1,0 +1,151 @@
+name: SakthiAI Preview Live Browser Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      preview_url:
+        description: "HTTPS base URL of the deployed SakthiAI preview to test against."
+        required: true
+        type: string
+      approved_commit:
+        description: "Full 40-character SHA named in the approval. Must equal the commit of the ref you dispatch from; checked before the test-account environment (and its secrets) is entered."
+        required: true
+        type: string
+      acknowledge_chat_data_retention:
+        description: "Must be checked to run. This check creates one real chat conversation (and its messages) per run, and no supported API exists to delete a conversation or message afterward (artifacts.delete removes only the artifact row). That conversation is permanently retained on the live preview. Check this box only once the owner has explicitly accepted that retention for this run."
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sakthiai-preview-live-browser-check
+  cancel-in-progress: false
+
+jobs:
+  # Mirrors preview-db-setup.yml's bind job: commit binding runs with NO environment and NO secrets, so a
+  # mismatched approved_commit fails here and the test-account credentials are never bound to the run.
+  bind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      APPROVED_COMMIT: ${{ inputs.approved_commit }}
+      DISPATCHED_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Require approved_commit to equal the dispatched commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "${APPROVED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "approved_commit must be a full 40-character lowercase SHA."
+            exit 1
+          fi
+          if [ "${APPROVED_COMMIT}" != "${DISPATCHED_COMMIT:-}" ]; then
+            echo "approved_commit ${APPROVED_COMMIT} does not match the dispatched commit ${DISPATCHED_COMMIT:-<unset>}; refusing."
+            exit 1
+          fi
+          echo "Commit binding PASS (${DISPATCHED_COMMIT})"
+
+  live-browser-check:
+    needs: bind
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Two dedicated, owner-provisioned, allow-listed real test accounts live only as environment secrets.
+    # This environment does not exist until the owner creates it: it is NOT auto-provisioned by this
+    # workflow, and the run fails closed (env.ts) rather than falling back to any stub identity.
+    #
+    # The four PREVIEW_TEST_ACCOUNT_* secrets are deliberately NOT declared here at job level. They are
+    # declared only on the one step that actually needs them ("Real-authentication live-preview browser
+    # check" below), and only after the release-identity step has already verified the dispatched commit
+    # is what the preview is serving. No earlier step (checkout, release-identity check, Node/pnpm setup,
+    # dependency install, browser install) ever has them in its process environment at all.
+    environment: sakthiai-preview-live-test
+    env:
+      PREVIEW_URL: ${{ inputs.preview_url }}
+      EXPECTED_COMMIT: ${{ inputs.approved_commit }}
+    steps:
+      - name: Checkout the dispatched commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate preview_url (HTTPS + approved Render preview hostname only)
+        shell: bash
+        # Parsed with the URL API, not a bash glob/prefix match: a glob pattern like
+        # "https://sakthiai-hitech-preview.onrender.com*" matches ANY string with that prefix, including
+        # "https://sakthiai-hitech-preview.onrender.com.attacker.example/" (the "*" happily absorbs
+        # ".attacker.example" too) — a classic prefix-check hostname bypass. Comparing the parsed
+        # hostname for exact equality (mirroring playwright.live-preview.config.ts's own check) closes
+        # that gap.
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const approved = "sakthiai-hitech-preview.onrender.com";
+          let url;
+          try {
+            url = new URL(process.env.PREVIEW_URL ?? "");
+          } catch {
+            throw new Error(`preview_url "${process.env.PREVIEW_URL}" is not a valid URL.`);
+          }
+          if (url.protocol !== "https:" || url.hostname !== approved) {
+            throw new Error(
+              `preview_url must be HTTPS and exactly host "${approved}". Got "${process.env.PREVIEW_URL}" ` +
+                `(parsed hostname "${url.hostname}", protocol "${url.protocol}").`,
+            );
+          }
+          console.log("preview_url host/scheme PASS for", approved);
+          NODE
+
+      - name: Verify the preview is already serving the approved commit before touching any credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --max-time 20 "${PREVIEW_URL%/}/releasez" | tee /tmp/release.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const release = JSON.parse(fs.readFileSync('/tmp/release.json', 'utf8'));
+          const expected = process.env.EXPECTED_COMMIT.toLowerCase();
+          if (String(release.commit).toLowerCase() !== expected) {
+            throw new Error(`Preview is serving ${String(release.commit)}, not the approved commit ${expected}; refusing to sign in anywhere.`);
+          }
+          console.log('Preview release-identity PASS for', expected);
+          NODE
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the browser this check uses
+        run: pnpm exec playwright install --with-deps chromium
+
+      # The ONLY step in this job with the test-account secrets in its environment, and only after the
+      # release-identity step above has already confirmed the preview is serving the approved commit.
+      # PREVIEW_TEST_ACKNOWLEDGE_CHAT_RETENTION is not a secret (it's the dispatch-time checkbox above),
+      # but it's scoped here too since it only matters to the one step that loads env.ts.
+      - name: Real-authentication live-preview browser check (no stub login, no bypass)
+        env:
+          PREVIEW_TEST_ACCOUNT_A_EMAIL: ${{ secrets.PREVIEW_TEST_ACCOUNT_A_EMAIL }}
+          PREVIEW_TEST_ACCOUNT_A_PASSWORD: ${{ secrets.PREVIEW_TEST_ACCOUNT_A_PASSWORD }}
+          PREVIEW_TEST_ACCOUNT_B_EMAIL: ${{ secrets.PREVIEW_TEST_ACCOUNT_B_EMAIL }}
+          PREVIEW_TEST_ACCOUNT_B_PASSWORD: ${{ secrets.PREVIEW_TEST_ACCOUNT_B_PASSWORD }}
+          PREVIEW_TEST_ACKNOWLEDGE_CHAT_RETENTION: ${{ inputs.acknowledge_chat_data_retention }}
+        run: pnpm test:preview-live
+
+      - name: Upload live-preview check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-preview-check-report
+          path: reports/live-preview/**
+          if-no-files-found: warn
