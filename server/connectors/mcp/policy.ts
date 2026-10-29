@@ -51,7 +51,7 @@ export function mcpAddressProblem(address: string, hostname: string, env: EnvLik
   return null;
 }
 
-/** Early resolved-address check (clear refusal at registration / before a call). It does not by itself stop DNS rebinding; the connection is pinned by createMcpPinnedFetch. */
+/** Early resolved-address check (clear refusal at registration / before a call). It does not by itself stop DNS rebinding; the connection is pinned by createPinnedFetch (see McpConnectorService). */
 export async function assertResolvedAddressAllowed(url: URL, env: EnvLike, lookup: typeof dns.lookup = dns.lookup): Promise<void> {
   const host = url.hostname.replace(/^\[|\]$/g, "");
   const addresses = net.isIP(host) ? [host] : (await lookup(host, { all: true })).map(a => a.address);
