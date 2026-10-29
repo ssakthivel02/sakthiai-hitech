@@ -18,6 +18,16 @@ Use rollback only after a deployed preview release is shown to be defective and 
 6. If any migration is destructive or backward-incompatible, obtain verified backup/restore evidence and a tested restore plan before changing application code.
 7. Obtain explicit operator approval for the rollback action.
 
+## Security-qualified targets and containment (24 Oct 2026)
+
+- **Security baseline.** Every rollback target must contain `403c8f8a2db6fa532a80ae659668fbd18bf779b2`, the first commit with all of these: the local-provider classification and redirect refusal, the Creator redirect refusal, and the high-advisory dependency fixes (`release/rollback-contract.json` → `securityBaseline`).
+- **Forbidden target.** `469c668e71ceaae800e8605c5814e7017035fdbc` is the build the preview serves today, and it lacks those fixes. It is never a rollback target.
+- **Contain when nothing qualifies.** Until a build at or after the baseline has served this environment and passed acceptance, there is no previously verified good target. Do not fall back to an older build. Suspend the service (Render → service → Settings → Suspend). For a build that contains application maintenance mode (added with `server/_core/maintenanceMode.ts`, tested by `tests/maintenance-mode.test.mjs`), setting `SAKTHIAI_MAINTENANCE_MODE=true` and restarting is an alternative: every route except `/healthz`, `/readyz` and `/releasez` answers 503 before any parsing, authentication or database access. The build the preview serves today (`469c668`) does not have it, so suspension is its only containment. Render's own Maintenance Mode setting is untested here and is not relied on. CI-verified baseline builds (`403c8f8`, `95fbcc3`, `2eb2b6e`) can be redeployed only with the full post-rollback acceptance below, and are recorded as `ci-verified-only`.
+- **Application rollback is not a database restore.** Migrations are forward-only and additive after 0004, so an older build at or after the baseline runs against a newer schema it does not use (extra tables are ignored, and `/readyz` checks only declared tables). An application rollback therefore needs no restore when every migration applied after the target's journal is additive. A database restore is a separate, approved action (`docs/RECOVERY_REHEARSAL.md`): it restores the attested recovery point and loses later writes. Never restore a database just to roll back application code.
+- **Check the target first.**
+  `node scripts/check-rollback-target.mjs <target-sha> reports/staging/preview-migration-post.json`
+  Use the latest live-journal report from the guarded workflow. The output is `rollback-to-target` or `contain` with its reasons. It checks the forbidden list, the baseline ancestry, that the target's migrations are identical to the candidate's prefix, that the target's migrations are already applied live, and that everything applied after them is additive.
+
 ## Execution boundary
 
 The controlled strategy is **redeploy the previous known-good exact commit**. This repository does not authorize an automatic production rollback. Never force-push `main`, rewrite history, delete commits, guess a database schema state, or silently revert unrelated work.

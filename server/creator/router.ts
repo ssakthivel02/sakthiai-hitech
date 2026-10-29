@@ -1,0 +1,315 @@
+import { TRPCError } from "@trpc/server";
+import { z } from "zod";
+import { getWorkspaceForUser } from "../db";
+import { NOT_ADMIN_ERR_MSG } from "@shared/const";
+import { protectedProcedure, router } from "../_core/trpc";
+import { creatorAudioRouter } from "./audioRouter";
+import { resolveApprovedConditionedFrameAsset } from "./conditionedFrameAsset";
+import { creatorReferenceRouter } from "./referenceRouter";
+import { resolveApprovedProjectReferenceImages } from "./referenceResolution";
+import { creatorReviewRouter } from "./reviewRouter";
+import { creatorTimelineRouter } from "./timelineRouter";
+import { creatorWorkspaceRouter } from "./workspaceRouter";
+import {
+  cancelCreatorGeneration,
+  pollCreatorGeneration,
+  retryCreatorGeneration,
+  submitCreatorGeneration,
+} from "./orchestrator";
+import { createCreatorSpendHook, requireCreatorWorkspaceOwner, requirePaidCreatorAccess } from "./paidGeneration";
+import { listCreatorProviderStatuses } from "./providerRegistry";
+import { creatorSpendAdminRouter } from "./spendAdmin";
+import { verifyCreatorRuntimeAcceptance } from "./runtimeAcceptance";
+import { createRuntimeVerifyGuard, RuntimeVerifyTimeoutError } from "./runtimeVerifyGuard";
+import { buildCreatorRuntimePreflight } from "./runtimePreflight";
+
+const imageInput = z.object({
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+  dataBase64: z.string().min(1).max(12_000_000),
+  assetId: z.number().int().positive().optional(),
+});
+
+const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
+const generationInput = workspaceInput.extend({ generationId: z.number().int().positive() });
+
+async function requireWorkspace(userId: number, workspaceId: number) {
+  const workspace = await getWorkspaceForUser(userId, workspaceId);
+  if (!workspace) throw new TRPCError({ code: "FORBIDDEN", message: "Workspace access denied" });
+  return workspace;
+}
+
+/** Global administrator only; unauthenticated callers still get UNAUTHORIZED (client login redirect), non-admins FORBIDDEN. */
+const operatorProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+  if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+  return next();
+});
+
+/** One shared, bounded data-plane verification for the whole process (see runtimeVerifyGuard). */
+const runtimeVerifyGuard = createRuntimeVerifyGuard({ run: () => verifyCreatorRuntimeAcceptance(), minIntervalMs: 10_000, timeoutMs: 20_000 });
+export const resetCreatorRuntimeVerifyGuardForTests = () => runtimeVerifyGuard.reset();
+
+async function requirePaidGenerationReady() {
+  const acceptance = await verifyCreatorRuntimeAcceptance();
+  if (acceptance.readyForPaidGeneration) return acceptance;
+
+  const failed = acceptance.checks
+    .filter(check => check.required && !check.pass)
+    .map(check => check.id)
+    .join(",");
+
+  throw new TRPCError({
+    code: "PRECONDITION_FAILED",
+    message: `CREATOR_RUNTIME_ACCEPTANCE_BLOCKED:${failed || "UNKNOWN"}`,
+  });
+}
+
+function creatorError(error: unknown): never {
+  if (error instanceof TRPCError) throw error;
+  const message = error instanceof Error ? error.message : "CREATOR_RUNTIME_ERROR";
+  if (
+    message.includes("NOT_CONFIGURED") ||
+    message === "CREATOR_DATABASE_UNAVAILABLE" ||
+    message.startsWith("Storage config missing")
+  ) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message });
+  }
+  if (message.startsWith("CREATOR_")) {
+    throw new TRPCError({ code: "BAD_REQUEST", message });
+  }
+  throw new TRPCError({ code: "BAD_GATEWAY", message: "CREATOR_PROVIDER_REQUEST_FAILED" });
+}
+
+async function lockedReferencesOrFallback(input: {
+  workspaceId: number;
+  creatorProjectId: number;
+  limit: number;
+  fallback?: z.infer<typeof imageInput>[];
+}) {
+  const locked = await resolveApprovedProjectReferenceImages({
+    workspaceId: input.workspaceId,
+    creatorProjectId: input.creatorProjectId,
+    limit: input.limit,
+  });
+  return locked.length ? locked : input.fallback;
+}
+
+export const creatorRouter = router({
+  workspace: creatorWorkspaceRouter,
+  references: creatorReferenceRouter,
+  audio: creatorAudioRouter,
+  timeline: creatorTimelineRouter,
+  review: creatorReviewRouter,
+  spend: creatorSpendAdminRouter,
+
+  status: protectedProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    return {
+      stage: "P0_CREATOR_WORKSPACE_UI_RUNTIME" as const,
+      productionApproved: false,
+      providers: listCreatorProviderStatuses(),
+      guarantees: {
+        durableGenerationId: true,
+        providerNeutralControlHandle: true,
+        artifactRequiredBeforeSuccess: true,
+        checksumAndProvenanceOnPersist: true,
+        retryReusesExistingProviderJob: true,
+        cancellationRequiresRemoteProviderAcknowledgement: true,
+        immutableApprovedReferences: true,
+        providerRequestsResolveProjectReferenceLocksServerSide: true,
+        conditionedFramesResolveApprovedImmutableProjectAssetsServerSide: true,
+        boundedShotTimingMutation: true,
+        immutableApprovedAudioMaster: true,
+        captionBoundsDerivedFromAudioMaster: true,
+        approvedVisualTimelineCoverageRequired: true,
+        deterministicFfmpegCandidateRender: true,
+        renderChecksumAndProvenance: true,
+        governedVideoQualitySpecId: "SAI-VIDEO-QUALITY",
+        outputConformanceBeforeQualityScoring: true,
+        providerNeutralRemediation: true,
+        qualityPassRequiredBeforeFinalMaster: true,
+        humanTamilReviewRequired: true,
+        humanVisualReviewRequiredBeforeFinalMaster: true,
+        finalMasterPromotionDoesNotPublish: true,
+        automaticPublish: false,
+      },
+      nextRequired: [
+        "apply Creator database migration to an approved runtime",
+        "configure approved provider credential and S3-compatible storage outside Git",
+        "verify Creator runtime acceptance before any paid generation",
+        "run one real Murugan image generation and one real Murugan video generation",
+        "run the complete Murugan 16:9 acceptance sequence with real output and human Tamil/visual evidence",
+      ],
+    };
+  }),
+
+  // Operator surfaces (P-G10). Global infrastructure probes: every signed-in user owns a personal workspace, so workspace
+  // membership does not restrict them. They require the global administrator role AND membership of the named workspace.
+  preflight: operatorProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    return buildCreatorRuntimePreflight();
+  }),
+
+  verifyRuntime: operatorProcedure.input(workspaceInput).mutation(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    try {
+      const run = await runtimeVerifyGuard.execute();
+      console.log(JSON.stringify({
+        event: "creator.runtime_verify", userId: ctx.user.id, workspaceId: input.workspaceId,
+        ready: run.value.readyForPaidGeneration, failedChecks: run.value.checks.filter(check => check.required && !check.pass).map(check => check.id),
+        cached: run.cached, durationMs: run.durationMs,
+      }));
+      return run.value;
+    } catch (error) {
+      console.log(JSON.stringify({ event: "creator.runtime_verify", userId: ctx.user.id, workspaceId: input.workspaceId, ready: false, error: error instanceof RuntimeVerifyTimeoutError ? "timeout" : "failed" }));
+      if (error instanceof RuntimeVerifyTimeoutError) throw new TRPCError({ code: "TIMEOUT", message: error.message });
+      throw error;
+    }
+  }),
+
+  submitImage: protectedProcedure
+    .input(
+      workspaceInput.extend({
+        creatorProjectId: z.number().int().positive(),
+        shotId: z.number().int().positive(),
+        idempotencyKey: z.string().uuid(),
+        kind: z.enum(["IMAGE", "IMAGE_EDIT"]).default("IMAGE"),
+        prompt: z.string().trim().min(1).max(8000),
+        model: z.literal("gemini-3.1-flash-image").optional(),
+        aspectRatio: z.enum(["1:1", "9:16", "16:9"]).default("16:9"),
+        imageSize: z.enum(["1K", "2K", "4K"]).default("2K"),
+        references: z.array(imageInput).max(4).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Authorization and spend policy before readiness probes (storage canary), references or provider.
+      const paidConfig = await requirePaidCreatorAccess(ctx.user, input.workspaceId, "IMAGE");
+      await requirePaidGenerationReady();
+      try {
+        const references = await lockedReferencesOrFallback({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          limit: 4,
+          fallback: input.references,
+        });
+        return await submitCreatorGeneration({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          shotId: input.shotId,
+          idempotencyKey: input.idempotencyKey,
+          spend: createCreatorSpendHook({ user: ctx.user, workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, config: paidConfig }),
+          request: {
+            kind: input.kind,
+            prompt: input.prompt,
+            model: input.model,
+            aspectRatio: input.aspectRatio,
+            imageSize: input.imageSize,
+            references,
+          },
+        });
+      } catch (error) {
+        creatorError(error);
+      }
+    }),
+
+  submitVideo: protectedProcedure
+    .input(
+      workspaceInput.extend({
+        creatorProjectId: z.number().int().positive(),
+        shotId: z.number().int().positive(),
+        idempotencyKey: z.string().uuid(),
+        prompt: z.string().trim().min(1).max(8000),
+        model: z
+          .enum([
+            "veo-3.1-generate-preview",
+            "veo-3.1-fast-generate-preview",
+            "veo-3.1-lite-generate-preview",
+          ])
+          .optional(),
+        aspectRatio: z.enum(["16:9", "9:16"]).default("16:9"),
+        resolution: z.enum(["720p", "1080p", "4k"]).default("720p"),
+        durationSeconds: z.union([z.literal(4), z.literal(6), z.literal(8)]).default(8),
+        firstFrameAssetId: z.number().int().positive().optional(),
+        lastFrameAssetId: z.number().int().positive().optional(),
+        firstFrame: imageInput.optional(),
+        lastFrame: imageInput.optional(),
+        referenceImages: z.array(imageInput).max(3).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const paidConfig = await requirePaidCreatorAccess(ctx.user, input.workspaceId, "VIDEO");
+      await requirePaidGenerationReady();
+      try {
+        const references = await lockedReferencesOrFallback({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          limit: 3,
+          fallback: input.referenceImages,
+        });
+        const firstFrame = input.firstFrameAssetId
+          ? await resolveApprovedConditionedFrameAsset({
+              workspaceId: input.workspaceId,
+              creatorProjectId: input.creatorProjectId,
+              assetId: input.firstFrameAssetId,
+            })
+          : input.firstFrame;
+        const lastFrame = input.lastFrameAssetId
+          ? await resolveApprovedConditionedFrameAsset({
+              workspaceId: input.workspaceId,
+              creatorProjectId: input.creatorProjectId,
+              assetId: input.lastFrameAssetId,
+            })
+          : input.lastFrame;
+        return await submitCreatorGeneration({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          shotId: input.shotId,
+          idempotencyKey: input.idempotencyKey,
+          spend: createCreatorSpendHook({ user: ctx.user, workspaceId: input.workspaceId, idempotencyKey: input.idempotencyKey, config: paidConfig }),
+          request: {
+            kind: "VIDEO",
+            prompt: input.prompt,
+            model: input.model,
+            aspectRatio: input.aspectRatio,
+            resolution: input.resolution,
+            durationSeconds: input.durationSeconds,
+            firstFrame,
+            lastFrame,
+            references,
+          },
+        });
+      } catch (error) {
+        creatorError(error);
+      }
+    }),
+
+  pollGeneration: protectedProcedure.input(generationInput).query(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    try {
+      return await pollCreatorGeneration(input);
+    } catch (error) {
+      creatorError(error);
+    }
+  }),
+
+  retryGeneration: protectedProcedure.input(generationInput).mutation(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    try {
+      // Retry continues paid provider work: same switch, owner and kind-specific authorization as submission.
+      return await retryCreatorGeneration(input, async kind => {
+        await requirePaidCreatorAccess(ctx.user, input.workspaceId, kind);
+      });
+    } catch (error) {
+      creatorError(error);
+    }
+  }),
+
+  cancelGeneration: protectedProcedure.input(generationInput).mutation(async ({ ctx, input }) => {
+    // Cancelling stops spend, so it stays available when paid generation is switched OFF, but only to the owner.
+    await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
+    try {
+      return await cancelCreatorGeneration(input);
+    } catch (error) {
+      creatorError(error);
+    }
+  }),
+});

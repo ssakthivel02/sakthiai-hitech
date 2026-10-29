@@ -25,11 +25,49 @@
   "database": {
     "expectedDatabase": "sakthiai_preview",
     "restoreRequiredForDestructiveOrIncompatibleMigration": true,
-    "allowSchemaGuessing": false
+    "allowSchemaGuessing": false,
+    "applicationRollbackSeparateFromRestore": true,
+    "targetJournalMustBePrefixOfLiveJournal": true
   },
   "release": {
     "productionApproved": false,
     "paidProviderActivationApproved": false,
     "dnsChangeApproved": false
+  },
+  "securityBaseline": {
+    "minimumCommit": "403c8f8a2db6fa532a80ae659668fbd18bf779b2",
+    "reason": "First commit containing the local-provider classification and redirect refusal (79635f7), the Creator redirect refusal (fa2760e) and the high-advisory dependency fixes (403c8f8). A rollback target must contain it.",
+    "forbiddenTargets": [
+      {
+        "commit": "469c668e71ceaae800e8605c5814e7017035fdbc",
+        "reason": "Currently deployed preview build; lacks the baseline security fixes. Never a rollback target."
+      }
+    ]
+  },
+  "containment": {
+    "whenNoQualifiedTarget": [
+      "suspend-service",
+      "maintenance-mode"
+    ],
+    "neverServeForbiddenTarget": true,
+    "note": "If no deployed-and-verified build at or after the baseline exists, contain instead of serving an older build. A build that contains application maintenance mode can be contained with SAKTHIAI_MAINTENANCE_MODE=true (restart required); any other build, including the forbidden 469c668 the preview serves today, can only be contained by suspending the service.",
+    "maintenanceMode": {
+      "mechanism": "application",
+      "variable": "SAKTHIAI_MAINTENANCE_MODE",
+      "value": "true",
+      "behaviour": "every route except /healthz, /readyz, /releasez answers 503 before parsing, auth, database, storage, OAuth, tRPC or static handlers; /readyz 503 without probing dependencies; no background runners; unrecognised values fail closed",
+      "test": "tests/maintenance-mode.test.mjs",
+      "notAvailableOn": [
+        "469c668e71ceaae800e8605c5814e7017035fdbc"
+      ],
+      "platformMaintenanceMode": "The hosting platform's own maintenance setting is not tested here and is not relied on."
+    }
+  },
+  "buildEvidence": {
+    "manifest": "dist/release-manifest.json",
+    "servedIdentity": "/releasez artifact.digest (recomputed by the running server; state must be verified)",
+    "retainedArtifact": "GitHub Actions artifact release-artifact-<commit> (quality-gate job release-artifact, 90 days)",
+    "hostRebuildTie": "digest equality between the served artifact and the retained artifact for the same commit",
+    "doc": "docs/RELEASE_ARTIFACT.md"
   }
 }

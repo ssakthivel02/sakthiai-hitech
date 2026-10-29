@@ -1,0 +1,172 @@
+name: SakthiAI Production DB Setup
+
+# Guarded inspect/migrate for the PRODUCTION database. Same guard sequence as preview-db-setup.yml, with separate
+# environments, secrets and evidence, and two extra dispatch bindings:
+#   approved_commit  must equal the commit this run checked out (the exact SHA named in the production approval);
+#   confirm_database must equal the only acceptable database name, typed by the operator.
+# Nothing here deploys the application. Provisioning, migration and deployment are separate owner approvals.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "inspect = read-only preflight; writes nothing. migrate = apply pending migrations and backfill (needs the migrate environment's reviewers)."
+        required: true
+        type: choice
+        options: [inspect, migrate]
+        default: inspect
+      recovery_point:
+        description: "Owner-attested Aiven backup time for the production service, taken after the last write, UTC with Z. Recorded as OWNER_ATTESTED, not provider-verified. Never invent one."
+        required: true
+        type: string
+      approved_commit:
+        description: "Full 40-character SHA named in the production approval. Must equal the commit of the ref you dispatch from."
+        required: true
+        type: string
+      confirm_database:
+        description: "Type the production database name (sakthiai_production) to confirm the target."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# One writer at a time, and never interleaved with preview runs' names: production has its own group.
+concurrency:
+  group: sakthiai-production-db
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Credentials live ONLY as environment secrets of these two environments (inspect = SELECT-only principal;
+    # migrate = least-privilege migrator behind required reviewers). No repository-level secret is read.
+    environment: ${{ inputs.mode == 'migrate' && 'sakthiai-production-db-migrate' || 'sakthiai-production-db-inspect' }}
+    env:
+      DATABASE_URL: ${{ secrets.SAKTHIAI_PRODUCTION_DB_URL }}
+      DATABASE_EXPECTED_NAME: sakthiai_production
+      DATABASE_CA_CERT_B64: ${{ secrets.SAKTHIAI_PRODUCTION_DB_CA_B64 }}
+      MIGRATION_DB_ROLE: ${{ inputs.mode }}
+      MIGRATION_REPORT_PREFIX: production-migration
+      ENVIRONMENT_DB_ROLE: ${{ vars.SAKTHIAI_PRODUCTION_DB_ROLE }}
+      APPROVED_COMMIT: ${{ inputs.approved_commit }}
+      CONFIRM_DATABASE: ${{ inputs.confirm_database }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require environment-scoped production database configuration and dispatch bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${MIGRATION_DB_ROLE:-}" in inspect|migrate) ;; *) echo "mode must be inspect or migrate."; exit 1 ;; esac
+          if [ "${ENVIRONMENT_DB_ROLE:-}" != "${MIGRATION_DB_ROLE}" ]; then
+            echo "Environment variable SAKTHIAI_PRODUCTION_DB_ROLE ('${ENVIRONMENT_DB_ROLE:-<unset>}') does not match mode '${MIGRATION_DB_ROLE}'; refusing."
+            exit 1
+          fi
+          if ! [[ "${APPROVED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "approved_commit must be a full 40-character lowercase SHA."
+            exit 1
+          fi
+          head="$(git rev-parse HEAD)"
+          if [ "${APPROVED_COMMIT}" != "${head}" ]; then
+            echo "approved_commit ${APPROVED_COMMIT} does not match the dispatched commit ${head}; refusing."
+            exit 1
+          fi
+          if [ "${CONFIRM_DATABASE:-}" != "${DATABASE_EXPECTED_NAME}" ]; then
+            echo "confirm_database does not match ${DATABASE_EXPECTED_NAME}; refusing."
+            exit 1
+          fi
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "Environment secret SAKTHIAI_PRODUCTION_DB_URL is not configured for the ${MIGRATION_DB_ROLE} environment."
+            exit 1
+          fi
+          if [ -z "${DATABASE_CA_CERT_B64:-}" ]; then
+            echo "Environment secret SAKTHIAI_PRODUCTION_DB_CA_B64 is not configured for the ${MIGRATION_DB_ROLE} environment."
+            exit 1
+          fi
+
+      - name: Validate production Aiven MySQL target
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const url = new URL(process.env.DATABASE_URL);
+          if (url.protocol !== 'mysql:') throw new Error('SakthiAI production DATABASE_URL must use mysql://.');
+          if (!url.hostname.endsWith('.aivencloud.com')) throw new Error('SakthiAI production must target an Aiven MySQL host.');
+          const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
+          if (database !== process.env.DATABASE_EXPECTED_NAME) {
+            throw new Error(`SakthiAI production must target ${process.env.DATABASE_EXPECTED_NAME}, received ${database || '<none>'}.`);
+          }
+          if (['root', 'avnadmin'].includes(decodeURIComponent(url.username).toLowerCase())) throw new Error('administrative principals are not allowed.');
+          console.log('SakthiAI production Aiven MySQL target guard PASS');
+          NODE
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        env:
+          DATABASE_URL: ""
+          DATABASE_CA_CERT_B64: ""
+        run: pnpm install --frozen-lockfile
+
+      - name: Require a valid owner-attested pre-migration recovery point
+        env:
+          RECOVERY_POINT: ${{ inputs.recovery_point }}
+        run: node scripts/preview-migration-guard.mjs attest
+
+      - name: Database principal privileges match the mode (inspect = SELECT only; read-only, verified TLS)
+        run: node scripts/preview-migration-guard.mjs grants
+
+      - name: Typecheck
+        env:
+          DATABASE_URL: ""
+          DATABASE_CA_CERT_B64: ""
+        run: pnpm check
+
+      - name: Pre-migration journal, hash, recovery-point and snapshot guard (read-only, verified TLS)
+        env:
+          RECOVERY_POINT: ${{ inputs.recovery_point }}
+        run: node scripts/preview-migration-guard.mjs pre
+
+      - name: Apply production schema
+        if: inputs.mode == 'migrate'
+        run: pnpm db:push
+
+      - name: Post-migration journal and data-preservation guard (read-only)
+        if: inputs.mode == 'migrate'
+        run: node scripts/preview-migration-guard.mjs post
+
+      - name: Migrator rerun is a no-op
+        if: inputs.mode == 'migrate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm db:push
+          node scripts/preview-migration-guard.mjs rerun
+
+      - name: Search-text backfill is complete and idempotent
+        if: inputs.mode == 'migrate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm db:backfill-search-text | tee /tmp/backfill-1.txt
+          pnpm db:backfill-search-text | tee /tmp/backfill-2.txt
+          grep -q 'BACKFILL_DONE updated=0' /tmp/backfill-2.txt
+
+      - name: Upload production migration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-migration-evidence-${{ github.sha }}
+          path: reports/staging/production-migration-*.json
+          if-no-files-found: warn
+          retention-days: 90
