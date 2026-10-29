@@ -6,6 +6,7 @@ import { CircuitBreaker, type BreakerConfig, type BreakerStore } from "./circuit
 import type { GatewayConfig } from "./config";
 import { createOpenAiCompatibleAdapter } from "./openaiCompatible";
 import { createResolvedAddressGuard } from "./hostClass";
+import { createPinnedFetch, localSlotAddressPolicy } from "./pinnedFetch";
 import {
   ERROR_TRAITS,
   ProviderCallError,
@@ -80,7 +81,11 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
             endpointProfile: binding.endpointProfile,
             apiKey: binding.apiKey,
             timeoutMs: binding.timeoutMs,
-            ...(binding.kind === "self_hosted" ? { noRedirect: true, ...(binding.resolveGuard ? { hostGuard: createResolvedAddressGuard() } : {}) } : {}),
+            // The local slot dials only through the pinned fetch: the address policy runs inside the socket's own lookup, so a name cannot pass a check and then
+            // connect somewhere else (DNS rebinding), and link-local / cloud-metadata addresses are refused as a terminal bad_request. The early guard stays as a cheap pre-check.
+            ...(binding.kind === "self_hosted"
+              ? { noRedirect: true, fetchImpl: createPinnedFetch({ policy: localSlotAddressPolicy, refusal: () => new ProviderCallError("bad_request") }), ...(binding.resolveGuard ? { hostGuard: createResolvedAddressGuard() } : {}) }
+              : {}),
             maxAttempts: config.retry.maxAttempts,
             totalDeadlineMs: config.retry.totalDeadlineMs,
             backoffBaseMs: config.retry.backoffBaseMs,

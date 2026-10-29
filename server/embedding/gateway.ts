@@ -3,6 +3,7 @@ import { classifyStatus, isRetryableHttpStatus, parseRetryAfterMs } from "../gat
 import { ERROR_TRAITS, ProviderCallError, type ProviderErrorClass } from "../gateway/types";
 import { validateLocalSlotUrl } from "../gateway/config";
 import { createResolvedAddressGuard, needsResolutionCheck } from "../gateway/hostClass";
+import { createPinnedFetch, localSlotAddressPolicy } from "../gateway/pinnedFetch";
 
 /**
  * Provider-neutral embedding gateway. Speaks the OpenAI-compatible `/v1/embeddings` protocol, which
@@ -141,6 +142,9 @@ export function validateVector(raw: unknown, expectedDimensions?: number): numbe
 
 export function createEmbeddingGateway(config: EmbeddingConfig, deps: EmbeddingDeps = {}) {
   const doFetch = deps.fetchImpl ?? fetch;
+  // Self-hosted embedding endpoints dial only through the pinned fetch (policy enforced inside the connecting lookup: no DNS-rebinding window, no link-local / metadata).
+  // A test that injects fetchImpl replaces it for every provider, exactly as before.
+  const localFetch = deps.fetchImpl ?? createPinnedFetch({ policy: localSlotAddressPolicy, refusal: () => new ProviderCallError("bad_request") });
   const hostGuard = deps.hostGuard ?? createResolvedAddressGuard();
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const random = deps.random ?? Math.random;
@@ -163,7 +167,7 @@ export function createEmbeddingGateway(config: EmbeddingConfig, deps: EmbeddingD
           ]);
           if (!allowed) throw new ProviderCallError("bad_request"); // policy refusal: terminal, nothing is sent
         }
-        response = await doFetch(embeddingsUrl(provider.baseUrl), {
+        response = await (provider.kind === "self_hosted" ? localFetch : doFetch)(embeddingsUrl(provider.baseUrl), {
           method: "POST",
           headers: { "content-type": "application/json", ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}) },
           body: JSON.stringify({ model: provider.model, input }),

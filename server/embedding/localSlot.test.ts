@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createEmbeddingGateway, loadEmbeddingConfig, LOCAL_EMBEDDING_ID } from "./gateway";
 
 /**
@@ -67,5 +67,43 @@ describe("embedding local slot", () => {
     const approving = createEmbeddingGateway(cfg, { fetchImpl: (async () => { fetches += 1; return OK(); }) as typeof fetch, hostGuard: async () => true, sleep: async () => undefined });
     expect((await approving.embed("document text")).status).toBe("ok");
     expect(fetches).toBe(1);
+  });
+});
+
+/** Default wiring (no fetchImpl): the local slot dials through the pinned fetch. Real loopback sockets only. */
+describe("embedding local slot over a real socket (default wiring)", () => {
+  const serve = async (handler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void) => {
+    const http = await import("node:http");
+    const hits: string[] = [];
+    const server = http.createServer((rq, rs) => { hits.push(rq.url ?? ""); handler(rq, rs); });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    return { port: (server.address() as import("node:net").AddressInfo).port, hits, close: () => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }) };
+  };
+  const okJson = (_rq: unknown, rs: import("node:http").ServerResponse) => { rs.writeHead(200, { "content-type": "application/json" }); rs.end(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] })); };
+  const gatewayFor = (url: string) => createEmbeddingGateway(loadEmbeddingConfig({ ...env(url), EMBEDDING_MAX_ATTEMPTS: "1" }));
+  let ambientFetchCalls = 0;
+  const realFetch = globalThis.fetch;
+  beforeEach(() => { ambientFetchCalls = 0; globalThis.fetch = ((...a: Parameters<typeof fetch>) => { ambientFetchCalls++; return realFetch(...a); }) as typeof fetch; });
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  it.each(["127.0.0.1", "localhost"])("Ollama-style loopback http://%s:PORT keeps working", async (host) => {
+    const srv = await serve(okJson);
+    try {
+      const out = await gatewayFor(`http://${host}:${srv.port}`).embed("hello");
+      expect(out).toMatchObject({ status: "ok", kind: "self_hosted", dimensions: 3 });
+      expect(srv.hits).toHaveLength(1);
+      expect(ambientFetchCalls).toBe(0); // dialled through the pinned transport, not the global fetch
+    } finally { await srv.close(); }
+  });
+
+  it("a redirect from the local embedding endpoint is not followed; the other destination receives nothing", async () => {
+    const other = await serve(okJson);
+    const front = await serve((_rq, rs) => { rs.writeHead(307, { location: `http://127.0.0.1:${other.port}/elsewhere` }); rs.end(); });
+    try {
+      const out = await gatewayFor(`http://127.0.0.1:${front.port}`).embed("SECRET-DOCUMENT-TEXT");
+      expect(out.status).toBe("failed");
+      expect(front.hits).toHaveLength(1);
+      expect(other.hits).toHaveLength(0);
+    } finally { await front.close(); await other.close(); }
   });
 });
