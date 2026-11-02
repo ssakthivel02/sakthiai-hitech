@@ -127,7 +127,8 @@
     "overrides": {
       "tailwindcss>nanoid": "3.3.7",
       "lodash": "^4.18.1",
-      "lodash-es": "^4.18.1"
+      "lodash-es": "^4.18.1",
+      "follow-redirects": "^1.16.2"
     }
   }
 }
