@@ -44,6 +44,7 @@ export function buildExportManifest(input: ManifestInput, generatedAt = new Date
       kind: isMaster ? "MASTER" : render.source === "deterministic-creator-derivative" ? "DELIVERY_DERIVATIVE" : "UNKNOWN",
       derivativeOf: isMaster ? null : { renderAssetId: render.derivativeOfRenderAssetId ?? null, checksumSha256: render.derivativeOfChecksumSha256 ?? null },
       reviewDecision: input.renderAsset.reviewDecision, finalMaster: isMaster && input.renderAsset.reviewDecision === "APPROVED",
+      deliveryApproved: input.renderAsset.reviewDecision === "APPROVED",
       durationMs: render.durationMs ?? null, frameCount: render.frameCount ?? null, fps: render.fps ?? null,
     } : null,
     audioMaster: input.audioMaster ? { assetId: input.audioMaster.id, checksumSha256: input.audioMaster.checksumSha256, reviewDecision: input.audioMaster.reviewDecision } : null,

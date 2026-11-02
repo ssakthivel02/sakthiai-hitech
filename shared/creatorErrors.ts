@@ -46,6 +46,10 @@ export function describeCreatorError(raw: string | null | undefined): CreatorErr
       return { code, kind: "blocked", title: "Approve the 16:9 master first", detail: "A 9:16 mobile version is made only from a 16:9 master that has passed quality, Tamil and visual review." };
     case "CREATOR_DERIVATIVE_SOURCE_DRIFT":
       return { code, kind: "blocked", title: "The timeline changed after approval", detail: "The visuals or audio no longer match the approved 16:9 master, so a 9:16 version would not match it. Render and approve a new master first." };
+    case "CREATOR_DERIVATIVE_REVIEW_ALREADY_FINAL":
+      return { code, kind: "blocked", title: "Crop already reviewed", detail: "This 9:16 version already has a final decision. Render a new 9:16 version to review again." };
+    case "CREATOR_DERIVATIVE_REVIEW_NOT_FOUND":
+      return { code, kind: "blocked", title: "Not a 9:16 version of this project", detail: "Only a 9:16 version rendered from this project's approved master can be crop-reviewed here." };
     case "CREATOR_DERIVATIVE_MASTER_NOT_FOUND":
     case "CREATOR_DERIVATIVE_TIMELINE_MISMATCH":
       return { code, kind: "blocked", title: "Not a 16:9 master of this timeline", detail: "Choose the approved 16:9 final master rendered from this timeline." };

@@ -4,6 +4,7 @@ import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { executeCreatorTimelineExport } from "./renderService";
 import { getCreatorExportManifest } from "./exportManifest";
+import { reviewVerticalDerivative } from "./derivativeReview";
 import { replaceApprovedTimelineItems } from "./timeline";
 
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -89,6 +90,23 @@ export const creatorTimelineRouter = router({
           verticalDerivativeOf: input.finalMasterAssetId,
         });
         return { ...result, aspectRatio: "9:16" as const, derivative: true as const, finalMaster: false as const, publishApproved: false as const, humanCropCheckRequired: true as const };
+      } catch (error) {
+        mapTimelineError(error);
+      }
+    }),
+
+  /** Human check of a 9:16 derivative's crop. PASS approves it for delivery; it never becomes a master. */
+  reviewVerticalDerivative: protectedProcedure
+    .input(workspaceInput.extend({
+      creatorProjectId: z.number().int().positive(),
+      assetId: z.number().int().positive(),
+      decision: z.enum(["PASS", "REJECT"]),
+      notes: z.string().trim().min(1).max(5000),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      try {
+        return await reviewVerticalDerivative({ ...input, reviewerUserId: ctx.user.id });
       } catch (error) {
         mapTimelineError(error);
       }

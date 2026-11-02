@@ -7,6 +7,7 @@ import { buildDeterministicRenderPlan } from "./renderPlan";
 import { resolveCreatorCaptionFonts } from "./renderWorker";
 import { assertNoDerivativeDrift, parseApprovedMasterForDerivative } from "./renderService";
 import { buildExportManifest } from "./exportManifest";
+import { assertDerivativeReviewable } from "./derivativeReview";
 
 const base = {
   width: 1080, height: 1920, fps: 24, audioDurationMs: 2000, audioSourceUrl: "a.wav", subtitlePath: "c.srt", outputPath: "o.mp4",
@@ -40,6 +41,17 @@ describe("9:16 derivative source rules", () => {
     expect(() => assertNoDerivativeDrift(parent, { visualAssetIds: [1, 2], audioMasterChecksumSha256: "a".repeat(64) })).not.toThrow();
     expect(() => assertNoDerivativeDrift(parent, { visualAssetIds: [2, 1], audioMasterChecksumSha256: "a".repeat(64) })).toThrow("CREATOR_DERIVATIVE_SOURCE_DRIFT");
     expect(() => assertNoDerivativeDrift(parent, { visualAssetIds: [1, 2], audioMasterChecksumSha256: "b".repeat(64) })).toThrow("CREATOR_DERIVATIVE_SOURCE_DRIFT");
+  });
+});
+
+describe("9:16 crop review eligibility", () => {
+  const row = { id: 20, workspaceId: 7, creatorProjectId: 1, assetType: "RENDER", immutable: 1, reviewDecision: "PENDING", checksumSha256: "d".repeat(64),
+    provenanceJson: JSON.stringify({ source: "deterministic-creator-derivative", derivativeOfRenderAssetId: 9 }) };
+  it("accepts only a pending derivative of this workspace and project, never a master", () => {
+    expect(assertDerivativeReviewable(row, { workspaceId: 7, creatorProjectId: 1 })).toEqual({ parentRenderAssetId: 9 });
+    expect(() => assertDerivativeReviewable({ ...row, provenanceJson: JSON.stringify({ source: "deterministic-creator-render" }) }, { workspaceId: 7, creatorProjectId: 1 })).toThrow("CREATOR_DERIVATIVE_REVIEW_NOT_FOUND");
+    expect(() => assertDerivativeReviewable(row, { workspaceId: 8, creatorProjectId: 1 })).toThrow("CREATOR_DERIVATIVE_REVIEW_NOT_FOUND");
+    expect(() => assertDerivativeReviewable({ ...row, reviewDecision: "APPROVED" }, { workspaceId: 7, creatorProjectId: 1 })).toThrow("CREATOR_DERIVATIVE_REVIEW_ALREADY_FINAL");
   });
 });
 

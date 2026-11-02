@@ -7,6 +7,7 @@ vi.mock("../db", async importOriginal => ({ ...(await importOriginal<typeof impo
 
 import { executeCreatorTimelineExport } from "./renderService";
 import { getCreatorExportManifest } from "./exportManifest";
+import { reviewVerticalDerivative } from "./derivativeReview";
 
 /** Real SQL: 9:16 derivative export through the real export service (ffmpeg + storage faked) and its manifest. */
 describe.skipIf(skipMysqlSuite())("9:16 delivery derivative and export manifest (real SQL)", { timeout: 60_000 }, () => {
@@ -70,6 +71,23 @@ describe.skipIf(skipMysqlSuite())("9:16 delivery derivative and export manifest 
     expect(manifest.captions).toMatchObject({ count: 1, locked: true, languages: ["ta"] });
     expect(JSON.stringify(manifest)).not.toMatch(/storageKey|v\/one\.png|signed\.example/);
     await expect(getCreatorExportManifest({ workspaceId: 8, creatorProjectId: ids.project, exportId: derivative.exportId })).rejects.toThrow("CREATOR_EXPORT_NOT_FOUND");
+
+    // Crop review: the master cannot be reviewed through this route; concurrent crop decisions cannot both win.
+    const review = (assetId: number, decision: "PASS" | "REJECT", workspaceId = 7) =>
+      reviewVerticalDerivative({ workspaceId, creatorProjectId: ids.project, assetId, reviewerUserId: 1, decision, notes: "Vel, face and captions fully in frame." });
+    await expect(review(ids.master, "PASS")).rejects.toThrow("CREATOR_DERIVATIVE_REVIEW_NOT_FOUND");
+    await expect(review(derivative.assetId, "PASS", 8)).rejects.toThrow("CREATOR_DERIVATIVE_REVIEW_NOT_FOUND");
+    await expect(reviewVerticalDerivative({ workspaceId: 7, creatorProjectId: ids.project, assetId: derivative.assetId, reviewerUserId: 1, decision: "PASS", notes: " " })).rejects.toThrow("CREATOR_HUMAN_REVIEW_NOTES_REQUIRED");
+    const outcomes = await Promise.allSettled([review(derivative.assetId, "PASS"), review(derivative.assetId, "REJECT")]);
+    expect(outcomes.filter(o => o.status === "fulfilled")).toHaveLength(1);
+    expect((outcomes.find(o => o.status === "rejected") as PromiseRejectedResult).reason.message).toBe("CREATOR_DERIVATIVE_REVIEW_ALREADY_FINAL");
+    const winner = (outcomes.find(o => o.status === "fulfilled") as PromiseFulfilledResult<Awaited<ReturnType<typeof reviewVerticalDerivative>>>).value;
+    const reviews = await one<{ n: number }>(sql`SELECT COUNT(*) AS n FROM creatorReviews WHERE assetId = ${derivative.assetId} AND reviewType = 'HUMAN_VISUAL'`);
+    expect(Number(reviews.n)).toBe(1);
+    const after = await getCreatorExportManifest({ workspaceId: 7, creatorProjectId: ids.project, exportId: derivative.exportId });
+    expect(after.output).toMatchObject({ deliveryApproved: winner.decision === "PASS", finalMaster: false });
+    const masterRow = await one<{ reviewDecision: string }>(sql`SELECT reviewDecision FROM creatorAssets WHERE id = ${ids.master}`);
+    expect(masterRow.reviewDecision).toBe("APPROVED"); // the master is untouched
   });
 
   it("refuses a derivative once the timeline no longer matches the approved master", async () => {

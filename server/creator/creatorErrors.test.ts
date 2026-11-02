@@ -13,8 +13,8 @@ describe("describeCreatorError", () => {
   });
 
   it("explains every consent, avatar-audio and cancellation refusal of the speech/avatar path", () => {
-    const sources = ["server/creator/speech/consentStore.ts", "server/creator/speech/audioAsset.ts", "server/creator/speech/speechReview.ts", "server/creator/jobControl.ts"].map(f => readFileSync(f, "utf8")).join("\n");
-    const codes = [...new Set([...sources.matchAll(/new Error\("(CREATOR_(?:CONSENT|AVATAR_AUDIO|PROVIDER_CANCEL|SPEECH_REVIEW)_[A-Z_]+)"\)/g)].map(m => m[1]))];
+    const sources = ["server/creator/speech/consentStore.ts", "server/creator/speech/audioAsset.ts", "server/creator/speech/speechReview.ts", "server/creator/derivativeReview.ts", "server/creator/renderService.ts", "server/creator/jobControl.ts"].map(f => readFileSync(f, "utf8")).join("\n");
+    const codes = [...new Set([...sources.matchAll(/new Error\("(CREATOR_(?:CONSENT|AVATAR_AUDIO|PROVIDER_CANCEL|SPEECH_REVIEW|DERIVATIVE)_[A-Z_]+)"\)/g)].map(m => m[1]))];
     expect(codes.length).toBeGreaterThan(8);
     for (const code of codes.filter(c => !["CREATOR_CONSENT_SUBJECT_INVALID", "CREATOR_CONSENT_VALID_UNTIL_PAST", "CREATOR_CONSENT_CREATE_FAILED", "CREATOR_CONSENT_NOT_FOUND_OR_REVOKED"].includes(c))) {
       expect(GENERIC.has(describeCreatorError(code).title), code).toBe(false);

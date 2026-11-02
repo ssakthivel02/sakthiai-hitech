@@ -193,6 +193,9 @@ export default function Creator() {
   const visualReview = trpc.creator.review.humanVisual.useMutation({ onSuccess: () => project.refetch() });
   const finalizeMaster = trpc.creator.review.finalizeMaster.useMutation({ onSuccess: () => project.refetch() });
   const renderVertical = trpc.creator.timeline.renderVerticalDerivative.useMutation({ onSuccess: () => project.refetch() });
+  const reviewCrop = trpc.creator.timeline.reviewVerticalDerivative.useMutation({ onSuccess: () => project.refetch() });
+  const [cropNotes, setCropNotes] = useState<Record<number, string>>({});
+  const [cropWatched, setCropWatched] = useState<Record<number, boolean>>({});
 
   async function downloadManifest(exportId: number) {
     if (!workspaceId || !projectId) return;
@@ -205,7 +208,7 @@ export default function Creator() {
     }
   }
 
-  const operationError = [createProject.error, createScene.error, createShot.error, submitImage.error, submitVideo.error, retryGeneration.error, cancelGeneration.error, ingestAudio.error, saveCues.error, saveTimeline.error, renderCandidate.error, qualityReview.error, tamilReview.error, visualReview.error, finalizeMaster.error, renderVertical.error, manifestError, panelError].find(Boolean);
+  const operationError = [createProject.error, createScene.error, createShot.error, submitImage.error, submitVideo.error, retryGeneration.error, cancelGeneration.error, ingestAudio.error, saveCues.error, saveTimeline.error, renderCandidate.error, qualityReview.error, tamilReview.error, visualReview.error, finalizeMaster.error, renderVertical.error, reviewCrop.error, manifestError, panelError].find(Boolean);
 
   function submitImageForShot(shot: { id: number; title: string; prompt: string | null }) {
     if (!workspaceId || !projectId) return;
@@ -343,7 +346,26 @@ export default function Creator() {
               <Button variant="outline" disabled={!finalMaster || !activeTimeline || renderVertical.isPending} onClick={() => renderVertical.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, finalMasterAssetId: finalMaster!.id })}><Smartphone size={16}/> Render 9:16 mobile version</Button>
               <small>{finalMaster ? `From final master asset ${finalMaster.id}. Centre-cropped to 1080×1920: check nothing important (the Vel, faces) is cut off.` : "Available once a 16:9 final master is approved."}</small>
             </div>
-            <div className="list">{project.data?.exports?.map(item => <div key={item.id} className="list-row"><div><span>Export #{item.id} · {item.status} · {item.height > item.width ? "9:16 mobile" : "16:9"}</span><small>{item.width}×{item.height} · {item.renderer} · asset {item.assetId ?? "pending"}</small></div>{item.status === "SUCCEEDED" && <Button size="sm" variant="ghost" onClick={() => downloadManifest(item.id)}><FileJson size={14}/> Provenance manifest</Button>}</div>)}</div>
+            <div className="list">{project.data?.exports?.map(item => {
+              const vertical = item.height > item.width;
+              const asset = project.data?.assets.find(candidate => candidate.id === item.assetId);
+              const cropPending = vertical && item.status === "SUCCEEDED" && asset?.reviewDecision === "PENDING" && renderSource(asset.provenanceJson) === "deterministic-creator-derivative";
+              return <div key={item.id} className="list-row" style={{ display: "grid", gap: 8, alignItems: "stretch" }} data-testid={`export-${item.id}`}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <div><span>Export #{item.id} · {item.status} · {vertical ? "9:16 mobile" : "16:9"}</span><small>{item.width}×{item.height} · {item.renderer} · asset {item.assetId ?? "pending"}{vertical && asset ? ` · crop ${asset.reviewDecision === "APPROVED" ? "approved" : asset.reviewDecision === "REJECTED" ? "rejected" : "not yet checked"}` : ""}</small></div>
+                  {item.status === "SUCCEEDED" && <Button size="sm" variant="ghost" onClick={() => downloadManifest(item.id)}><FileJson size={14}/> Provenance manifest</Button>}
+                </div>
+                {cropPending && asset && <div style={{ display: "grid", gap: 6 }}>
+                  <video controls preload="none" playsInline src={`/api/storage/${asset.storageKey.split("/").map(encodeURIComponent).join("/")}`} onEnded={() => setCropWatched(current => ({ ...current, [asset.id]: true }))} style={{ width: "min(100%, 270px)", aspectRatio: "9 / 16", background: "#000" }} aria-label={`9:16 version, asset ${asset.id}`}/>
+                  <Textarea value={cropNotes[asset.id] ?? ""} onChange={e => setCropNotes(current => ({ ...current, [asset.id]: e.target.value }))} placeholder="Crop check: Murugan, the Vel, the peacock and the captions are fully in frame"/>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <Button size="sm" disabled={!cropWatched[asset.id] || !(cropNotes[asset.id] ?? "").trim() || reviewCrop.isPending} onClick={() => reviewCrop.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: asset.id, decision: "PASS", notes: cropNotes[asset.id] })}><CheckCircle2 size={14}/> Crop PASS</Button>
+                    <Button size="sm" variant="outline" disabled={!(cropNotes[asset.id] ?? "").trim() || reviewCrop.isPending} onClick={() => reviewCrop.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: asset.id, decision: "REJECT", notes: cropNotes[asset.id] })}><Ban size={14}/> Crop REJECT</Button>
+                    {!cropWatched[asset.id] && <small>PASS unlocks after the video has played to the end.</small>}
+                  </div>
+                </div>}
+              </div>;
+            })}</div>
           </CardContent></Card>
         </section>
       </div>
