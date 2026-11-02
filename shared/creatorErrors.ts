@@ -42,6 +42,13 @@ export function describeCreatorError(raw: string | null | undefined): CreatorErr
     case "CREATOR_SPEECH_REVIEW_NOT_GENERATED_SPEECH":
     case "CREATOR_SPEECH_REVIEW_ASSET_NOT_FOUND":
       return { code, kind: "blocked", title: "Not reviewable speech", detail: "Only speech generated in this project can be reviewed here." };
+    case "CREATOR_DERIVATIVE_MASTER_NOT_FINAL":
+      return { code, kind: "blocked", title: "Approve the 16:9 master first", detail: "A 9:16 mobile version is made only from a 16:9 master that has passed quality, Tamil and visual review." };
+    case "CREATOR_DERIVATIVE_SOURCE_DRIFT":
+      return { code, kind: "blocked", title: "The timeline changed after approval", detail: "The visuals or audio no longer match the approved 16:9 master, so a 9:16 version would not match it. Render and approve a new master first." };
+    case "CREATOR_DERIVATIVE_MASTER_NOT_FOUND":
+    case "CREATOR_DERIVATIVE_TIMELINE_MISMATCH":
+      return { code, kind: "blocked", title: "Not a 16:9 master of this timeline", detail: "Choose the approved 16:9 final master rendered from this timeline." };
     case "CREATOR_PROVIDER_CANCEL_UNSUPPORTED":
       return { code, kind: "blocked", title: "This provider cannot cancel", detail: "The provider offers no way to stop a render in progress, so cancellation was not attempted. The job may still complete and be charged." };
     case "CREATOR_WORKSPACE_OWNER_REQUIRED":

@@ -7,9 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Clapperboard, Film, Image, Plus, RefreshCw, ShieldCheck, Upload, Play, RotateCcw, Ban, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Clapperboard, Film, Image, Plus, RefreshCw, ShieldCheck, Upload, Play, RotateCcw, Ban, CheckCircle2, Smartphone, FileJson } from "lucide-react";
 import CreatorReferenceControls from "./CreatorReferenceControls";
 import CreatorSpendAdminPanel from "./CreatorSpendAdminPanel";
+import CreatorSpeechAvatarPanel from "./CreatorSpeechAvatarPanel";
 import { describeCreatorError } from "@shared/creatorErrors";
 
 type CueDraft = { startMs: number; endMs: number; text: string; language: "ta" | "en" };
@@ -52,6 +53,25 @@ function CreatorErrorNotice({ error }: { error: unknown }) {
       </CardContent>
     </Card>
   );
+}
+
+/** Masters and delivery derivatives are both RENDER assets; only masters can be reviewed and promoted. */
+function renderSource(provenanceJson: string | null | undefined): string | null {
+  try {
+    const value = JSON.parse(provenanceJson ?? "{}") as { source?: unknown };
+    return typeof value.source === "string" ? value.source : null;
+  } catch {
+    return null;
+  }
+}
+
+function downloadJson(filename: string, value: unknown) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function provenanceIds(sourceAssetIdsJson: string | null | undefined) {
@@ -121,8 +141,12 @@ export default function Creator() {
   const selectedScene = project.data?.scenes[project.data.scenes.length - 1];
   const nextShotIndex = project.data?.shots.filter(shot => shot.sceneId === selectedScene?.id).length ?? 0;
   const activeTimeline = project.data?.timelines?.[0];
-  const renderAssets = project.data?.assets?.filter(asset => asset.assetType === "RENDER") ?? [];
-  const latestRenderAsset = renderAssets[0];
+  const renderAssets = project.data?.assets?.filter(asset => asset.assetType === "RENDER" && renderSource(asset.provenanceJson) === "deterministic-creator-render") ?? [];
+  const latestRenderAsset = [...renderAssets].sort((a, b) => b.id - a.id)[0];
+  const finalMaster = [...renderAssets].filter(asset => asset.reviewDecision === "APPROVED").sort((a, b) => b.id - a.id)[0];
+  const [panelError, setPanelError] = useState<unknown>();
+  const [manifestError, setManifestError] = useState<unknown>();
+  const utils = trpc.useUtils();
   const approvedVisualAssets = project.data?.assets?.filter(asset => (asset.assetType === "IMAGE" || asset.assetType === "VIDEO") && asset.reviewDecision === "APPROVED") ?? [];
   const eligibleConditioningAssets = project.data?.assets?.filter(asset =>
     (asset.assetType === "IMAGE" || asset.assetType === "REFERENCE") &&
@@ -168,8 +192,20 @@ export default function Creator() {
   const tamilReview = trpc.creator.review.humanTamil.useMutation({ onSuccess: () => project.refetch() });
   const visualReview = trpc.creator.review.humanVisual.useMutation({ onSuccess: () => project.refetch() });
   const finalizeMaster = trpc.creator.review.finalizeMaster.useMutation({ onSuccess: () => project.refetch() });
+  const renderVertical = trpc.creator.timeline.renderVerticalDerivative.useMutation({ onSuccess: () => project.refetch() });
 
-  const operationError = [createProject.error, createScene.error, createShot.error, submitImage.error, submitVideo.error, retryGeneration.error, cancelGeneration.error, ingestAudio.error, saveCues.error, saveTimeline.error, renderCandidate.error, qualityReview.error, tamilReview.error, visualReview.error, finalizeMaster.error].find(Boolean);
+  async function downloadManifest(exportId: number) {
+    if (!workspaceId || !projectId) return;
+    try {
+      setManifestError(undefined);
+      const manifest = await utils.creator.timeline.exportManifest.fetch({ workspaceId, creatorProjectId: projectId, exportId });
+      downloadJson(`sakthiai-export-${exportId}-manifest.json`, manifest);
+    } catch (error) {
+      setManifestError(error);
+    }
+  }
+
+  const operationError = [createProject.error, createScene.error, createShot.error, submitImage.error, submitVideo.error, retryGeneration.error, cancelGeneration.error, ingestAudio.error, saveCues.error, saveTimeline.error, renderCandidate.error, qualityReview.error, tamilReview.error, visualReview.error, finalizeMaster.error, renderVertical.error, manifestError, panelError].find(Boolean);
 
   function submitImageForShot(shot: { id: number; title: string; prompt: string | null }) {
     if (!workspaceId || !projectId) return;
@@ -241,7 +277,7 @@ export default function Creator() {
       </header>
 
       {user?.role === "admin" && <CreatorSpendAdminPanel />}
-      {operationError && <CreatorErrorNotice error={operationError} />}
+      {operationError ? <CreatorErrorNotice error={operationError} /> : null}
 
       <div className="creator-layout">
         <aside style={{ display: "grid", gap: 16, alignContent: "start" }}>
@@ -269,6 +305,8 @@ export default function Creator() {
           })}</div></CardContent></Card>
 
           {workspaceId && projectId && <CreatorReferenceControls workspaceId={workspaceId} creatorProjectId={projectId} onChanged={() => project.refetch()} />}
+
+          {workspaceId && projectId && project.data && <CreatorSpeechAvatarPanel workspaceId={workspaceId} creatorProjectId={projectId} shots={project.data.shots} assets={project.data.assets} audioMasterAssetId={project.data.project.audioMasterAssetId ?? null} onChanged={() => { setPanelError(undefined); project.refetch(); }} onError={setPanelError} />}
 
           <Card><CardHeader><CardTitle>1. Approved audio master</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 10 }}>
             <Input type="file" accept="audio/wav,.wav" onChange={e => setAudioFile(e.target.files?.[0])}/>
@@ -301,7 +339,11 @@ export default function Creator() {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button disabled={!latestRenderAsset || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Tamil PASS</Button><Button variant="outline" disabled={!latestRenderAsset || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Tamil REJECT</Button><Button disabled={!latestRenderAsset || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Visual PASS</Button><Button variant="outline" disabled={!latestRenderAsset || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Visual REJECT</Button></div>
             <Button disabled={!latestRenderAsset || finalizeMaster.isPending} onClick={() => finalizeMaster.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id })}><ShieldCheck size={16}/> Promote approved 16:9 final master</Button>
             <div className="list">{project.data?.reviews?.map(review => <div key={review.id} className="list-row"><span>{review.reviewType} · {review.decision}</span><small>asset {review.assetId ?? "—"} · review {review.id}</small></div>)}</div>
-            <div className="list">{project.data?.exports?.map(item => <div key={item.id} className="list-row"><span>Export #{item.id} · {item.status}</span><small>{item.width}×{item.height} · {item.renderer} · asset {item.assetId ?? "pending"}</small></div>)}</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <Button variant="outline" disabled={!finalMaster || !activeTimeline || renderVertical.isPending} onClick={() => renderVertical.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, finalMasterAssetId: finalMaster!.id })}><Smartphone size={16}/> Render 9:16 mobile version</Button>
+              <small>{finalMaster ? `From final master asset ${finalMaster.id}. Centre-cropped to 1080×1920: check nothing important (the Vel, faces) is cut off.` : "Available once a 16:9 final master is approved."}</small>
+            </div>
+            <div className="list">{project.data?.exports?.map(item => <div key={item.id} className="list-row"><div><span>Export #{item.id} · {item.status} · {item.height > item.width ? "9:16 mobile" : "16:9"}</span><small>{item.width}×{item.height} · {item.renderer} · asset {item.assetId ?? "pending"}</small></div>{item.status === "SUCCEEDED" && <Button size="sm" variant="ghost" onClick={() => downloadManifest(item.id)}><FileJson size={14}/> Provenance manifest</Button>}</div>)}</div>
           </CardContent></Card>
         </section>
       </div>

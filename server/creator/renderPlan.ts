@@ -44,6 +44,8 @@ export type DeterministicRenderPlanInput = {
   outputPath: string;
   /** Required whenever any caption contains Tamil script; the renderer never silently falls back to host fonts. */
   captionFonts?: CaptionFonts;
+  /** pad (default): letterbox, nothing cropped. cover: fill the frame, centre-crop the overflow (vertical delivery). */
+  fit?: "pad" | "cover";
 };
 
 export type DeterministicRenderPlan = {
@@ -141,6 +143,8 @@ export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput
     throw new Error("CREATOR_RENDER_TAMIL_FONT_REQUIRED");
   }
   const subtitleStyle = subtitleFilterStyle(input.captionFonts);
+  const fit = input.fit ?? "pad";
+  if (fit !== "pad" && fit !== "cover") throw new Error("CREATOR_RENDER_FIT_INVALID");
   const args: string[] = ["-hide_banner", "-nostdin", "-y"];
   const filters: string[] = [];
 
@@ -148,9 +152,11 @@ export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput
     const durationSeconds = ((item.endMs - item.startMs) / 1000).toFixed(3);
     if (item.assetType === "IMAGE") args.push("-loop", "1", "-t", durationSeconds, "-i", item.sourceUrl);
     else args.push("-t", durationSeconds, "-i", item.sourceUrl);
+    const frame = fit === "cover"
+      ? `scale=${input.width}:${input.height}:force_original_aspect_ratio=increase,crop=${input.width}:${input.height}`
+      : `scale=${input.width}:${input.height}:force_original_aspect_ratio=decrease,pad=${input.width}:${input.height}:(ow-iw)/2:(oh-ih)/2`;
     filters.push(
-      `[${index}:v]scale=${input.width}:${input.height}:force_original_aspect_ratio=decrease,` +
-      `pad=${input.width}:${input.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${input.fps},` +
+      `[${index}:v]${frame},setsar=1,fps=${input.fps},` +
       `trim=duration=${durationSeconds},setpts=PTS-STARTPTS[v${index}]`,
     );
   });

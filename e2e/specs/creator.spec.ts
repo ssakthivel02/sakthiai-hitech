@@ -45,3 +45,47 @@ test.describe("Creator paid generation is off by default", () => {
     expect(generations.data?.generations ?? []).toHaveLength(0); // no generation row, no provider job
   });
 });
+
+test.describe("Creator speech, consent and avatar panel", () => {
+  test("consent can be recorded and revoked from the UI; speech is refused while paid generation is off; no horizontal overflow", async ({ page }) => {
+    await login(page, newIdentity("creator-speech"));
+    const ws = await myWorkspaceId(page.request);
+    const project = await trpcMutate<{ id: number }>(page.request, "creator.workspace.createProject", { workspaceId: ws, name: "E2E Speech" });
+    const scene = await trpcMutate<{ id: number }>(page.request, "creator.workspace.createScene", { workspaceId: ws, creatorProjectId: project.data!.id, sceneIndex: 0, title: "Song" });
+    await trpcMutate(page.request, "creator.workspace.createShot", { workspaceId: ws, creatorProjectId: project.data!.id, sceneId: scene.data!.id, shotIndex: 0, title: "Verse one", prompt: "Temple" });
+
+    await page.goto("/creator");
+    await page.getByRole("button", { name: /E2E Speech/ }).click();
+    const panel = page.getByTestId("creator-speech-avatar");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByText("No generated speech is waiting for review.")).toBeVisible();
+    await expect(panel.getByText(/No approved, locked audio yet/)).toBeVisible();
+
+    // Consent: the record button stays disabled until the owner confirms and gives a valid reference.
+    const record = panel.getByRole("button", { name: "Record consent" });
+    await panel.getByLabel("HeyGen avatar ID").fill("avatar_e2e_01");
+    await panel.getByLabel("Consent evidence reference").fill("release-e2e-0001");
+    await expect(record).toBeDisabled();
+    await panel.getByLabel(/I hold signed consent/).check();
+    await expect(record).toBeEnabled();
+    await record.click();
+    await expect(panel.getByText(/avatar_e2e_01 · avatar_video/)).toBeVisible();
+    await expect(panel.getByText(/· Active ·/)).toBeVisible();
+    await expect(panel.getByRole("combobox", { name: "Avatar (active consent)" }).locator("option", { hasText: "avatar_e2e_01" })).toHaveCount(1);
+    await panel.getByRole("button", { name: "Revoke" }).click();
+    await expect(panel.getByText(/· Revoked/)).toBeVisible();
+    await expect(panel.getByRole("combobox", { name: "Avatar (active consent)" }).locator("option", { hasText: "avatar_e2e_01" })).toHaveCount(0);
+
+    // Speech: refused server-side with the paid switch off; nothing generated, explained to the user.
+    await panel.getByRole("combobox", { name: "Shot" }).first().selectOption({ index: 1 });
+    await panel.getByPlaceholder("முருகா வேல் வேல்…").fill("முருகா வேல் வேல்");
+    await panel.getByRole("button", { name: "Generate speech" }).click();
+    const notice = page.getByTestId("creator-error");
+    await expect(notice).toHaveAttribute("data-error-code", "CREATOR_PAID_GENERATION_DISABLED");
+    const after = await trpcQuery<{ generations: unknown[] }>(page.request, "creator.workspace.getProject", { workspaceId: ws, creatorProjectId: project.data!.id });
+    expect(after.data?.generations ?? []).toHaveLength(0);
+
+    const layout = await page.evaluate(() => ({ inner: window.innerWidth, scroll: document.documentElement.scrollWidth }));
+    expect(layout.scroll, JSON.stringify(layout)).toBeLessThanOrEqual(layout.inner + 1);
+  });
+});

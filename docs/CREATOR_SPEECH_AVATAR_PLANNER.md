@@ -50,7 +50,15 @@ The ALTER runs first, so an interrupted apply leaves at worst the consent table 
 
 `CREATOR_TTS_SARVAM_API_KEY`, `CREATOR_AVATAR_HEYGEN_API_KEY`, `CREATOR_PAID_SPEECH_USERS`, `CREATOR_PAID_AVATAR_USERS`, `CREATOR_AVATAR_DOWNLOAD_HOSTS` (default `.heygen.ai,.heygen.com`), `CREATOR_CAPTION_FONTS_DIR` (default `server/creator/fonts`). Prices go in the existing `CREATOR_MODEL_COSTS`, e.g. `{"bulbul:v3":{"perThousandChars":…},"heygen-v2":{"perSecond":…}}`; an unpriced model is refused.
 
+## UI, 9:16 delivery and export manifest
+
+- **Creator page panel** (`client/src/pages/CreatorSpeechAvatarPanel.tsx`): speech generation (shot, ta-IN/en-IN, optional voice, exact text), listen-and-review (PASS enabled only after the clip has played to the end, notes required), consent record/revoke with an explicit owner confirmation, avatar submission from active consents and approved/locked audio only (provider test mode unless "Live render" is ticked). Same-intent requests reuse the idempotency key. All refusals use `describeCreatorError`. Browser-tested (Playwright, desktop 1280 and Pixel 5): consent record → active → revoke; speech refused while paid generation is off with no generation row; no horizontal overflow.
+- **9:16 mobile delivery** (`creator.timeline.renderVerticalDerivative`): 1080×1920, centre-crop (`fit: "cover"`), only from an APPROVED 16:9 final master of the same timeline, refused on any change to visuals or audio master since approval (`CREATOR_DERIVATIVE_SOURCE_DRIFT`). Provenance source `deterministic-creator-derivative`, so it can never be reviewed or promoted as a master. A human should check the crop (Vel, faces).
+- **Export provenance manifest** (`creator.timeline.exportManifest`, `server/creator/exportManifest.ts`): export parameters, output checksum and kind (MASTER / DELIVERY_DERIVATIVE), audio master checksum, each visual's checksum and origin (provider, model, generation id, provider job id, avatar consent id, test mode), caption count/languages/hash, reviews and gate outcomes. Never contains storage keys, signed URLs or caption text. Workspace-scoped; download from each successful export.
+
+Evidence: real ffmpeg 9:16 render with Tamil captions in the pinned font; real-SQL derivative and manifest through the real export service (ffmpeg and storage faked); unit tests for fit, drift and manifest redaction.
+
 ## Next (engineering, no approval needed to build)
 
-1. Creator UI for speech/avatar submission, consent records and the new failure explanations.
-2. MySQL 8.0/8.4 CI for 0016 (runs on the draft PR).
+1. Human visual check/approval step for 9:16 derivatives (today they stay PENDING and are not promotable).
+2. Forced alignment for caption timing (today proportional, labelled `PROPORTIONAL_UNVERIFIED`).

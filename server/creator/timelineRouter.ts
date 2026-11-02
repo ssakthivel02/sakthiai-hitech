@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { executeCreatorTimelineExport } from "./renderService";
+import { getCreatorExportManifest } from "./exportManifest";
 import { replaceApprovedTimelineItems } from "./timeline";
 
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -66,6 +67,39 @@ export const creatorTimelineRouter = router({
           publishApproved: false as const,
           nextGate: "VIDEO_QUALITY_AND_HUMAN_REVIEW" as const,
         };
+      } catch (error) {
+        mapTimelineError(error);
+      }
+    }),
+
+  /** 9:16 (1080×1920, centre-crop) delivery derivative of an APPROVED 16:9 final master; refuses on any source drift. */
+  renderVerticalDerivative: protectedProcedure
+    .input(workspaceInput.extend({
+      creatorProjectId: z.number().int().positive(),
+      timelineId: z.number().int().positive(),
+      finalMasterAssetId: z.number().int().positive(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      try {
+        const result = await executeCreatorTimelineExport({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          timelineId: input.timelineId,
+          verticalDerivativeOf: input.finalMasterAssetId,
+        });
+        return { ...result, aspectRatio: "9:16" as const, derivative: true as const, finalMaster: false as const, publishApproved: false as const, humanCropCheckRequired: true as const };
+      } catch (error) {
+        mapTimelineError(error);
+      }
+    }),
+
+  exportManifest: protectedProcedure
+    .input(workspaceInput.extend({ creatorProjectId: z.number().int().positive(), exportId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      try {
+        return await getCreatorExportManifest(input);
       } catch (error) {
         mapTimelineError(error);
       }
