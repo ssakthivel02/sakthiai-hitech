@@ -6,6 +6,8 @@ const captions = [
   { startMs: 1500, endMs: 3000, text: "என் முருகா...", language: "ta" as const, locked: true },
 ];
 
+const fonts = { dir: "/srv/app/server/creator/fonts", family: "Noto Sans Tamil" };
+
 const visuals = [
   { assetId: 11, shotId: 101, assetType: "IMAGE" as const, sourceUrl: "https://signed.example/11", startMs: 0, endMs: 1500, track: 1, sortOrder: 0, approved: true },
   { assetId: 12, shotId: 102, assetType: "VIDEO" as const, sourceUrl: "https://signed.example/12", startMs: 1500, endMs: 3000, track: 1, sortOrder: 1, approved: true },
@@ -29,6 +31,7 @@ describe("Creator deterministic render plan", () => {
       captions,
       subtitlePath: "/tmp/creator-ta.srt",
       outputPath: "/tmp/master.mp4",
+      captionFonts: fonts,
     });
 
     expect(plan.visualAssetIds).toEqual([11, 12]);
@@ -39,6 +42,36 @@ describe("Creator deterministic render plan", () => {
     expect(plan.ffmpegArgs.at(-1)).toBe("/tmp/master.mp4");
     expect(plan.ffmpegArgs.join(" ")).toContain("concat=n=2:v=1:a=0");
     expect(plan.ffmpegArgs.join(" ")).toContain("subtitles='/tmp/creator-ta.srt':charenc=UTF-8");
+    expect(plan.ffmpegArgs.join(" ")).toContain(":fontsdir='/srv/app/server/creator/fonts':force_style='FontName=Noto Sans Tamil'");
+  });
+
+  const base = {
+    width: 1920, height: 1080, fps: 24, audioDurationMs: 3000, audioSourceUrl: "audio",
+    visualItems: visuals, subtitlePath: "captions.srt", outputPath: "master.mp4",
+  };
+
+  it("refuses to render Tamil captions without a pinned Tamil font (no silent host-font fallback)", () => {
+    expect(() => buildDeterministicRenderPlan({ ...base, captions })).toThrow("CREATOR_RENDER_TAMIL_FONT_REQUIRED");
+  });
+
+  it("does not require a Tamil font for English-only captions and adds no font options", () => {
+    const plan = buildDeterministicRenderPlan({
+      ...base,
+      captions: [{ startMs: 0, endMs: 1500, text: "Hello", language: "en", locked: true }],
+    });
+    expect(plan.ffmpegArgs.join(" ")).not.toContain("fontsdir");
+  });
+
+  it("rejects a font family that could inject filter options", () => {
+    expect(() => buildDeterministicRenderPlan({ ...base, captions, captionFonts: { dir: "/f", family: "X,Fontsize=1:y" } }))
+      .toThrow("CREATOR_RENDER_CAPTION_FONT_FAMILY_INVALID");
+    expect(() => buildDeterministicRenderPlan({ ...base, captions, captionFonts: { dir: " ", family: "Noto Sans Tamil" } }))
+      .toThrow("CREATOR_RENDER_CAPTION_FONT_DIR_REQUIRED");
+  });
+
+  it("escapes the fonts directory like the subtitle path", () => {
+    const plan = buildDeterministicRenderPlan({ ...base, captions, captionFonts: { dir: "C:\\fonts\\o'neil", family: "Noto Sans Tamil" } });
+    expect(plan.ffmpegArgs.join(" ")).toContain("fontsdir='C\\:/fonts/o\\'neil'");
   });
 
   it("rejects gaps because silent black-frame synthesis is not deterministic project intent", () => {

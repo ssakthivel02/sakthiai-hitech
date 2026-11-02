@@ -1,0 +1,56 @@
+# Creator: Tamil captions, speech/avatar generation, Murugan scene planner
+
+Base: PR #29 candidate `1bf5de3f6820850d9365f0f4d440d11343a6d9dc`. Adds forward-only migration **0016**. No provider call, no spend, no deployment.
+Creator remains OUT of the R1/V1 beta scope; paid generation stays OFF (`CREATOR_PAID_GENERATION_ENABLED` unset).
+
+## What is wired
+
+Speech (`SPEECH`) and avatar video (`AVATAR_VIDEO`) are two more kinds on the **existing** Creator seam (`CreatorMediaProvider` → orchestrator → persistence → artifact persistence). They inherit, unchanged: durable generation rows, per-workspace idempotency, the spend hook (price → reserve → commit/release/unknown) with the six daily ledger limits, ambiguous-submission handling (`SUBMISSION_UNKNOWN`, never resubmitted), retry, and checksummed artifact persistence. No second provider or spend framework exists.
+
+| Piece | File |
+|---|---|
+| Kinds, requests | `server/creator/types.ts` |
+| Pricing (`perThousandChars` for speech, `perSecond` × rounded-up audio seconds for avatar), per-kind allowlists `CREATOR_PAID_SPEECH_USERS` / `CREATOR_PAID_AVATAR_USERS` | `server/creator/paidPolicy.ts` |
+| Providers `sarvam-tts`, `heygen-avatar` | `server/creator/speech/creatorProviders.ts` (registered in `providerRegistry.ts`) |
+| Router `creator.speechAvatar.{submitSpeech, reviewSpeech, submitAvatarVideo, recordConsent, revokeConsent, listConsents}` | `server/creator/speechAvatarRouter.ts` |
+| Consent records | `server/creator/speech/consentStore.ts`, table `creatorConsents` (0016) |
+| Approved-audio resolution for avatar | `server/creator/speech/audioAsset.ts` |
+| Human speech review (PASS = approve + lock exact bytes; REJECT final; one per asset, race-safe) | `server/creator/speech/speechReview.ts`, review type `HUMAN_SPEECH` (0016) |
+| User-facing explanations of every new refusal | `shared/creatorErrors.ts` |
+
+Gate order (same as image/video): switch → workspace owner → kind-specific allowlist → spend policy → runtime readiness → consent (avatar) → approved audio (avatar) → orchestrator.
+
+Design decisions:
+- **TTS is synchronous**: `submit` synthesises once and writes the WAV to a random, provider-private staging key (`creator/staging/speech/<uuid>.wav`) that becomes the provider job id. Billed audio survives a crash between submit and persistence and is never synthesised twice for one generation. `poll`/`fetchArtifact` only accept that key pattern.
+- **Avatar audio is server-resolved**: only an APPROVED + immutable WAV asset of the same workspace and project: the locked audio master, or generated speech after a workspace owner's `HUMAN_SPEECH` PASS. Generated speech is persisted as `AUDIO` / `PENDING` and is never auto-approved.
+- **Consent before anything**: an unconsented, revoked, expired, wrong-purpose or wrong-subject avatar never causes a storage read, a ledger hold or a provider call. Consent stores an evidence *reference*, not the evidence or personal data.
+- **Cancellation is honest**: HeyGen documents no in-flight cancel; the provider has no `cancel`, so the existing orchestrator refuses with `CREATOR_PROVIDER_CANCEL_UNSUPPORTED` (explained to the user: the job may still complete and be charged).
+- **Provider test mode by default** for avatar (`live: false` → watermarked, unbilled). The ledger still reserves the priced amount (conservative).
+
+## Migration 0016 (forward-only, additive)
+
+1. `ALTER TABLE creatorGenerations MODIFY COLUMN kind enum(…,'SPEECH','AVATAR_VIDEO')` — members appended at the end; existing values and storage size unchanged.
+2. `ALTER TABLE creatorReviews MODIFY COLUMN reviewType enum(…,'HUMAN_SPEECH')` — appended, existing values unchanged.
+3. `CREATE TABLE creatorConsents` + one index.
+
+The ALTER runs first, so an interrupted apply leaves at worst the consent table missing, which `/readyz` reports (`schema_mismatch`). The preview migration guard classifies 0016 (MODIFY COLUMN = no new object). Applying it to any shared database needs the existing owner-gated inspect → migrate sequence.
+
+## Evidence classification
+
+| Capability | State | Evidence | Not proven |
+|---|---|---|---|
+| Tamil caption font pinned in the FFmpeg render | IMPLEMENTED + RUNTIME_VERIFIED (local ffmpeg/libass) | defect reproduced, fix verified visually and by libass font-selection log; mutation-checked | production host ffmpeg build |
+| Speech/avatar wiring (router → orchestrator → persistence) | IMPLEMENTED; unit + real-SQL tested | 10 router tests (real tRPC + orchestrator, fakes for DB/provider/ledger); real-SQL SPEECH generation through the real orchestrator and persistence (provider HTTP faked) → `AUDIO` asset, replay never re-bills | **MariaDB 10.11 only, not MySQL 8 / Aiven**; no live provider |
+| Migration 0016 | IMPLEMENTED; real-SQL tested on MariaDB 10.11 | upgrade from 0015 preserves existing kinds, new kinds insertable, unknown kind refused (strict mode); guard full sequence and readiness through 0016 pass | MySQL 8.0/8.4 CI not yet run (needs push) |
+| Consent store, approved-audio resolution | IMPLEMENTED; unit + real-SQL tested | workspace/purpose/subject binding, revoke permanence, expiry, scope checks | — |
+| Sarvam / HeyGen adapters | CONTRACT_TESTED (documented shapes); NOT runtime-verified | — | no live call; Tamil voice quality unjudged; HeyGen v2 vs v3 to confirm at first approved call |
+| Murugan planner, caption builder, audio sync, zero-spend render | as in the first patch (VGEN-validated plans incl. 84 scenes; render duration = master ±80 ms; synthetic audio, placeholder visuals) | | not a Murugan media acceptance |
+
+## Environment (all unset by default; values never committed)
+
+`CREATOR_TTS_SARVAM_API_KEY`, `CREATOR_AVATAR_HEYGEN_API_KEY`, `CREATOR_PAID_SPEECH_USERS`, `CREATOR_PAID_AVATAR_USERS`, `CREATOR_AVATAR_DOWNLOAD_HOSTS` (default `.heygen.ai,.heygen.com`), `CREATOR_CAPTION_FONTS_DIR` (default `server/creator/fonts`). Prices go in the existing `CREATOR_MODEL_COSTS`, e.g. `{"bulbul:v3":{"perThousandChars":…},"heygen-v2":{"perSecond":…}}`; an unpriced model is refused.
+
+## Next (engineering, no approval needed to build)
+
+1. Creator UI for speech/avatar submission, consent records and the new failure explanations.
+2. MySQL 8.0/8.4 CI for 0016 (runs on the draft PR).

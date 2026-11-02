@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
-import { buildDeterministicRenderPlan, type DeterministicRenderPlanInput } from "./renderPlan";
+import { buildDeterministicRenderPlan, captionsNeedTamilFont, type CaptionFonts, type DeterministicRenderPlanInput } from "./renderPlan";
 import { storagePut } from "../storage";
 
 export type FfmpegExecution = {
@@ -18,7 +19,24 @@ export type RenderWorkerDependencies = {
   cleanupTempDir?: (path: string) => Promise<void>;
   readOutput?: (path: string) => Promise<Buffer>;
   writeSubtitle?: (path: string, content: string) => Promise<void>;
+  captionFonts?: CaptionFonts;
 };
+
+export const CREATOR_CAPTION_FONT_FILE = "NotoSansTamil-Regular.ttf";
+export const CREATOR_CAPTION_FONT_FAMILY = "Noto Sans Tamil";
+
+/**
+ * The vendored OFL Tamil font (server/creator/fonts). Override the directory with CREATOR_CAPTION_FONTS_DIR; the
+ * directory must contain CREATOR_CAPTION_FONT_FILE. A missing font is an error, never a silent host-font fallback.
+ */
+export function resolveCreatorCaptionFonts(
+  env: Record<string, string | undefined> = process.env,
+  fileExists: (path: string) => boolean = existsSync,
+): CaptionFonts {
+  const dir = resolve(env.CREATOR_CAPTION_FONTS_DIR?.trim() || join(process.cwd(), "server", "creator", "fonts"));
+  if (!fileExists(join(dir, CREATOR_CAPTION_FONT_FILE))) throw new Error("CREATOR_RENDER_TAMIL_FONT_MISSING");
+  return { dir, family: CREATOR_CAPTION_FONT_FAMILY };
+}
 
 const DEFAULT_RENDER_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_RENDER_BYTES = 1024 * 1024 * 1024;
@@ -76,7 +94,9 @@ export async function runCreatorRenderWorker(input: Omit<DeterministicRenderPlan
   const outputPath = join(tempDir, "master-16x9.mp4");
 
   try {
-    const plan = buildDeterministicRenderPlan({ ...input, subtitlePath, outputPath });
+    const captionFonts = input.captionFonts ?? deps.captionFonts
+      ?? (captionsNeedTamilFont(input.captions) ? resolveCreatorCaptionFonts() : undefined);
+    const plan = buildDeterministicRenderPlan({ ...input, subtitlePath, outputPath, captionFonts });
     await writeSubtitle(subtitlePath, plan.srt);
 
     const execution = await execute(plan.ffmpegArgs);

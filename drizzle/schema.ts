@@ -220,7 +220,7 @@ export const creatorGenerations = mysqlTable("creatorGenerations", {
   sceneId: int("sceneId"),
   shotId: int("shotId"),
   idempotencyKey: varchar("idempotencyKey", { length: 64 }),
-  kind: mysqlEnum("kind", ["IMAGE", "IMAGE_EDIT", "VIDEO", "VIDEO_EXTENSION"]).notNull(),
+  kind: mysqlEnum("kind", ["IMAGE", "IMAGE_EDIT", "VIDEO", "VIDEO_EXTENSION", "SPEECH", "AVATAR_VIDEO"]).notNull(),
   provider: varchar("provider", { length: 80 }).notNull(),
   model: varchar("model", { length: 160 }).notNull(),
   parametersJson: text("parametersJson").notNull(),
@@ -238,6 +238,26 @@ export const creatorGenerations = mysqlTable("creatorGenerations", {
   completedAt: timestamp("completedAt"),
 }, table => [
   uniqueIndex("creatorGenerations_workspaceId_idempotencyKey_unique").on(table.workspaceId, table.idempotencyKey),
+]);
+
+/**
+ * Likeness / custom-voice consent (migration 0016). Tenant-scoped, revocable, time-bounded. Holds a reference to the
+ * evidence (e.g. a signed release id), never the evidence itself or personal data beyond the provider subject id.
+ */
+export const creatorConsents = mysqlTable("creatorConsents", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  purpose: mysqlEnum("purpose", ["avatar_video", "custom_voice"]).notNull(),
+  provider: varchar("provider", { length: 80 }).notNull(),
+  providerSubjectId: varchar("providerSubjectId", { length: 128 }).notNull(),
+  evidenceReference: varchar("evidenceReference", { length: 500 }).notNull(),
+  grantedByUserId: int("grantedByUserId").notNull(),
+  validUntil: timestamp("validUntil"),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  index("creatorConsents_workspace_subject_idx").on(table.workspaceId, table.provider, table.providerSubjectId, table.purpose),
 ]);
 
 export const creatorProviderJobs = mysqlTable("creatorProviderJobs", {
@@ -306,7 +326,7 @@ export const creatorReviews = mysqlTable("creatorReviews", {
   generationId: int("generationId"),
   shotId: int("shotId"),
   assetId: int("assetId"),
-  reviewType: mysqlEnum("reviewType", ["QUALITY", "HUMAN_TAMIL", "HUMAN_VISUAL"]).notNull(),
+  reviewType: mysqlEnum("reviewType", ["QUALITY", "HUMAN_TAMIL", "HUMAN_VISUAL", "HUMAN_SPEECH"]).notNull(),
   decision: mysqlEnum("decision", ["PENDING", "PASS", "ASSISTED_HUMAN_REVIEW", "REGENERATE", "REJECT"]).default("PENDING").notNull(),
   reviewerUserId: int("reviewerUserId"),
   scoresJson: text("scoresJson"),

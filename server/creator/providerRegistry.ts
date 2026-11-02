@@ -1,8 +1,9 @@
 import { googleImageProvider } from "./googleImage";
 import { googleVeoProvider } from "./googleVeoAdapter";
+import { heygenAvatarProvider, sarvamSpeechProvider } from "./speech/creatorProviders";
 import type { CreatorMediaProvider, CreatorMediaRequest } from "./types";
 
-const PROVIDERS: CreatorMediaProvider[] = [googleImageProvider, googleVeoProvider];
+const PROVIDERS: CreatorMediaProvider[] = [googleImageProvider, googleVeoProvider, sarvamSpeechProvider, heygenAvatarProvider];
 
 export function listCreatorProviderStatuses() {
   return PROVIDERS.map(provider => provider.status());

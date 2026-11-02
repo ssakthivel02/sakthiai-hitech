@@ -48,6 +48,8 @@ const AMBIGUOUS_SUBMISSION_FAILURES = new Set<CreatorFailureClass>([
 ]);
 
 function sourceAssetIds(request: CreatorMediaRequest): number[] {
+  if (request.kind === "SPEECH") return [];
+  if (request.kind === "AVATAR_VIDEO") return [request.audioAssetId];
   const ids = [
     ...(request.references ?? []).map(reference => reference.assetId),
     request.kind === "VIDEO" || request.kind === "VIDEO_EXTENSION" ? request.firstFrame?.assetId : undefined,
@@ -68,6 +70,21 @@ export function creatorRequestProvenance(request: CreatorMediaRequest) {
   };
   if (request.kind === "IMAGE" || request.kind === "IMAGE_EDIT") {
     return { ...common, imageSize: request.imageSize ?? null };
+  }
+  if (request.kind === "SPEECH") {
+    // The approved text is the provenance of a speech asset; nothing else about the voice is implicit.
+    return { ...common, languageCode: request.languageCode ?? "ta-IN", speaker: request.speaker ?? null, pace: request.pace ?? null, characters: request.prompt.length };
+  }
+  if (request.kind === "AVATAR_VIDEO") {
+    // Never the audio bytes: only the server-resolved asset and consent identifiers.
+    return {
+      ...common,
+      avatarId: request.avatarId,
+      consentId: request.consentId,
+      audioAssetId: request.audioAssetId,
+      expectedSeconds: request.expectedSeconds,
+      providerTestMode: request.live !== true,
+    };
   }
   return {
     ...common,
