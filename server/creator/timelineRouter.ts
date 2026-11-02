@@ -5,6 +5,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { executeCreatorTimelineExport } from "./renderService";
 import { getCreatorExportManifest } from "./exportManifest";
 import { reviewVerticalDerivative } from "./derivativeReview";
+import { requireCreatorWorkspaceOwner } from "./paidGeneration";
 import { replaceApprovedTimelineItems } from "./timeline";
 
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -95,7 +96,11 @@ export const creatorTimelineRouter = router({
       }
     }),
 
-  /** Human check of a 9:16 derivative's crop. PASS approves it for delivery; it never becomes a master. */
+  /**
+   * Human check of a 9:16 derivative's crop. PASS approves it for delivery; it never becomes a master.
+   * Owner-only, like speech approval: the decision is final and changes what may be delivered, so membership is not
+   * enough. Checked before any database read or write.
+   */
   reviewVerticalDerivative: protectedProcedure
     .input(workspaceInput.extend({
       creatorProjectId: z.number().int().positive(),
@@ -104,7 +109,7 @@ export const creatorTimelineRouter = router({
       notes: z.string().trim().min(1).max(5000),
     }))
     .mutation(async ({ ctx, input }) => {
-      await requireWorkspace(ctx.user.id, input.workspaceId);
+      await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
       try {
         return await reviewVerticalDerivative({ ...input, reviewerUserId: ctx.user.id });
       } catch (error) {

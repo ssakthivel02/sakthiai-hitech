@@ -2,12 +2,27 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
 
-const holder = vi.hoisted(() => ({ db: undefined as unknown }));
-vi.mock("../db", async importOriginal => ({ ...(await importOriginal<typeof import("../db")>()), getDb: async () => holder.db }));
+const holder = vi.hoisted(() => ({ db: undefined as unknown, roles: new Map<number, "owner" | "member">() }));
+vi.mock("../db", async importOriginal => ({
+  ...(await importOriginal<typeof import("../db")>()),
+  getDb: async () => holder.db,
+  getWorkspaceForUser: async (userId: number, workspaceId: number) => (workspaceId === 7 && holder.roles.has(userId) ? { id: 7 } : undefined),
+  getWorkspaceRole: async (userId: number, workspaceId: number) => (workspaceId === 7 ? holder.roles.get(userId) : undefined),
+}));
 
 import { executeCreatorTimelineExport } from "./renderService";
 import { getCreatorExportManifest } from "./exportManifest";
 import { reviewVerticalDerivative } from "./derivativeReview";
+import { appRouter } from "../routers";
+import type { TrpcContext } from "../_core/context";
+
+function caller(userId: number) {
+  const now = new Date();
+  return appRouter.createCaller({
+    req: {} as TrpcContext["req"], res: { headersSent: false, setHeader: () => undefined } as unknown as TrpcContext["res"], requestId: "crop-review",
+    user: { id: userId, openId: `u${userId}`, name: "u", email: "u@example.invalid", loginMethod: "google", role: "user", createdAt: now, updatedAt: now, lastSignedIn: now },
+  });
+}
 
 /** Real SQL: 9:16 derivative export through the real export service (ffmpeg + storage faked) and its manifest. */
 describe.skipIf(skipMysqlSuite())("9:16 delivery derivative and export manifest (real SQL)", { timeout: 60_000 }, () => {
@@ -88,6 +103,24 @@ describe.skipIf(skipMysqlSuite())("9:16 delivery derivative and export manifest 
     expect(after.output).toMatchObject({ deliveryApproved: winner.decision === "PASS", finalMaster: false });
     const masterRow = await one<{ reviewDecision: string }>(sql`SELECT reviewDecision FROM creatorAssets WHERE id = ${ids.master}`);
     expect(masterRow.reviewDecision).toBe("APPROVED"); // the master is untouched
+  });
+
+  it("through the real router, a workspace member who is not the owner cannot PASS or REJECT a crop; nothing changes", async () => {
+    holder.roles.set(501, "owner");
+    holder.roles.set(502, "member");
+    const derivative = await executeCreatorTimelineExport({ workspaceId: 7, creatorProjectId: ids.project, timelineId: ids.timeline, verticalDerivativeOf: ids.master }, deps);
+    const input = (decision: "PASS" | "REJECT") => ({ workspaceId: 7, creatorProjectId: ids.project, assetId: derivative.assetId, decision, notes: "crop ok" });
+    for (const decision of ["PASS", "REJECT"] as const) {
+      await expect(caller(502).creator.timeline.reviewVerticalDerivative(input(decision))).rejects.toMatchObject({ code: "FORBIDDEN", message: "CREATOR_WORKSPACE_OWNER_REQUIRED" });
+    }
+    await expect(caller(999).creator.timeline.reviewVerticalDerivative(input("PASS"))).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const unchanged = await one<{ reviewDecision: string }>(sql`SELECT reviewDecision FROM creatorAssets WHERE id = ${derivative.assetId}`);
+    expect(unchanged.reviewDecision).toBe("PENDING");
+    const none = await one<{ n: number }>(sql`SELECT COUNT(*) AS n FROM creatorReviews WHERE assetId = ${derivative.assetId}`);
+    expect(Number(none.n)).toBe(0);
+    await expect(caller(501).creator.timeline.reviewVerticalDerivative(input("PASS"))).resolves.toMatchObject({ decision: "PASS", deliveryApproved: true });
+    const after = await one<{ reviewDecision: string }>(sql`SELECT reviewDecision FROM creatorAssets WHERE id = ${derivative.assetId}`);
+    expect(after.reviewDecision).toBe("APPROVED");
   });
 
   it("refuses a derivative once the timeline no longer matches the approved master", async () => {
