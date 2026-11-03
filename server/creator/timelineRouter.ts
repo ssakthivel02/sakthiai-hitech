@@ -3,6 +3,9 @@ import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { executeCreatorTimelineExport } from "./renderService";
+import { getCreatorExportManifest } from "./exportManifest";
+import { reviewVerticalDerivative } from "./derivativeReview";
+import { requireCreatorWorkspaceOwner } from "./paidGeneration";
 import { replaceApprovedTimelineItems } from "./timeline";
 
 const workspaceInput = z.object({ workspaceId: z.number().int().positive() });
@@ -66,6 +69,60 @@ export const creatorTimelineRouter = router({
           publishApproved: false as const,
           nextGate: "VIDEO_QUALITY_AND_HUMAN_REVIEW" as const,
         };
+      } catch (error) {
+        mapTimelineError(error);
+      }
+    }),
+
+  /** 9:16 (1080×1920, centre-crop) delivery derivative of an APPROVED 16:9 final master; refuses on any source drift. */
+  renderVerticalDerivative: protectedProcedure
+    .input(workspaceInput.extend({
+      creatorProjectId: z.number().int().positive(),
+      timelineId: z.number().int().positive(),
+      finalMasterAssetId: z.number().int().positive(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      try {
+        const result = await executeCreatorTimelineExport({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          timelineId: input.timelineId,
+          verticalDerivativeOf: input.finalMasterAssetId,
+        });
+        return { ...result, aspectRatio: "9:16" as const, derivative: true as const, finalMaster: false as const, publishApproved: false as const, humanCropCheckRequired: true as const };
+      } catch (error) {
+        mapTimelineError(error);
+      }
+    }),
+
+  /**
+   * Human check of a 9:16 derivative's crop. PASS approves it for delivery; it never becomes a master.
+   * Owner-only, like speech approval: the decision is final and changes what may be delivered, so membership is not
+   * enough. Checked before any database read or write.
+   */
+  reviewVerticalDerivative: protectedProcedure
+    .input(workspaceInput.extend({
+      creatorProjectId: z.number().int().positive(),
+      assetId: z.number().int().positive(),
+      decision: z.enum(["PASS", "REJECT"]),
+      notes: z.string().trim().min(1).max(5000),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
+      try {
+        return await reviewVerticalDerivative({ ...input, reviewerUserId: ctx.user.id });
+      } catch (error) {
+        mapTimelineError(error);
+      }
+    }),
+
+  exportManifest: protectedProcedure
+    .input(workspaceInput.extend({ creatorProjectId: z.number().int().positive(), exportId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await requireWorkspace(ctx.user.id, input.workspaceId);
+      try {
+        return await getCreatorExportManifest(input);
       } catch (error) {
         mapTimelineError(error);
       }

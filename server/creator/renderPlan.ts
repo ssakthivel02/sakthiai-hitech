@@ -18,6 +18,20 @@ export type RenderCaptionCue = {
   locked: boolean;
 };
 
+/**
+ * Caption font pinned for libass. FFmpeg's `subtitles` filter otherwise asks for "Arial", which has no Tamil
+ * glyphs on a typical host; libass then substitutes per glyph and Tamil vowel signs (e.g. the "u" in "முருகா")
+ * render detached from their consonant. Reproduced on a real render before this was added.
+ */
+export type CaptionFonts = {
+  /** Directory holding the font file(s) (libass `fontsdir`). */
+  dir: string;
+  /** Family name inside the font (`FontName`). Letters, digits and spaces only. */
+  family: string;
+};
+
+export const TAMIL_SCRIPT_PATTERN = /[\u0B80-\u0BFF]/u;
+
 export type DeterministicRenderPlanInput = {
   width: number;
   height: number;
@@ -28,6 +42,10 @@ export type DeterministicRenderPlanInput = {
   captions: RenderCaptionCue[];
   subtitlePath: string;
   outputPath: string;
+  /** Required whenever any caption contains Tamil script; the renderer never silently falls back to host fonts. */
+  captionFonts?: CaptionFonts;
+  /** pad (default): letterbox, nothing cropped. cover: fill the frame, centre-crop the overflow (vertical delivery). */
+  fit?: "pad" | "cover";
 };
 
 export type DeterministicRenderPlan = {
@@ -93,6 +111,19 @@ function validateVisualItems(items: RenderVisualItem[], durationMs: number): Ren
   return ordered;
 }
 
+const FONT_FAMILY_PATTERN = /^[A-Za-z0-9 ]{1,64}$/;
+
+export function captionsNeedTamilFont(captions: readonly Pick<RenderCaptionCue, "text">[]): boolean {
+  return captions.some(cue => TAMIL_SCRIPT_PATTERN.test(cue.text));
+}
+
+function subtitleFilterStyle(fonts: CaptionFonts | undefined): string {
+  if (!fonts) return "";
+  if (!fonts.dir.trim()) throw new Error("CREATOR_RENDER_CAPTION_FONT_DIR_REQUIRED");
+  if (!FONT_FAMILY_PATTERN.test(fonts.family)) throw new Error("CREATOR_RENDER_CAPTION_FONT_FAMILY_INVALID");
+  return `:fontsdir='${escapeSubtitlePath(fonts.dir)}':force_style='FontName=${fonts.family}'`;
+}
+
 function escapeSubtitlePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
@@ -108,6 +139,12 @@ export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput
 
   const visuals = validateVisualItems(input.visualItems, input.audioDurationMs);
   const srt = serializeSrt(input.captions, input.audioDurationMs);
+  if (captionsNeedTamilFont(input.captions) && !input.captionFonts) {
+    throw new Error("CREATOR_RENDER_TAMIL_FONT_REQUIRED");
+  }
+  const subtitleStyle = subtitleFilterStyle(input.captionFonts);
+  const fit = input.fit ?? "pad";
+  if (fit !== "pad" && fit !== "cover") throw new Error("CREATOR_RENDER_FIT_INVALID");
   const args: string[] = ["-hide_banner", "-nostdin", "-y"];
   const filters: string[] = [];
 
@@ -115,9 +152,11 @@ export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput
     const durationSeconds = ((item.endMs - item.startMs) / 1000).toFixed(3);
     if (item.assetType === "IMAGE") args.push("-loop", "1", "-t", durationSeconds, "-i", item.sourceUrl);
     else args.push("-t", durationSeconds, "-i", item.sourceUrl);
+    const frame = fit === "cover"
+      ? `scale=${input.width}:${input.height}:force_original_aspect_ratio=increase,crop=${input.width}:${input.height}`
+      : `scale=${input.width}:${input.height}:force_original_aspect_ratio=decrease,pad=${input.width}:${input.height}:(ow-iw)/2:(oh-ih)/2`;
     filters.push(
-      `[${index}:v]scale=${input.width}:${input.height}:force_original_aspect_ratio=decrease,` +
-      `pad=${input.width}:${input.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${input.fps},` +
+      `[${index}:v]${frame},setsar=1,fps=${input.fps},` +
       `trim=duration=${durationSeconds},setpts=PTS-STARTPTS[v${index}]`,
     );
   });
@@ -126,7 +165,7 @@ export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput
   args.push("-i", input.audioSourceUrl);
   const concatInputs = visuals.map((_, index) => `[v${index}]`).join("");
   filters.push(`${concatInputs}concat=n=${visuals.length}:v=1:a=0[vc]`);
-  filters.push(`[vc]subtitles='${escapeSubtitlePath(input.subtitlePath)}':charenc=UTF-8[vout]`);
+  filters.push(`[vc]subtitles='${escapeSubtitlePath(input.subtitlePath)}':charenc=UTF-8${subtitleStyle}[vout]`);
 
   args.push(
     "-filter_complex", filters.join(";"),

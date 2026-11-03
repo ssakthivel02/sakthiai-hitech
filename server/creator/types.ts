@@ -10,7 +10,7 @@ export const CREATOR_JOB_STATES = [
 ] as const;
 
 export type CreatorJobState = (typeof CREATOR_JOB_STATES)[number];
-export type CreatorMediaKind = "IMAGE" | "IMAGE_EDIT" | "VIDEO" | "VIDEO_EXTENSION";
+export type CreatorMediaKind = "IMAGE" | "IMAGE_EDIT" | "VIDEO" | "VIDEO_EXTENSION" | "SPEECH" | "AVATAR_VIDEO";
 export type CreatorFailureClass =
   | "AUTH"
   | "QUOTA"
@@ -56,7 +56,41 @@ export interface CreatorVideoRequest {
   sourceVideoAssetId?: number;
 }
 
-export type CreatorMediaRequest = CreatorImageRequest | CreatorVideoRequest;
+/** Text-to-speech. `prompt` is the exact, human-approved text to speak (never rewritten server-side). */
+export interface CreatorSpeechRequest {
+  kind: "SPEECH";
+  prompt: string;
+  model?: string;
+  languageCode?: "ta-IN" | "en-IN";
+  speaker?: string;
+  pace?: number;
+  aspectRatio?: never;
+  references?: never;
+}
+
+/**
+ * Avatar video driven by an already-persisted audio asset. Every field is resolved server-side: `audio` is read from
+ * the workspace's own storage, `consentId` must reference an active consent record for `avatarId`.
+ */
+export interface CreatorAvatarVideoRequest {
+  kind: "AVATAR_VIDEO";
+  prompt: string;
+  model?: string;
+  avatarId: string;
+  consentId: number;
+  audioAssetId: number;
+  /** Duration of the driving audio; the spend estimate is based on it. */
+  expectedSeconds: number;
+  /** Server-resolved audio bytes (never accepted from the client). */
+  audio?: { mimeType: "audio/wav" | "audio/mpeg"; data: Uint8Array };
+  /** Idempotency key echoed by the provider for reconciliation. */
+  callbackId?: string;
+  live?: boolean;
+  aspectRatio?: never;
+  references?: never;
+}
+
+export type CreatorMediaRequest = CreatorImageRequest | CreatorVideoRequest | CreatorSpeechRequest | CreatorAvatarVideoRequest;
 
 export interface CreatorProviderCapabilities {
   imageGeneration?: boolean;
@@ -66,6 +100,8 @@ export interface CreatorProviderCapabilities {
   firstLastFrame?: boolean;
   referenceImages?: number;
   videoExtension?: boolean;
+  textToSpeech?: boolean;
+  avatarVideo?: boolean;
   aspectRatios?: readonly string[];
   resolutions?: readonly string[];
 }

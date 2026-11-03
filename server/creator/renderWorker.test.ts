@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { runCreatorRenderWorker } from "./renderWorker";
+import { CREATOR_CAPTION_FONT_FILE, resolveCreatorCaptionFonts, runCreatorRenderWorker } from "./renderWorker";
 
 const renderInput = {
   workspaceId: 1,
@@ -19,6 +19,33 @@ const renderInput = {
     { startMs: 0, endMs: 2000, text: "வேல் முருகா", language: "ta" as const, locked: true },
   ],
 };
+
+describe("Creator caption font resolution", () => {
+  it("finds the vendored Tamil font from the repository root", () => {
+    const fonts = resolveCreatorCaptionFonts({});
+    expect(fonts.family).toBe("Noto Sans Tamil");
+    expect(fonts.dir.endsWith("/server/creator/fonts")).toBe(true);
+  });
+
+  it("honours CREATOR_CAPTION_FONTS_DIR and fails closed when the font file is missing", () => {
+    expect(resolveCreatorCaptionFonts({ CREATOR_CAPTION_FONTS_DIR: "/opt/f" }, path => path === `/opt/f/${CREATOR_CAPTION_FONT_FILE}`).dir).toBe("/opt/f");
+    expect(() => resolveCreatorCaptionFonts({ CREATOR_CAPTION_FONTS_DIR: "/opt/empty" }, () => false)).toThrow("CREATOR_RENDER_TAMIL_FONT_MISSING");
+  });
+
+  it("passes the pinned font to ffmpeg for Tamil captions", async () => {
+    const executeFfmpeg = vi.fn(async () => ({ exitCode: 0, stderr: "" }));
+    await runCreatorRenderWorker(renderInput, {
+      createTempDir: async () => "/tmp/creator-render-font",
+      cleanupTempDir: async () => undefined,
+      writeSubtitle: async () => undefined,
+      readOutput: async () => Buffer.from("x"),
+      executeFfmpeg,
+      putArtifact: async key => ({ key, url: "/u" }),
+    });
+    const args = (executeFfmpeg.mock.calls[0] as unknown as [string[]])[0].join(" ");
+    expect(args).toContain("force_style='FontName=Noto Sans Tamil'");
+  });
+});
 
 describe("Creator render worker", () => {
   it("writes captions, executes ffmpeg and persists a checksummed render", async () => {

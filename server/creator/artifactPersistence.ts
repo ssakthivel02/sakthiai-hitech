@@ -27,6 +27,7 @@ export function extensionForCreatorMimeType(mimeType: string): string {
     "image/jpeg": "jpg",
     "image/webp": "webp",
     "video/mp4": "mp4",
+    "audio/wav": "wav",
   };
   const extension = extensions[normalized];
   if (!extension) throw new Error("CREATOR_ARTIFACT_MIME_UNSUPPORTED");
@@ -40,9 +41,10 @@ export function shouldMarkCreatorArtifactRetryable(input: {
   return input.outputAssetId === null && canTransitionCreatorJob(input.status, "RETRYABLE");
 }
 
-function assetTypeForGeneration(kind: string): "IMAGE" | "VIDEO" {
+export function assetTypeForGeneration(kind: string): "IMAGE" | "VIDEO" | "AUDIO" {
   if (kind === "IMAGE" || kind === "IMAGE_EDIT") return "IMAGE";
-  if (kind === "VIDEO" || kind === "VIDEO_EXTENSION") return "VIDEO";
+  if (kind === "VIDEO" || kind === "VIDEO_EXTENSION" || kind === "AVATAR_VIDEO") return "VIDEO";
+  if (kind === "SPEECH") return "AUDIO";
   throw new Error("CREATOR_ARTIFACT_KIND_UNSUPPORTED");
 }
 

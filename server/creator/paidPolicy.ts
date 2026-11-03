@@ -10,7 +10,7 @@ import type { CreatorMediaKind, CreatorMediaRequest } from "./types";
  *   No prices are hard-coded: an unpriced model cannot be budgeted and is denied.
  * - All six daily limits (global / workspace / user × generations / cost) are required while enabled.
  */
-export type CreatorPaidKind = "IMAGE" | "VIDEO";
+export type CreatorPaidKind = "IMAGE" | "VIDEO" | "SPEECH" | "AVATAR_VIDEO";
 
 export type CreatorSpendLimits = {
   globalGenerations: number;
@@ -21,11 +21,13 @@ export type CreatorSpendLimits = {
   userCost: number;
 };
 
-export type CreatorModelCost = { perGeneration?: number; perSecond?: number };
+export type CreatorModelCost = { perGeneration?: number; perSecond?: number; perThousandChars?: number };
 
 export type CreatorPaidConfig = {
   imageUsers: ReadonlySet<string>;
   videoUsers: ReadonlySet<string>;
+  speechUsers: ReadonlySet<string>;
+  avatarUsers: ReadonlySet<string>;
   costs: ReadonlyMap<string, CreatorModelCost>;
   limits: CreatorSpendLimits;
 };
@@ -82,20 +84,28 @@ function parseCosts(raw: string | undefined): ReadonlyMap<string, CreatorModelCo
   for (const [model, entry] of Object.entries(parsed as Record<string, unknown>)) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return `CREATOR_MODEL_COSTS[${model}] invalid`;
     const keys = Object.keys(entry);
-    if (keys.some(key => key !== "perGeneration" && key !== "perSecond")) return `CREATOR_MODEL_COSTS[${model}] unknown field`;
+    if (keys.some(key => key !== "perGeneration" && key !== "perSecond" && key !== "perThousandChars")) return `CREATOR_MODEL_COSTS[${model}] unknown field`;
     const perGeneration = amount((entry as Record<string, unknown>).perGeneration);
     const perSecond = amount((entry as Record<string, unknown>).perSecond);
-    if (perGeneration === "invalid" || perSecond === "invalid") return `CREATOR_MODEL_COSTS[${model}] invalid amount`;
-    if (perGeneration === undefined && perSecond === undefined) return `CREATOR_MODEL_COSTS[${model}] has no price`;
-    costs.set(model, { perGeneration, perSecond });
+    const perThousandChars = amount((entry as Record<string, unknown>).perThousandChars);
+    if (perGeneration === "invalid" || perSecond === "invalid" || perThousandChars === "invalid") return `CREATOR_MODEL_COSTS[${model}] invalid amount`;
+    if (perGeneration === undefined && perSecond === undefined && perThousandChars === undefined) return `CREATOR_MODEL_COSTS[${model}] has no price`;
+    costs.set(model, { perGeneration, perSecond, perThousandChars });
   }
   if (costs.size === 0) return "CREATOR_MODEL_COSTS empty";
   return costs;
 }
 
 /** Allowlists only; readable even when the spend policy is incomplete, so authorization is decided first. */
-export function readCreatorPaidAllowlists(env: Env = process.env): Pick<CreatorPaidConfig, "imageUsers" | "videoUsers"> {
-  return { imageUsers: allowlist(env.CREATOR_PAID_IMAGE_USERS), videoUsers: allowlist(env.CREATOR_PAID_VIDEO_USERS) };
+export type CreatorPaidAllowlists = Pick<CreatorPaidConfig, "imageUsers" | "videoUsers" | "speechUsers" | "avatarUsers">;
+
+export function readCreatorPaidAllowlists(env: Env = process.env): CreatorPaidAllowlists {
+  return {
+    imageUsers: allowlist(env.CREATOR_PAID_IMAGE_USERS),
+    videoUsers: allowlist(env.CREATOR_PAID_VIDEO_USERS),
+    speechUsers: allowlist(env.CREATOR_PAID_SPEECH_USERS),
+    avatarUsers: allowlist(env.CREATOR_PAID_AVATAR_USERS),
+  };
 }
 
 export function readCreatorPaidConfig(env: Env = process.env): CreatorPaidConfigResult {
@@ -117,14 +127,18 @@ export function readCreatorPaidConfig(env: Env = process.env): CreatorPaidConfig
 export function paidKindOf(kind: CreatorMediaKind | string): CreatorPaidKind {
   if (kind === "IMAGE" || kind === "IMAGE_EDIT") return "IMAGE";
   if (kind === "VIDEO" || kind === "VIDEO_EXTENSION") return "VIDEO";
+  if (kind === "SPEECH") return "SPEECH";
+  if (kind === "AVATAR_VIDEO") return "AVATAR_VIDEO";
   // Unknown kinds are treated as the most expensive class.
   return "VIDEO";
 }
 
-export function isAuthorizedForPaidKind(user: { role?: string | null; openId?: string | null }, kind: CreatorPaidKind, config: Pick<CreatorPaidConfig, "imageUsers" | "videoUsers">): boolean {
+export function isAuthorizedForPaidKind(user: { role?: string | null; openId?: string | null }, kind: CreatorPaidKind, config: Partial<CreatorPaidAllowlists>): boolean {
   if (user.role === "admin") return true;
   if (!user.openId) return false;
-  return (kind === "IMAGE" ? config.imageUsers : config.videoUsers).has(user.openId);
+  // Each kind has its own allowlist: no permission implies another (image never implies video, speech never avatar).
+  const list = kind === "IMAGE" ? config.imageUsers : kind === "VIDEO" ? config.videoUsers : kind === "SPEECH" ? config.speechUsers : config.avatarUsers;
+  return list?.has(user.openId) ?? false;
 }
 
 /** Server-side cost estimate. `undefined` = model is not priced (deny). Rounded up to 6 decimals (ledger precision). */
@@ -133,8 +147,18 @@ export function estimateCreatorCost(config: CreatorPaidConfig, model: string, re
   if (!price) return undefined;
   let cost = price.perGeneration ?? 0;
   if (price.perSecond !== undefined) {
-    const seconds = request.kind === "VIDEO" || request.kind === "VIDEO_EXTENSION" ? request.durationSeconds ?? CREATOR_MAX_VIDEO_SECONDS : 1;
+    let seconds = 1;
+    if (request.kind === "VIDEO" || request.kind === "VIDEO_EXTENSION") seconds = request.durationSeconds ?? CREATOR_MAX_VIDEO_SECONDS;
+    else if (request.kind === "AVATAR_VIDEO") {
+      // Charged for the driving audio's duration, rounded up; an invalid duration cannot be budgeted.
+      if (!Number.isFinite(request.expectedSeconds) || request.expectedSeconds <= 0) return undefined;
+      seconds = Math.ceil(request.expectedSeconds);
+    }
     cost += price.perSecond * seconds;
+  }
+  if (price.perThousandChars !== undefined) {
+    if (request.kind !== "SPEECH") return undefined;
+    cost += price.perThousandChars * (request.prompt.length / 1000);
   }
   return Math.ceil(cost * 1_000_000 - 1e-6) / 1_000_000;
 }

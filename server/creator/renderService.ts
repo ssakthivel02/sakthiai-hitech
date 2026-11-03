@@ -26,10 +26,41 @@ function durationFromProvenance(provenanceJson: string): number {
   throw new Error("CREATOR_RENDER_AUDIO_DURATION_INVALID");
 }
 
+export const VERTICAL_DELIVERY = { width: 1080, height: 1920, aspectRatio: "9:16", fit: "cover" } as const;
+export const DERIVATIVE_SOURCE = "deterministic-creator-derivative";
+
+type ParentRender = { id: number; checksumSha256: string; visualAssetIds: number[]; audioMasterChecksumSha256: string };
+
+/**
+ * A delivery derivative may only be made from a FINAL (approved, immutable) 16:9 master of the same timeline. Its
+ * provenance source differs from a master's, so the review service can never review or promote it as a master.
+ */
+export function parseApprovedMasterForDerivative(
+  asset: { id: number; assetType: string; immutable: number; reviewDecision: string; checksumSha256: string; provenanceJson: string } | undefined,
+  timelineId: number,
+): ParentRender {
+  if (!asset || asset.assetType !== "RENDER" || asset.immutable !== 1) throw new Error("CREATOR_DERIVATIVE_MASTER_NOT_FOUND");
+  if (asset.reviewDecision !== "APPROVED") throw new Error("CREATOR_DERIVATIVE_MASTER_NOT_FINAL");
+  let p: { source?: unknown; timelineId?: unknown; visualAssetIds?: unknown; audioMasterChecksumSha256?: unknown };
+  try { p = JSON.parse(asset.provenanceJson); } catch { throw new Error("CREATOR_DERIVATIVE_MASTER_NOT_FOUND"); }
+  if (p.source !== "deterministic-creator-render" || !Array.isArray(p.visualAssetIds) || typeof p.audioMasterChecksumSha256 !== "string") {
+    throw new Error("CREATOR_DERIVATIVE_MASTER_NOT_FOUND");
+  }
+  if (p.timelineId !== timelineId) throw new Error("CREATOR_DERIVATIVE_TIMELINE_MISMATCH");
+  return { id: asset.id, checksumSha256: asset.checksumSha256, visualAssetIds: p.visualAssetIds as number[], audioMasterChecksumSha256: p.audioMasterChecksumSha256 };
+}
+
+export function assertNoDerivativeDrift(parent: ParentRender, current: { visualAssetIds: number[]; audioMasterChecksumSha256: string }) {
+  const same = parent.visualAssetIds.length === current.visualAssetIds.length && parent.visualAssetIds.every((id, i) => id === current.visualAssetIds[i]);
+  if (!same || parent.audioMasterChecksumSha256 !== current.audioMasterChecksumSha256) throw new Error("CREATOR_DERIVATIVE_SOURCE_DRIFT");
+}
+
 export async function executeCreatorTimelineExport(input: {
   workspaceId: number;
   creatorProjectId: number;
   timelineId: number;
+  /** Set to produce a 9:16 delivery derivative of this approved 16:9 final master instead of a master candidate. */
+  verticalDerivativeOf?: number;
 }, deps: RenderWorkerDependencies & { getSignedUrl?: (key: string) => Promise<string> } = {}) {
   const db = await requireDb();
   const [timeline] = await db
@@ -58,6 +89,17 @@ export async function executeCreatorTimelineExport(input: {
     throw new Error("CREATOR_RENDER_AUDIO_MASTER_NOT_APPROVED");
   }
   const durationMs = durationFromProvenance(audioMaster.provenanceJson);
+
+  let parent: ParentRender | undefined;
+  if (input.verticalDerivativeOf !== undefined) {
+    const [parentAsset] = await db.select().from(creatorAssets).where(and(
+      eq(creatorAssets.id, input.verticalDerivativeOf),
+      eq(creatorAssets.workspaceId, input.workspaceId),
+      eq(creatorAssets.creatorProjectId, input.creatorProjectId),
+    )).limit(1);
+    parent = parseApprovedMasterForDerivative(parentAsset, input.timelineId);
+  }
+  const output = parent ? VERTICAL_DELIVERY : { width: timeline.width, height: timeline.height, aspectRatio: "16:9" as const, fit: "pad" as const };
 
   const timelineItems = await db
     .select()
@@ -106,18 +148,22 @@ export async function executeCreatorTimelineExport(input: {
     ))
     .orderBy(creatorCaptionCues.startMs, creatorCaptionCues.id);
   if (!captions.length) throw new Error("CREATOR_RENDER_LOCKED_CAPTIONS_REQUIRED");
+  if (parent) assertNoDerivativeDrift(parent, { visualAssetIds: visualItems.map(item => item.assetId), audioMasterChecksumSha256: audioMaster.checksumSha256 });
 
   const exportInsert = await db.insert(creatorExports).values({
     workspaceId: input.workspaceId,
     creatorProjectId: input.creatorProjectId,
     timelineId: input.timelineId,
     status: "QUEUED",
-    width: timeline.width,
-    height: timeline.height,
+    width: output.width,
+    height: output.height,
     format: "mp4",
     renderer: "ffmpeg",
     parametersJson: JSON.stringify({
       deterministic: true,
+      aspectRatio: output.aspectRatio,
+      fit: output.fit,
+      derivativeOfRenderAssetId: parent?.id ?? null,
       audioMasterAssetId: audioMaster.id,
       audioMasterChecksumSha256: audioMaster.checksumSha256,
       durationMs,
@@ -140,8 +186,9 @@ export async function executeCreatorTimelineExport(input: {
       creatorProjectId: input.creatorProjectId,
       timelineId: input.timelineId,
       exportId,
-      width: timeline.width,
-      height: timeline.height,
+      width: output.width,
+      height: output.height,
+      fit: output.fit,
       fps: timeline.fps,
       audioDurationMs: durationMs,
       audioSourceUrl: await getSignedUrl(audioMaster.storageKey),
@@ -156,7 +203,8 @@ export async function executeCreatorTimelineExport(input: {
     }, deps);
 
     const provenance = {
-      source: "deterministic-creator-render",
+      source: parent ? DERIVATIVE_SOURCE : "deterministic-creator-render",
+      ...(parent ? { derivativeOfRenderAssetId: parent.id, derivativeOfChecksumSha256: parent.checksumSha256, aspectRatio: output.aspectRatio, fit: output.fit } : {}),
       renderer: rendered.renderer,
       exportId,
       timelineId: input.timelineId,
