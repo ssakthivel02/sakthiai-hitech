@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
-import { getWorkspaceForUser } from "../db";
+import { requireCreatorWorkspaceOwner } from "./paidGeneration";
 import {
   finalizeCreatorMaster,
   recordCreatorHumanReview,
@@ -29,10 +29,12 @@ const dimensionScores = z.object(Object.fromEntries(
   dimensionIds.map(id => [id, z.number().min(0).max(5)]),
 ) as Record<(typeof dimensionIds)[number], z.ZodNumber>);
 
-async function requireWorkspace(userId: number, workspaceId: number) {
-  const workspace = await getWorkspaceForUser(userId, workspaceId);
-  if (!workspace) throw new TRPCError({ code: "FORBIDDEN", message: "Workspace access denied" });
-}
+/**
+ * Every procedure in this router records a consequential decision on a 16:9 master: a quality verdict (which can
+ * reject the asset), a final human Tamil/visual PASS or REJECT, or promotion to final master. They are workspace-owner
+ * only, matching speech approval and 9:16 crop approval. Ordinary members keep read access through the workspace
+ * router (getProject). Checked before any database read or write.
+ */
 
 function creatorReviewError(error: unknown): never {
   const message = error instanceof Error ? error.message : "CREATOR_REVIEW_RUNTIME_ERROR";
@@ -49,7 +51,7 @@ export const creatorReviewRouter = router({
     criticalDefects: z.array(z.string().trim().min(1).max(1000)).max(50).default([]),
     notes: z.string().trim().max(5000).optional(),
   })).mutation(async ({ ctx, input }) => {
-    await requireWorkspace(ctx.user.id, input.workspaceId);
+    await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
     try {
       return await recordCreatorQualityReview({ ...input, reviewerUserId: ctx.user.id });
     } catch (error) {
@@ -61,7 +63,7 @@ export const creatorReviewRouter = router({
     decision: z.enum(["PASS", "REJECT"]),
     notes: z.string().trim().min(1).max(5000),
   })).mutation(async ({ ctx, input }) => {
-    await requireWorkspace(ctx.user.id, input.workspaceId);
+    await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
     try {
       return await recordCreatorHumanReview({ ...input, reviewerUserId: ctx.user.id, reviewType: "HUMAN_TAMIL" });
     } catch (error) {
@@ -73,7 +75,7 @@ export const creatorReviewRouter = router({
     decision: z.enum(["PASS", "REJECT"]),
     notes: z.string().trim().min(1).max(5000),
   })).mutation(async ({ ctx, input }) => {
-    await requireWorkspace(ctx.user.id, input.workspaceId);
+    await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
     try {
       return await recordCreatorHumanReview({ ...input, reviewerUserId: ctx.user.id, reviewType: "HUMAN_VISUAL" });
     } catch (error) {
@@ -82,7 +84,7 @@ export const creatorReviewRouter = router({
   }),
 
   finalizeMaster: protectedProcedure.input(workspaceProjectAsset).mutation(async ({ ctx, input }) => {
-    await requireWorkspace(ctx.user.id, input.workspaceId);
+    await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
     try {
       return await finalizeCreatorMaster(input);
     } catch (error) {

@@ -17,7 +17,7 @@ export function describeCreatorError(raw: string | null | undefined): CreatorErr
     case "CREATOR_PAID_GENERATION_NOT_AUTHORIZED":
       return { code: message, kind: "blocked", title: `Not approved for paid ${arg === "VIDEO" ? "video" : "image"} generation`, detail: `Your account is not on the approved list for ${arg === "VIDEO" ? "video" : "image"} generation. Image approval does not include video.`, action: "Ask the administrator to approve your account." };
     case "CREATOR_WORKSPACE_OWNER_REQUIRED":
-      return { code, kind: "blocked", title: "Workspace owner required", detail: "Only the workspace owner can submit, retry or cancel paid generations." };
+      return { code, kind: "blocked", title: "Workspace owner required", detail: "Only the workspace owner can do this: submit, retry or cancel paid generations, and record final review decisions or promote a final master." };
     case "CREATOR_SPEND_POLICY_INVALID":
       return { code, kind: "blocked", title: "Spending limits are not configured", detail: "Paid generation is enabled but its prices or daily limits are missing or invalid, so every request is refused.", action: "The administrator must complete the spend policy." };
     case "CREATOR_MODEL_NOT_PRICED":
