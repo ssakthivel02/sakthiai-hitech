@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       acknowledge_chat_data_retention:
-        description: "Must be checked to run. This check creates one real chat conversation (and its messages) per run, and no supported API exists to delete a conversation or message afterward (artifacts.delete removes only the artifact row). That conversation is permanently retained on the live preview. Check this box only once the owner has explicitly accepted that retention for this run."
+        description: "Legacy compatibility input (default false). Current smoke creates no chat data; leave unchecked. Future content-writing tests need separate owner approval."
         required: true
         type: boolean
         default: false
@@ -131,8 +131,8 @@ jobs:
 
       # The ONLY step in this job with the test-account secrets in its environment, and only after the
       # release-identity step above has already confirmed the preview is serving the approved commit.
-      # PREVIEW_TEST_ACKNOWLEDGE_CHAT_RETENTION is not a secret (it's the dispatch-time checkbox above),
-      # but it's scoped here too since it only matters to the one step that loads env.ts.
+      # Legacy PREVIEW_TEST_ACKNOWLEDGE_CHAT_RETENTION is retained for the default-branch
+      # workflow_dispatch registration contract; the current smoke never creates chat data.
       - name: Real-authentication live-preview browser check (no stub login, no bypass)
         env:
           PREVIEW_TEST_ACCOUNT_A_EMAIL: ${{ secrets.PREVIEW_TEST_ACCOUNT_A_EMAIL }}
