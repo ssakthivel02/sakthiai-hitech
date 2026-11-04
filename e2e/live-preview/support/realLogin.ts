@@ -72,6 +72,18 @@ export async function realOidcLogin(page: Page, account: LivePreviewAccount, pro
 async function googleHostedLogin(page: Page, account: LivePreviewAccount): Promise<void> {
   const blocked = page.getByText(/couldn.?t sign you in|this browser or app may not be secure/i);
 
+  // Pin the origin again after Google's email step, before sending a password.
+  // Never enter credentials on an unexpected redirect destination.
+  const requireGoogleOrigin = (step: string) => {
+    let origin: string;
+    try { origin = new URL(page.url()).origin; }
+    catch { origin = "(invalid URL)"; }
+    if (origin !== "https://accounts.google.com") {
+      throw new Error(`Refusing ${step} credential entry: expected accounts.google.com, received origin ${origin}.`);
+    }
+  };
+
+  requireGoogleOrigin("email");
   await page.locator('input[type="email"]').fill(account.email);
   await page.getByRole("button", { name: /next/i }).click();
 
@@ -83,6 +95,7 @@ async function googleHostedLogin(page: Page, account: LivePreviewAccount): Promi
     );
   }
 
+  requireGoogleOrigin("password");
   await page.locator('input[type="password"]').fill(account.password);
   await page.getByRole("button", { name: /next/i }).click();
 
