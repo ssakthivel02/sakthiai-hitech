@@ -80,7 +80,16 @@ test.describe("live preview — real OIDC and no-provider tenant isolation", () 
       }
       const ownGet = await trpcQuery(pageA.request, "artifacts.get", { workspaceId: wsA, artifactId });
       expect(ownGet.status, JSON.stringify(ownGet)).toBe(200);
-      expect((ownGet.data as { id?: number } | undefined)?.id).toBe(artifactId);
+      const ownArtifact = ownGet.data as { id?: number; citations?: unknown[] } | undefined;
+      expect(ownArtifact?.id).toBe(artifactId);
+      expect(Array.isArray(ownArtifact?.citations), "Fixture must be a genuinely cited artifact").toBe(true);
+      expect(ownArtifact?.citations?.length, "Grounded fixture must have at least one citation").toBeGreaterThan(0);
+
+      // Positive authorized B list: neither a status error nor an accidentally empty search
+      // can stand in for tenant isolation. No embeddings, model calls or writes.
+      const ownBList = await trpcQuery(pageB.request, "artifacts.list", { workspaceId: wsB, limit: 200 });
+      expect(ownBList.status, JSON.stringify(ownBList)).toBe(200);
+      expect(((ownBList.data as Array<{ id: number }> | undefined) ?? []).map(item => item.id)).not.toContain(artifactId);
 
       const crossList = await trpcQuery(pageB.request, "artifacts.list", { workspaceId: wsA });
       expect(crossList.status, JSON.stringify(crossList)).toBe(403);
