@@ -1,0 +1,47 @@
+name: SakthiAI Preview Live Browser Check
+
+# DEFAULT-BRANCH REGISTRATION ONLY — ALWAYS FAIL CLOSED.
+# GitHub requires a workflow_dispatch workflow file on the default branch.
+# The real release-bound OIDC and tenant-isolation workflow lives on PR #36's
+# branch. Dispatch it only using the exact approved ref and commit SHA.
+#
+# This stub checks out nothing, never binds an environment, reads no secrets,
+# makes no network requests and never creates retained chat data.
+
+on:
+  workflow_dispatch:
+    inputs:
+      preview_url:
+        description: "Ignored on default branch. Always refuses."
+        required: true
+        type: string
+      approved_commit:
+        description: "Ignored on default branch. Always refuses."
+        required: true
+        type: string
+      acknowledge_chat_data_retention:
+        description: "Ignored on default branch; real branch verifies owner consent."
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sakthiai-preview-live-browser-check
+  cancel-in-progress: false
+
+jobs:
+  refuse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Refuse live browser testing from the default branch
+        shell: bash
+        run: |
+          echo "::error::Default-branch browser-check registration cannot run live tests."
+          echo "No test-account secrets or preview resources were accessed."
+          echo "Use the reviewed workflow on the approved integration branch and exact SHA."
+          echo "Owner consent to retained chat data and two dedicated accounts are required."
+          exit 1
