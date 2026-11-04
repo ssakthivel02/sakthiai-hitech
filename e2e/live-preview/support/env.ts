@@ -30,33 +30,17 @@ const required = (name: string): string => {
   return value.trim();
 };
 
-// This suite creates one real chat conversation (and its user + assistant messages) per run, via
-// chat.send, to produce an artifact to test cross-tenant isolation on. server/routers.ts's chat router
-// exposes only history/send/sendAsync — there is no delete or archive procedure for a conversation or
-// message anywhere in the app (artifacts.delete removes only the artifact row, never its source chat).
-// So that conversation is permanently retained on the live preview after every run; there is no supported
-// API this suite could call to remove it. Rather than retain that data silently, loading this env requires
-// the owner to have explicitly accepted the retention for this run (PREVIEW_TEST_ACKNOWLEDGE_CHAT_RETENTION
-// must be exactly "true") — the exact retained conversation/message identifiers are then still logged and
-// attached to the test report every run (see auth-isolation-artifacts.spec.ts), so what was retained is
-// always traceable even though it was accepted in advance, not approved after the fact.
-const requiredAcknowledgement = (name: string, explanation: string): void => {
-  if (process.env[name] !== "true") {
-    throw new Error(`${name} must be set to exactly "true" to run the live-preview browser check: ${explanation}`);
-  }
-};
+// The live browser smoke is now intentionally read-only with respect to user content.
+// It requires existing workspaces and a pre-seeded grounded artifact; it never calls
+// chat.send, embeddings, or the model gateway. The historical workflow consent input
+// is retained as a compatible no-op while the workflow is registered on main.
+//
+// A future test that creates retained chat data must add explicit owner consent
+// and its own retention/cleanup disclosure before any provider call or write.
 
-export const loadLivePreviewEnv = (): LivePreviewEnv => {
-  requiredAcknowledgement(
-    "PREVIEW_TEST_ACKNOWLEDGE_CHAT_RETENTION",
-    "this suite permanently retains one chat conversation and its messages on the live preview after " +
-      "every run — no supported cleanup API exists for conversations or messages. The owner must " +
-      "explicitly accept this retention before each dispatch.",
-  );
-  return {
-    previewUrl: required("PREVIEW_URL"),
-    expectedCommit: required("EXPECTED_COMMIT"),
-    accountA: { email: required("PREVIEW_TEST_ACCOUNT_A_EMAIL"), password: required("PREVIEW_TEST_ACCOUNT_A_PASSWORD") },
-    accountB: { email: required("PREVIEW_TEST_ACCOUNT_B_EMAIL"), password: required("PREVIEW_TEST_ACCOUNT_B_PASSWORD") },
-  };
-};
+export const loadLivePreviewEnv = (): LivePreviewEnv => ({
+  previewUrl: required("PREVIEW_URL"),
+  expectedCommit: required("EXPECTED_COMMIT"),
+  accountA: { email: required("PREVIEW_TEST_ACCOUNT_A_EMAIL"), password: required("PREVIEW_TEST_ACCOUNT_A_PASSWORD") },
+  accountB: { email: required("PREVIEW_TEST_ACCOUNT_B_EMAIL"), password: required("PREVIEW_TEST_ACCOUNT_B_PASSWORD") },
+});
