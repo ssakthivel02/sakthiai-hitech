@@ -1,0 +1,55 @@
+name: SakthiAI Production DB Setup
+
+# REGISTRATION STUB ON THE DEFAULT BRANCH — FAIL-CLOSED REFUSAL.
+#
+# GitHub dispatches a workflow only if its file exists on the default branch. The guarded production inspect/migrate
+# workflow lives on the integration branch `integration/pr7-pr25-runtime-qualification-20260925` (PR #29) and is
+# dispatched with an explicit `--ref`. It uses only environment-scoped credentials
+# (`sakthiai-production-db-inspect` / `sakthiai-production-db-migrate`, branch-restricted, required reviewer on migrate),
+# refuses unless `approved_commit` equals the dispatched commit and `confirm_database` is `sakthiai_production`, and only
+# targets that database over verified TLS.
+#
+# This default-branch copy reads no secret or variable, checks out nothing, uses no environment and always exits non-zero.
+# It exists so the guarded workflow can be dispatched; it cannot touch a database itself.
+# When PR #29 is merged, take the integration-branch version of this file in the merge.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Ignored here. This default-branch copy always refuses."
+        required: true
+        type: choice
+        options: [inspect, migrate]
+        default: inspect
+      recovery_point:
+        description: "Ignored here. Dispatch with --ref integration/pr7-pr25-runtime-qualification-20260925 to use the guarded workflow."
+        required: true
+        type: string
+      approved_commit:
+        description: "Ignored here."
+        required: true
+        type: string
+      confirm_database:
+        description: "Ignored here."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sakthiai-production-db
+  cancel-in-progress: false
+
+jobs:
+  refuse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Refuse database operations from this branch
+        shell: bash
+        run: |
+          echo "::error::Production database operations are not available from this branch. Nothing was read, migrated or written."
+          echo "Use the guarded workflow: gh workflow run production-db-setup.yml --ref integration/pr7-pr25-runtime-qualification-20260925 -f mode=inspect -f recovery_point=<UTC> -f approved_commit=<sha> -f confirm_database=sakthiai_production"
+          exit 1
