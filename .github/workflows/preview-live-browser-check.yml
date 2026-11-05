@@ -2,8 +2,9 @@ name: SakthiAI Preview Live Browser Check
 
 # DEFAULT-BRANCH REGISTRATION ONLY — ALWAYS FAIL CLOSED.
 # GitHub requires a workflow_dispatch workflow file on the default branch.
-# The real release-bound OIDC and tenant-isolation workflow lives on PR #36's
-# branch. Dispatch it only using the exact approved ref and commit SHA.
+# The guarded OIDC and tenant-isolation workflow is consolidated in PR #41,
+# superseding draft PR #36. Dispatch only after it is reviewed and incorporated
+# into an explicitly approved integration ref, bound to its exact commit SHA.
 #
 # This stub checks out nothing, never binds an environment, reads no secrets,
 # makes no network requests and never creates retained chat data.
@@ -20,7 +21,7 @@ on:
         required: true
         type: string
       acknowledge_chat_data_retention:
-        description: "Ignored on default branch; real branch verifies owner consent."
+        description: "Legacy compatibility input; ignored on default branch. Current guarded smoke creates no chat data."
         required: true
         type: boolean
         default: false
@@ -43,5 +44,5 @@ jobs:
           echo "::error::Default-branch browser-check registration cannot run live tests."
           echo "No test-account secrets or preview resources were accessed."
           echo "Use the reviewed workflow on the approved integration branch and exact SHA."
-          echo "Owner consent to retained chat data and two dedicated accounts are required."
+          echo "Guarded smoke needs two dedicated accounts, distinct workspaces, and a preseeded cited artifact; it creates no chats."
           exit 1
