@@ -147,6 +147,24 @@ export default function Creator() {
   const [panelError, setPanelError] = useState<unknown>();
   const [manifestError, setManifestError] = useState<unknown>();
   const utils = trpc.useUtils();
+  // Provider completion alone does not persist a Creator artifact. Polling is
+  // explicitly user-initiated: no background provider requests or paid resubmits.
+  const [pollingGenerationId, setPollingGenerationId] = useState<number>();
+  const [pollError, setPollError] = useState<unknown>();
+
+  async function checkGenerationResult(generationId: number) {
+    if (!workspaceId || pollingGenerationId !== undefined) return;
+    setPollingGenerationId(generationId);
+    setPollError(undefined);
+    try {
+      await utils.creator.pollGeneration.fetch({ workspaceId, generationId });
+      await project.refetch();
+    } catch (error) {
+      setPollError(error);
+    } finally {
+      setPollingGenerationId(undefined);
+    }
+  }
   const approvedVisualAssets = project.data?.assets?.filter(asset => (asset.assetType === "IMAGE" || asset.assetType === "VIDEO") && asset.reviewDecision === "APPROVED") ?? [];
   const eligibleConditioningAssets = project.data?.assets?.filter(asset =>
     (asset.assetType === "IMAGE" || asset.assetType === "REFERENCE") &&
@@ -208,7 +226,7 @@ export default function Creator() {
     }
   }
 
-  const operationError = [createProject.error, createScene.error, createShot.error, submitImage.error, submitVideo.error, retryGeneration.error, cancelGeneration.error, ingestAudio.error, saveCues.error, saveTimeline.error, renderCandidate.error, qualityReview.error, tamilReview.error, visualReview.error, finalizeMaster.error, renderVertical.error, reviewCrop.error, manifestError, panelError].find(Boolean);
+  const operationError = [createProject.error, createScene.error, createShot.error, submitImage.error, submitVideo.error, retryGeneration.error, cancelGeneration.error, ingestAudio.error, saveCues.error, saveTimeline.error, renderCandidate.error, qualityReview.error, tamilReview.error, visualReview.error, finalizeMaster.error, renderVertical.error, reviewCrop.error, manifestError, panelError, pollError].find(Boolean);
 
   function submitImageForShot(shot: { id: number; title: string; prompt: string | null }) {
     if (!workspaceId || !projectId) return;
@@ -304,7 +322,7 @@ export default function Creator() {
 
           <Card><CardHeader><CardTitle>Generation jobs <Button size="sm" variant="ghost" onClick={() => project.refetch()}><RefreshCw size={14}/> Refresh</Button></CardTitle></CardHeader><CardContent><div className="list">{project.data?.generations.map(job => {
             const sourceIds = provenanceIds(job.sourceAssetIdsJson);
-            return <div key={job.id} className="list-row"><div><span>#{job.id} · {job.kind} · {job.provider}</span><small>{job.status} · model {job.model}{job.outputAssetId ? ` · asset ${job.outputAssetId}` : ""}</small>{sourceIds.length > 0 && <small>Source/conditioning provenance assets: {sourceIds.join(", ")}</small>}</div><div style={{ display: "flex", gap: 6 }}>{job.status === "RETRYABLE" && <Button size="sm" variant="outline" onClick={() => retryGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><RotateCcw size={14}/> Retry existing</Button>}{job.status === "SUBMISSION_UNKNOWN" && <Badge variant="outline">Reconciliation required</Badge>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => cancelGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><Ban size={14}/> Cancel</Button>}</div></div>;
+            return <div key={job.id} className="list-row"><div><span>#{job.id} · {job.kind} · {job.provider}</span><small>{job.status} · model {job.model}{job.outputAssetId ? ` · asset ${job.outputAssetId}` : ""}</small>{sourceIds.length > 0 && <small>Source/conditioning provenance assets: {sourceIds.join(", ")}</small>}</div><div style={{ display: "flex", gap: 6 }}>{job.status === "RETRYABLE" && <Button size="sm" variant="outline" onClick={() => retryGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><RotateCcw size={14}/> Retry existing</Button>}{job.status === "SUBMISSION_UNKNOWN" && <Badge variant="outline">Reconciliation required</Badge>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" disabled={pollingGenerationId !== undefined} onClick={() => void checkGenerationResult(job.id)}><RefreshCw size={14}/> {pollingGenerationId === job.id ? "Checking…" : "Check result"}</Button>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => cancelGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><Ban size={14}/> Cancel</Button>}</div></div>;
           })}</div></CardContent></Card>
 
           {workspaceId && projectId && <CreatorReferenceControls workspaceId={workspaceId} creatorProjectId={projectId} onChanged={() => project.refetch()} />}
