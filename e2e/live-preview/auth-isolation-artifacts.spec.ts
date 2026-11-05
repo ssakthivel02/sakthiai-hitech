@@ -26,17 +26,20 @@ const trpcMutate = async (request: APIRequestContext, procedure: string, input?:
 // Server isLowInformationQuery("the") returns true before any embedding lookup.
 const NO_PROVIDER_QUERY = "the";
 
-async function signIn(page: Page, account: LivePreviewAccount): Promise<number> {
+async function signIn(page: Page, account: LivePreviewAccount): Promise<number[]> {
   await realOidcLogin(page, account, "google");
   await expect(page.getByRole("button", { name: "Log out" })).toBeVisible({ timeout: 15_000 });
   const workspaces = await trpcQuery(page.request, "workspace.list");
   expect(workspaces.status, JSON.stringify(workspaces)).toBe(200);
-  const existing = (workspaces.data as Array<{ workspace: { id: number } }> | undefined)?.[0];
-  if (!existing?.workspace?.id) {
+  const ids = [...new Set(((workspaces.data as Array<{ workspace: { id: number } }> | undefined) ?? [])
+    .map(item => item.workspace?.id).filter((id): id is number => Number.isInteger(id) && id > 0))];
+  if (!ids.length) {
     throw new Error("Dedicated test account has no workspace. Prepare it via the approved app; " +
       "this smoke intentionally does not call workspace.ensure.");
   }
-  return existing.workspace.id;
+  // The server does not guarantee ordering for workspace.list. Do not assume
+  // the first workspace contains the positive grounded-artifact fixture.
+  return ids;
 }
 
 async function signOut(page: Page): Promise<void> {
@@ -65,19 +68,28 @@ test.describe("live preview — real OIDC and no-provider tenant isolation", () 
     const pageA = await contextA.newPage();
     const pageB = await contextB.newPage();
     try {
-      const wsA = await signIn(pageA, env.accountA);
-      const wsB = await signIn(pageB, env.accountB);
-      expect(wsA, "Test accounts must have distinct workspaces").not.toBe(wsB);
+      const workspacesA = await signIn(pageA, env.accountA);
+      const workspacesB = await signIn(pageB, env.accountB);
+      const wsB = workspacesB[0];
 
-      // A real positive artifact fixture, not a fabricated ID or paid chat request.
-      const ownList = await trpcQuery(pageA.request, "artifacts.list", { workspaceId: wsA });
-      expect(ownList.status, JSON.stringify(ownList)).toBe(200);
-      const artifacts = ownList.data as Array<{ id: number }> | undefined;
-      const artifactId = artifacts?.find(item => Number.isInteger(item.id) && item.id > 0)?.id;
-      if (!artifactId) {
-        throw new Error("Test account A has no grounded artifact. Seed one through the approved app " +
-          "before this run; do not generate chat, fabricate citations or spend on a model.");
+      // Select a seeded fixture from A's *private* workspaces. workspace.list
+      // has no ORDER BY; a fixed first-workspace assumption yields false failures.
+      // All operations below are authenticated, scoped, bounded, and read-only.
+      let fixture: { wsA: number; artifactId: number } | undefined;
+      for (const wsA of workspacesA.slice(0, 20)) {
+        if (workspacesB.includes(wsA)) continue; // shared workspace is not an isolation fixture
+        const ownList = await trpcQuery(pageA.request, "artifacts.list", { workspaceId: wsA });
+        expect(ownList.status, JSON.stringify(ownList)).toBe(200);
+        const artifacts = ownList.data as Array<{ id: number }> | undefined;
+        const artifactId = artifacts?.find(item => Number.isInteger(item.id) && item.id > 0)?.id;
+        if (artifactId) { fixture = { wsA, artifactId }; break; }
       }
+      if (!fixture) {
+        throw new Error("Test account A has no grounded artifact in a workspace inaccessible to B. " +
+          "Seed one through the approved app before this run; do not generate chat, fabricate citations or spend on a model.");
+      }
+      const { wsA, artifactId } = fixture;
+      expect(workspacesB, "Account B must not belong to A's fixture workspace").not.toContain(wsA);
       const ownGet = await trpcQuery(pageA.request, "artifacts.get", { workspaceId: wsA, artifactId });
       expect(ownGet.status, JSON.stringify(ownGet)).toBe(200);
       const ownArtifact = ownGet.data as { id?: number; citations?: unknown[] } | undefined;
