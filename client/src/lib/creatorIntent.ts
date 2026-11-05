@@ -4,7 +4,7 @@
  * Repeat clicks / retries with identical inputs must return the original job.
  * Changing the payload is a new, separately priced user intent.
  */
-export type CreatorRequestIntent = { key: string; fingerprint: string };
+export type CreatorRequestIntent = { key: string; fingerprint: string; keysByFingerprint?: Record<string, string> };
 
 export function creatorIntentKey(
   intents: Record<string, CreatorRequestIntent>,
@@ -15,7 +15,14 @@ export function creatorIntentKey(
   const fingerprint = JSON.stringify(payload);
   const previous = intents[scope];
   if (previous?.fingerprint === fingerprint) return previous.key;
-  const key = newKey();
-  intents[scope] = { key, fingerprint };
+  // Keep all requests seen for this scope, not just the immediately previous one.
+  // A -> B -> A must reuse A's original job instead of silently spending again.
+  const keysByFingerprint = previous?.keysByFingerprint ?? Object.create(null) as Record<string, string>;
+  if (previous) keysByFingerprint[previous.fingerprint] = previous.key;
+  const key = Object.prototype.hasOwnProperty.call(keysByFingerprint, fingerprint)
+    ? keysByFingerprint[fingerprint]
+    : newKey();
+  keysByFingerprint[fingerprint] = key;
+  intents[scope] = { key, fingerprint, keysByFingerprint };
   return key;
 }
