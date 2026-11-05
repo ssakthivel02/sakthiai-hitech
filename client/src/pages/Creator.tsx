@@ -138,6 +138,7 @@ export default function Creator() {
   const [panelError, setPanelError] = useState<unknown>();
   const [manifestError, setManifestError] = useState<unknown>();
   const utils = trpc.useUtils();
+  const pollGeneration = trpc.creator.pollGeneration.useMutation();
   // Provider completion alone does not persist a Creator artifact. Polling is
   // explicitly user-initiated: no background provider requests or paid resubmits.
   const [pollingGenerationId, setPollingGenerationId] = useState<number>();
@@ -150,7 +151,7 @@ export default function Creator() {
     setPollingGenerationId(generationId);
     setPollError(undefined);
     try {
-      await utils.creator.pollGeneration.fetch({ workspaceId, generationId });
+      await pollGeneration.mutateAsync({ workspaceId, generationId });
       await project.refetch();
     } catch (error) {
       setPollError(error);
