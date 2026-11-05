@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * This file may first register an always-refusing default-branch stub, then later
- * be replaced by the guarded implementation when PR #36/PR #29 is integrated.
+ * be replaced by the guarded implementation when consolidated PR #41 and PR #29 are integrated.
  * Validate BOTH recognized states. Never leave a permanent stub-only test that
  * rejects the correctly guarded production workflow at release time.
  */
@@ -31,6 +31,11 @@ describe('preview-live-browser-check registration and guarded replacement', () =
     expect(code).not.toMatch(/^\s+(?:environment|env|container|services|uses):/m);
     expect(code).not.toMatch(/actions\/checkout|playwright|pnpm|npm |node |curl |wget |fetch\(|api\/|chat\.send|onrender\.com/);
     expect(code).not.toMatch(/secrets\.|\bvars\.|PREVIEW_TEST_ACCOUNT_|DATABASE_URL/);
+    expect(workflow).toContain('consolidated in PR #41');
+    expect(workflow).not.toContain("PR #36's");
+    expect(code).not.toContain('Owner consent to retained chat data');
+    expect(code).toContain('preseeded cited artifact');
+    expect(code).toContain('creates no chats');
     expect(code.split(/^jobs:$/m)[1].match(/^  [A-Za-z0-9_-]+:$/gm)).toEqual(['  refuse:']);
     expect(code.match(/^      - name:/gm)).toHaveLength(1);
     const body = code.split('run: |')[1];
