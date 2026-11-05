@@ -27,7 +27,7 @@ describe('production-db-setup has fail-closed registration or guarded operationa
   it('never accepts an unidentified third workflow state', () => {
     const jobs = code.split(/^jobs:$/m)[1];
     expect(jobs).toBeTruthy();
-    expect(jobs.match(/^  [a-zA-Z0-9_-]+:$/gm)).toEqual(isStub ? ['  refuse:'] : ['  migrate:']);
+    expect(jobs.match(/^  [a-zA-Z0-9_-]+:$/gm)).toEqual(isStub ? ['  refuse:'] : ['  bind:', '  migrate:']);
   });
 
   it('default-branch registration cannot read credentials or write to a database', () => {
@@ -51,7 +51,15 @@ describe('production-db-setup has fail-closed registration or guarded operationa
 
   it('guarded replacement requires exact SHA, production database, TLS and mode-specific privileges', () => {
     if (isStub) return;
-    expect(code).toMatch(/^  migrate:$/m);
+    expect(code).toMatch(/^  bind:$/m);
+    expect(code).toMatch(/^  migrate:\n    needs: bind$/m);
+    const bind = code.split(/^  bind:$/m)[1]?.split(/^  migrate:$/m)[0] ?? '';
+    expect(bind).toContain('APPROVED_COMMIT:');
+    expect(bind).toContain('DISPATCHED_COMMIT:');
+    expect(bind).toContain('CONFIRM_DATABASE:');
+    expect(bind).toContain('sakthiai_production');
+    expect(bind).not.toMatch(/secrets\.|\bvars\.|environment:|DATABASE_URL|actions\/checkout|db:push|pnpm|npm /);
+    expect(bind).toContain('exit 1');
     expect(code).toContain("sakthiai-production-db-migrate");
     expect(code).toContain("sakthiai-production-db-inspect");
     expect(code).toContain("DATABASE_EXPECTED_NAME: sakthiai_production");
