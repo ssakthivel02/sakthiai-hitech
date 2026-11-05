@@ -32,6 +32,23 @@ describe("Creator paid requests retain the same idempotency key after success", 
     expect(creatorIntentKey(keys, "VIDEO:3", image, uuid)).toBe(c);
   });
 
+  it("reuses the original key when an earlier paid request is restored (A -> B -> A)", () => {
+    const intents: Record<string, { key: string; fingerprint: string; keysByFingerprint?: Record<string, string> }> = {};
+    let issued = 0;
+    const uuid = () => `new-key-${++issued}`;
+    const a = { workspaceId: 1, creatorProjectId: 2, shotId: 3, prompt: "A" };
+    const b = { ...a, prompt: "B" };
+    const original = creatorIntentKey(intents, "IMAGE:3", a, uuid);
+    const revised = creatorIntentKey(intents, "IMAGE:3", b, uuid);
+    expect(revised).not.toBe(original);
+    expect(creatorIntentKey(intents, "IMAGE:3", { ...a }, uuid)).toBe(original);
+    expect(creatorIntentKey(intents, "IMAGE:3", b, uuid)).toBe(revised);
+    expect(issued).toBe(2);
+    // Scope isolation: the same payload in another project/media scope is a distinct intent.
+    expect(creatorIntentKey(intents, "VIDEO:3", a, uuid)).not.toBe(original);
+    expect(issued).toBe(3);
+  });
+
   it("keeps speech and avatar idempotency after mutation success", () => {
     expect(panel).toContain('creatorIntentKey(intents.current, scope, payload');
     expect(panel).toContain("const submitSpeech = trpc.creator.speechAvatar.submitSpeech.useMutation({ onSuccess: done, onError });");
