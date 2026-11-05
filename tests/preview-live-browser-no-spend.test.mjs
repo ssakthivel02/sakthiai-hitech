@@ -25,8 +25,11 @@ describe('real live-browser smoke is provider-free and does not fabricate ground
   it('checks a real pre-existing artifact, refusing to pass without an approved fixture', () => {
     expect(spec).toContain('artifacts.list');
     expect(spec).toContain('artifacts.get');
-    expect(spec).toContain('find(item => Number.isInteger(item.id) && item.id > 0)');
-    expect(spec).toContain('Test account A has no grounded artifact in a workspace inaccessible to B.');
+    expect(spec).toContain('const artifacts = (ownList.data as Array<{ id: number }> | undefined) ?? []');
+    expect(spec).toContain('for (const item of artifacts.slice(0, 10))');
+    expect(spec).toContain('limit: 10');
+    expect(spec).toContain('Array.isArray(data.citations) && data.citations.length > 0');
+    expect(spec).toContain('Test account A has no grounded artifact among the 10 newest items in 20 private workspaces.');
     expect(spec).toContain('for (const wsA of workspacesA.slice(0, 20))');
     expect(spec).toContain('if (workspacesB.includes(wsA)) continue');
     expect(spec).toContain('Account B must not belong to A');
