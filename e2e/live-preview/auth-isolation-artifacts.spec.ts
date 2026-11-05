@@ -32,7 +32,7 @@ async function signIn(page: Page, account: LivePreviewAccount): Promise<number[]
   const workspaces = await trpcQuery(page.request, "workspace.list");
   expect(workspaces.status, JSON.stringify(workspaces)).toBe(200);
   const ids = [...new Set(((workspaces.data as Array<{ workspace: { id: number } }> | undefined) ?? [])
-    .map(item => item.workspace?.id).filter((id): id is number => Number.isInteger(id) && id > 0))];
+    .map(item => item.workspace?.id).filter((id): id is number => typeof id === "number" && Number.isInteger(id) && id > 0))];
   if (!ids.length) {
     throw new Error("Dedicated test account has no workspace. Prepare it via the approved app; " +
       "this smoke intentionally does not call workspace.ensure.");
