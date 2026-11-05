@@ -75,27 +75,34 @@ test.describe("live preview — real OIDC and no-provider tenant isolation", () 
       // Select a seeded fixture from A's *private* workspaces. workspace.list
       // has no ORDER BY; a fixed first-workspace assumption yields false failures.
       // All operations below are authenticated, scoped, bounded, and read-only.
+      // Artifact summaries omit citations; inspect a bounded set of existing
+      // artifacts until a genuinely grounded fixture is found. A newer legacy
+      // artifact with no citations must not make the smoke fail if a cited
+      // fixture exists below it. This performs reads only (max 20 x 10 gets).
       let fixture: { wsA: number; artifactId: number } | undefined;
       for (const wsA of workspacesA.slice(0, 20)) {
         if (workspacesB.includes(wsA)) continue; // shared workspace is not an isolation fixture
-        const ownList = await trpcQuery(pageA.request, "artifacts.list", { workspaceId: wsA });
+        const ownList = await trpcQuery(pageA.request, "artifacts.list", { workspaceId: wsA, limit: 10 });
         expect(ownList.status, JSON.stringify(ownList)).toBe(200);
-        const artifacts = ownList.data as Array<{ id: number }> | undefined;
-        const artifactId = artifacts?.find(item => Number.isInteger(item.id) && item.id > 0)?.id;
-        if (artifactId) { fixture = { wsA, artifactId }; break; }
+        const artifacts = (ownList.data as Array<{ id: number }> | undefined) ?? [];
+        for (const item of artifacts.slice(0, 10)) {
+          if (!Number.isInteger(item.id) || item.id <= 0) continue;
+          const candidate = await trpcQuery(pageA.request, "artifacts.get", { workspaceId: wsA, artifactId: item.id });
+          expect(candidate.status, JSON.stringify(candidate)).toBe(200);
+          const data = candidate.data as { id?: number; citations?: unknown[] } | undefined;
+          if (data?.id === item.id && Array.isArray(data.citations) && data.citations.length > 0) {
+            fixture = { wsA, artifactId: item.id };
+            break;
+          }
+        }
+        if (fixture) break;
       }
       if (!fixture) {
-        throw new Error("Test account A has no grounded artifact in a workspace inaccessible to B. " +
-          "Seed one through the approved app before this run; do not generate chat, fabricate citations or spend on a model.");
+        throw new Error("Test account A has no grounded artifact among the 10 newest items in 20 private workspaces. " +
+          "Seed a cited artifact through the approved app before this run; no chat or provider calls are made.");
       }
       const { wsA, artifactId } = fixture;
       expect(workspacesB, "Account B must not belong to A's fixture workspace").not.toContain(wsA);
-      const ownGet = await trpcQuery(pageA.request, "artifacts.get", { workspaceId: wsA, artifactId });
-      expect(ownGet.status, JSON.stringify(ownGet)).toBe(200);
-      const ownArtifact = ownGet.data as { id?: number; citations?: unknown[] } | undefined;
-      expect(ownArtifact?.id).toBe(artifactId);
-      expect(Array.isArray(ownArtifact?.citations), "Fixture must be a genuinely cited artifact").toBe(true);
-      expect(ownArtifact?.citations?.length, "Grounded fixture must have at least one citation").toBeGreaterThan(0);
 
       // Positive authorized B list: neither a status error nor an accidentally empty search
       // can stand in for tenant isolation. No embeddings, model calls or writes.
