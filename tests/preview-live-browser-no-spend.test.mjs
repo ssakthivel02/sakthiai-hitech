@@ -26,7 +26,10 @@ describe('real live-browser smoke is provider-free and does not fabricate ground
     expect(spec).toContain('artifacts.list');
     expect(spec).toContain('artifacts.get');
     expect(spec).toContain('find(item => Number.isInteger(item.id) && item.id > 0)');
-    expect(spec).toContain('Test account A has no grounded artifact.');
+    expect(spec).toContain('Test account A has no grounded artifact in a workspace inaccessible to B.');
+    expect(spec).toContain('for (const wsA of workspacesA.slice(0, 20))');
+    expect(spec).toContain('if (workspacesB.includes(wsA)) continue');
+    expect(spec).toContain('Account B must not belong to A');
     expect(spec).toContain('expect(crossGet.status, JSON.stringify(crossGet)).toBe(403)');
     expect(spec).toContain('expect(crossSearch.code, JSON.stringify(crossSearch)).toBe("FORBIDDEN")');
   });
