@@ -10,7 +10,8 @@ import { afterAll, describe, expect, it } from "vitest";
 const root = path.resolve(import.meta.dirname, "..");
 const wf = readFileSync(path.join(root, ".github/workflows/production-db-setup.yml"), "utf8");
 const preview = readFileSync(path.join(root, ".github/workflows/preview-db-setup.yml"), "utf8");
-const steps = wf.split(/\n      - name: /).slice(1);
+// Operational sequence starts inside migrate; the unprivileged bind step has its own security contract.
+const steps = (wf.split(/\n  migrate:\n/)[1] ?? "").split(/\n      - name: /).slice(1);
 const stepIndex = name => steps.findIndex(step => step.startsWith(name));
 const runsIn = (step, mode) => {
   const m = /\n        if: (.+)\n/.exec(step);
