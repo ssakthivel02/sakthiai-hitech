@@ -151,9 +151,11 @@ export default function Creator() {
   // explicitly user-initiated: no background provider requests or paid resubmits.
   const [pollingGenerationId, setPollingGenerationId] = useState<number>();
   const [pollError, setPollError] = useState<unknown>();
+  const pollingGenerationRef = useRef(false);
 
   async function checkGenerationResult(generationId: number) {
-    if (!workspaceId || pollingGenerationId !== undefined) return;
+    if (!workspaceId || pollingGenerationRef.current) return;
+    pollingGenerationRef.current = true;
     setPollingGenerationId(generationId);
     setPollError(undefined);
     try {
@@ -162,6 +164,7 @@ export default function Creator() {
     } catch (error) {
       setPollError(error);
     } finally {
+      pollingGenerationRef.current = false;
       setPollingGenerationId(undefined);
     }
   }
