@@ -254,7 +254,8 @@ export const creatorRouter = router({
       }
     }),
 
-  pollGeneration: protectedProcedure.input(generationInput).query(async ({ ctx, input }) => {
+  // Polling may persist provider state and a completed artifact; it must never run via HTTP GET.
+  pollGeneration: protectedProcedure.input(generationInput).mutation(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
     try {
       return await pollCreatorGeneration(input);
