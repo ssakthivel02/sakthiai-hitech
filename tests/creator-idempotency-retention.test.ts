@@ -65,7 +65,7 @@ describe("Creator paid requests retain the same idempotency key after success", 
     expect(generated).toBe(1);
     expect(written.join("\\n")).not.toContain(payload.prompt);
     expect(written.join("\\n")).not.toContain(payload.consent);
-    expect([...store.keys()][0]).toMatch(/^sakthiai\\.creator\\.intent\\.v1:[0-9a-f]{64}$/);
+    expect([...store.keys()][0]).toMatch(/^sakthiai\.creator\.intent\.v1:[0-9a-f]{64}$/);
     const different = await creatorPersistentIntentKey({}, "VIDEO:3", payload, key, storage);
     expect(different).not.toBe(first);
     expect(generated).toBe(2);
