@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { creatorIntentKey, creatorPersistentIntentKey } from "../client/src/lib/creatorIntent";
+import { describeCreatorError } from "../shared/creatorErrors";
 
 const creator = readFileSync(new URL("../client/src/pages/Creator.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../client/src/pages/CreatorSpeechAvatarPanel.tsx", import.meta.url), "utf8");
@@ -83,6 +84,21 @@ describe("Creator paid requests retain the same idempotency key after success", 
     expect(creator).toContain("await idempotencyKeyFor(`VIDEO:${shot.id}`, payload)");
     expect(panel).toContain('await keyFor("speech", payload)');
     expect(panel).toContain('await keyFor("avatar", payload)');
+  });
+
+  it("explains blocked retry identity errors without encouraging a second paid request", () => {
+    for (const code of [
+      "CREATOR_IDEMPOTENCY_STORAGE_UNAVAILABLE",
+      "CREATOR_IDEMPOTENCY_STORAGE_CORRUPT",
+      "CREATOR_IDEMPOTENCY_FINGERPRINT_INVALID",
+    ]) {
+      const view = describeCreatorError(code);
+      expect(view.code).toBe(code);
+      expect(view.kind).toBe("blocked");
+      expect(view.title).not.toBe("Creator request refused");
+      expect(view.detail.toLowerCase()).toMatch(/not submitted|nothing was submitted|blocked/);
+      expect(view.action).toBeTruthy();
+    }
   });
 
   it("keeps speech and avatar idempotency after mutation success", () => {
