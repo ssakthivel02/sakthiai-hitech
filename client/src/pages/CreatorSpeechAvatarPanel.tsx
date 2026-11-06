@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { creatorIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,25 +57,20 @@ export default function CreatorSpeechAvatarPanel(props: {
   const [avatarAudioId, setAvatarAudioId] = useState<number>();
   const [avatarShotId, setAvatarShotId] = useState<number>();
   const [avatarLive, setAvatarLive] = useState(false);
-  const intents = useRef<Record<string, { key: string; fingerprint: string }>>({});
+  const intents = useRef<Record<string, CreatorRequestIntent>>({});
 
-  /** Same intent → same idempotency key, so a double click or a retry after a network error never pays twice. */
+  /** Successful submissions also keep their key. Unchanged repeated clicks never pay twice. */
   function keyFor(scope: string, payload: unknown) {
-    const fingerprint = JSON.stringify(payload);
-    const existing = intents.current[scope];
-    if (existing?.fingerprint === fingerprint) return existing.key;
-    const key = crypto.randomUUID();
-    intents.current[scope] = { key, fingerprint };
-    return key;
+    return creatorIntentKey(intents.current, scope, payload, () => crypto.randomUUID());
   }
 
   const done = () => { onChanged(); consents.refetch(); };
   const consents = trpc.creator.speechAvatar.listConsents.useQuery({ workspaceId });
-  const submitSpeech = trpc.creator.speechAvatar.submitSpeech.useMutation({ onSuccess: () => { delete intents.current.speech; setSpeechText(""); done(); }, onError });
+  const submitSpeech = trpc.creator.speechAvatar.submitSpeech.useMutation({ onSuccess: done, onError });
   const reviewSpeech = trpc.creator.speechAvatar.reviewSpeech.useMutation({ onSuccess: done, onError });
   const recordConsent = trpc.creator.speechAvatar.recordConsent.useMutation({ onSuccess: () => { setConsentSubject(""); setConsentEvidence(""); setConsentValidUntil(""); setConsentConfirmed(false); done(); }, onError });
   const revokeConsent = trpc.creator.speechAvatar.revokeConsent.useMutation({ onSuccess: done, onError });
-  const submitAvatar = trpc.creator.speechAvatar.submitAvatarVideo.useMutation({ onSuccess: () => { delete intents.current.avatar; done(); }, onError });
+  const submitAvatar = trpc.creator.speechAvatar.submitAvatarVideo.useMutation({ onSuccess: done, onError });
 
   const speechAssets = assets.map(asset => ({ asset, info: speechInfo(asset) })).filter((entry): entry is { asset: Asset; info: SpeechInfo } => Boolean(entry.info));
   const pendingSpeech = speechAssets.filter(entry => entry.asset.reviewDecision === "PENDING");
@@ -112,7 +108,7 @@ export default function CreatorSpeechAvatarPanel(props: {
           <Textarea lang={languageCode === "ta-IN" ? "ta" : "en"} value={speechText} onChange={e => setSpeechText(e.target.value)} placeholder="முருகா வேல் வேல்…" maxLength={10_000}/>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <Button disabled={!speechShotId || !speechText.trim() || submitSpeech.isPending} onClick={sendSpeech}><Mic size={16}/> Generate speech</Button>
-            <small>{speechText.length.toLocaleString()} characters · charged per character</small>
+            <small>{speechText.length.toLocaleString()} characters · charged per character. Repeating unchanged text/settings reuses its original job.</small>
           </div>
         </section>
 
@@ -168,6 +164,7 @@ export default function CreatorSpeechAvatarPanel(props: {
           <Button disabled={!selectedConsent || !avatarAudioId || !avatarShotId || submitAvatar.isPending} onClick={sendAvatar}><Video size={16}/> Generate avatar video</Button>
           {!activeConsents.length && <small>No active avatar consent in this workspace yet.</small>}
           {!drivingAudio.length && <small>No approved, locked audio yet: lock the audio master or pass a speech review first.</small>}
+          <small>Repeating the same consent, audio, shot and render mode reuses the original request, without a second charge.</small>
           <small>The avatar provider cannot stop a render once started; cancelling is refused rather than faked.</small>
         </section>
       </CardContent>

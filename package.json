@@ -23,7 +23,8 @@
     "ops:import-beta-sources": "tsx scripts/import-beta-sources.ts",
     "db:push": "drizzle-kit migrate",
     "creator:runtime:acceptance": "tsx scripts/creator-runtime-acceptance.ts",
-    "staging:migration-manifest": "tsx scripts/migration-manifest.ts"
+    "staging:migration-manifest": "tsx scripts/migration-manifest.ts",
+    "test:preview-live": "playwright test --config=playwright.live-preview.config.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",

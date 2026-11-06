@@ -11,6 +11,7 @@ import { ArrowLeft, Clapperboard, Film, Image, Plus, RefreshCw, ShieldCheck, Upl
 import CreatorReferenceControls from "./CreatorReferenceControls";
 import CreatorSpendAdminPanel from "./CreatorSpendAdminPanel";
 import CreatorSpeechAvatarPanel from "./CreatorSpeechAvatarPanel";
+import { creatorIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
 import { describeCreatorError } from "@shared/creatorErrors";
 
 type CueDraft = { startMs: number; endMs: number; text: string; language: "ta" | "en" };
@@ -104,20 +105,10 @@ export default function Creator() {
   const [sourcePrompt, setSourcePrompt] = useState("Approved Murugan storyboard and shot prompts in this Creator project.");
   const [criticalDefects, setCriticalDefects] = useState("");
   const [qualityScores, setQualityScores] = useState<Record<(typeof qualityDimensionIds)[number], number>>(() => Object.fromEntries(qualityDimensionIds.map(id => [id, 5])) as Record<(typeof qualityDimensionIds)[number], number>);
-  const generationIntents = useRef<Record<string, { idempotencyKey: string; fingerprint: string }>>({});
+  const generationIntents = useRef<Record<string, CreatorRequestIntent>>({});
 
-  function idempotencyKeyFor(scope: string, fingerprint: string) {
-    const existing = generationIntents.current[scope];
-    if (existing?.fingerprint === fingerprint) return existing.idempotencyKey;
-    const idempotencyKey = crypto.randomUUID();
-    generationIntents.current[scope] = { idempotencyKey, fingerprint };
-    return idempotencyKey;
-  }
-
-  function clearGenerationIntent(scope: string, idempotencyKey: string) {
-    if (generationIntents.current[scope]?.idempotencyKey === idempotencyKey) {
-      delete generationIntents.current[scope];
-    }
+  function idempotencyKeyFor(scope: string, payload: unknown) {
+    return creatorIntentKey(generationIntents.current, scope, payload, () => crypto.randomUUID());
   }
 
   const workspaces = trpc.workspace.list.useQuery(undefined, { enabled: isAuthenticated });
@@ -147,6 +138,28 @@ export default function Creator() {
   const [panelError, setPanelError] = useState<unknown>();
   const [manifestError, setManifestError] = useState<unknown>();
   const utils = trpc.useUtils();
+  const pollGeneration = trpc.creator.pollGeneration.useMutation();
+  // Provider completion alone does not persist a Creator artifact. Polling is
+  // explicitly user-initiated: no background provider requests or paid resubmits.
+  const [pollingGenerationId, setPollingGenerationId] = useState<number>();
+  const [pollError, setPollError] = useState<unknown>();
+  const pollingGenerationRef = useRef(false);
+
+  async function checkGenerationResult(generationId: number) {
+    if (!workspaceId || pollingGenerationRef.current) return;
+    pollingGenerationRef.current = true;
+    setPollingGenerationId(generationId);
+    setPollError(undefined);
+    try {
+      await pollGeneration.mutateAsync({ workspaceId, generationId });
+      await project.refetch();
+    } catch (error) {
+      setPollError(error);
+    } finally {
+      pollingGenerationRef.current = false;
+      setPollingGenerationId(undefined);
+    }
+  }
   const approvedVisualAssets = project.data?.assets?.filter(asset => (asset.assetType === "IMAGE" || asset.assetType === "VIDEO") && asset.reviewDecision === "APPROVED") ?? [];
   const eligibleConditioningAssets = project.data?.assets?.filter(asset =>
     (asset.assetType === "IMAGE" || asset.assetType === "REFERENCE") &&
@@ -170,18 +183,10 @@ export default function Creator() {
   const createProject = trpc.creator.workspace.createProject.useMutation({ onSuccess: created => { if (created?.id) setProjectId(created.id); projects.refetch(); } });
   const createScene = trpc.creator.workspace.createScene.useMutation({ onSuccess: () => project.refetch() });
   const createShot = trpc.creator.workspace.createShot.useMutation({ onSuccess: () => project.refetch() });
-  const submitImage = trpc.creator.submitImage.useMutation({
-    onSuccess: (_data, variables) => {
-      clearGenerationIntent(`IMAGE:${variables.shotId}`, variables.idempotencyKey);
-      project.refetch();
-    },
-  });
-  const submitVideo = trpc.creator.submitVideo.useMutation({
-    onSuccess: (_data, variables) => {
-      clearGenerationIntent(`VIDEO:${variables.shotId}`, variables.idempotencyKey);
-      project.refetch();
-    },
-  });
+  // Keep each accepted submission's key: another click with unchanged inputs
+  // must return its existing job rather than pay for a second generation.
+  const submitImage = trpc.creator.submitImage.useMutation({ onSuccess: () => project.refetch() });
+  const submitVideo = trpc.creator.submitVideo.useMutation({ onSuccess: () => project.refetch() });
   const retryGeneration = trpc.creator.retryGeneration.useMutation({ onSuccess: () => project.refetch() });
   const cancelGeneration = trpc.creator.cancelGeneration.useMutation({ onSuccess: () => project.refetch() });
   const ingestAudio = trpc.creator.audio.ingestApprovedMaster.useMutation({ onSuccess: () => { setAudioFile(undefined); setAudioApproved(false); project.refetch(); } });
@@ -208,7 +213,7 @@ export default function Creator() {
     }
   }
 
-  const operationError = [createProject.error, createScene.error, createShot.error, submitImage.error, submitVideo.error, retryGeneration.error, cancelGeneration.error, ingestAudio.error, saveCues.error, saveTimeline.error, renderCandidate.error, qualityReview.error, tamilReview.error, visualReview.error, finalizeMaster.error, renderVertical.error, reviewCrop.error, manifestError, panelError].find(Boolean);
+  const operationError = [createProject.error, createScene.error, createShot.error, submitImage.error, submitVideo.error, retryGeneration.error, cancelGeneration.error, ingestAudio.error, saveCues.error, saveTimeline.error, renderCandidate.error, qualityReview.error, tamilReview.error, visualReview.error, finalizeMaster.error, renderVertical.error, reviewCrop.error, manifestError, panelError, pollError].find(Boolean);
 
   function submitImageForShot(shot: { id: number; title: string; prompt: string | null }) {
     if (!workspaceId || !projectId) return;
@@ -220,8 +225,7 @@ export default function Creator() {
       aspectRatio: "16:9" as const,
       imageSize: "2K" as const,
     };
-    const fingerprint = JSON.stringify(payload);
-    const idempotencyKey = idempotencyKeyFor(`IMAGE:${shot.id}`, fingerprint);
+    const idempotencyKey = idempotencyKeyFor(`IMAGE:${shot.id}`, payload);
     submitImage.mutate({ ...payload, idempotencyKey });
   }
 
@@ -241,8 +245,7 @@ export default function Creator() {
       firstFrameAssetId: selectedFrames.firstFrameAssetId,
       lastFrameAssetId: selectedFrames.lastFrameAssetId,
     };
-    const fingerprint = JSON.stringify(payload);
-    const idempotencyKey = idempotencyKeyFor(`VIDEO:${shot.id}`, fingerprint);
+    const idempotencyKey = idempotencyKeyFor(`VIDEO:${shot.id}`, payload);
     submitVideo.mutate({ ...payload, idempotencyKey });
   }
 
@@ -302,9 +305,9 @@ export default function Creator() {
             </>}
           </CardContent></Card>
 
-          <Card><CardHeader><CardTitle>Generation jobs <Button size="sm" variant="ghost" onClick={() => project.refetch()}><RefreshCw size={14}/> Refresh</Button></CardTitle></CardHeader><CardContent><div className="list">{project.data?.generations.map(job => {
+          <Card><CardHeader><CardTitle>Generation jobs <Button size="sm" variant="ghost" onClick={() => project.refetch()}><RefreshCw size={14}/> Refresh</Button></CardTitle></CardHeader><CardContent><small>Repeating an unchanged request in this session reuses its original generation. Change the request details to start a separately billable generation.</small><div className="list">{project.data?.generations.map(job => {
             const sourceIds = provenanceIds(job.sourceAssetIdsJson);
-            return <div key={job.id} className="list-row"><div><span>#{job.id} · {job.kind} · {job.provider}</span><small>{job.status} · model {job.model}{job.outputAssetId ? ` · asset ${job.outputAssetId}` : ""}</small>{sourceIds.length > 0 && <small>Source/conditioning provenance assets: {sourceIds.join(", ")}</small>}</div><div style={{ display: "flex", gap: 6 }}>{job.status === "RETRYABLE" && <Button size="sm" variant="outline" onClick={() => retryGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><RotateCcw size={14}/> Retry existing</Button>}{job.status === "SUBMISSION_UNKNOWN" && <Badge variant="outline">Reconciliation required</Badge>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => cancelGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><Ban size={14}/> Cancel</Button>}</div></div>;
+            return <div key={job.id} className="list-row"><div><span>#{job.id} · {job.kind} · {job.provider}</span><small>{job.status} · model {job.model}{job.outputAssetId ? ` · asset ${job.outputAssetId}` : ""}</small>{sourceIds.length > 0 && <small>Source/conditioning provenance assets: {sourceIds.join(", ")}</small>}</div><div style={{ display: "flex", gap: 6 }}>{job.status === "RETRYABLE" && <Button size="sm" variant="outline" onClick={() => retryGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><RotateCcw size={14}/> Retry existing</Button>}{job.status === "SUBMISSION_UNKNOWN" && <Badge variant="outline">Reconciliation required</Badge>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" disabled={pollingGenerationId !== undefined} onClick={() => void checkGenerationResult(job.id)}><RefreshCw size={14}/> {pollingGenerationId === job.id ? "Checking…" : "Check result"}</Button>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => cancelGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><Ban size={14}/> Cancel</Button>}</div></div>;
           })}</div></CardContent></Card>
 
           {workspaceId && projectId && <CreatorReferenceControls workspaceId={workspaceId} creatorProjectId={projectId} onChanged={() => project.refetch()} />}

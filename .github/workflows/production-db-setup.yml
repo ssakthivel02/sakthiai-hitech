@@ -36,7 +36,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # This job has NO GitHub Environment, checkout, secrets or network calls.
+  # A mismatched SHA/mode/target is rejected before production environments
+  # can request approvals or bind their database credentials to a runner.
+  bind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      APPROVED_COMMIT: ${{ inputs.approved_commit }}
+      DISPATCHED_COMMIT: ${{ github.sha }}
+      CONFIRM_DATABASE: ${{ inputs.confirm_database }}
+      DISPATCH_MODE: ${{ inputs.mode }}
+    steps:
+      - name: Require exact approved SHA and production target before environment access
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${DISPATCH_MODE:-}" in
+            inspect|migrate) ;;
+            *) echo "::error::Unsupported production DB mode; refusing."; exit 1 ;;
+          esac
+          if ! [[ "${APPROVED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::approved_commit must be an exact lowercase 40-character SHA."
+            exit 1
+          fi
+          if [ "${APPROVED_COMMIT}" != "${DISPATCHED_COMMIT:-}" ]; then
+            echo "::error::Dispatched commit does not match owner-approved commit; refusing before protected environment."
+            exit 1
+          fi
+          if [ "${CONFIRM_DATABASE:-}" != "sakthiai_production" ]; then
+            echo "::error::Production DB confirmation must be exactly sakthiai_production."
+            exit 1
+          fi
+          echo "Secret-free production DB binding PASS for ${DISPATCHED_COMMIT}."
+
   migrate:
+    needs: bind
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Credentials live ONLY as environment secrets of these two environments (inspect = SELECT-only principal;
