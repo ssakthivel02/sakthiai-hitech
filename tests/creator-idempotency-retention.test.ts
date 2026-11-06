@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { creatorIntentKey } from "../client/src/lib/creatorIntent";
+import { creatorIntentKey, creatorPersistentIntentKey } from "../client/src/lib/creatorIntent";
 
 const creator = readFileSync(new URL("../client/src/pages/Creator.tsx", import.meta.url), "utf8");
 const panel = readFileSync(new URL("../client/src/pages/CreatorSpeechAvatarPanel.tsx", import.meta.url), "utf8");
@@ -49,8 +49,44 @@ describe("Creator paid requests retain the same idempotency key after success", 
     expect(issued).toBe(3);
   });
 
+  it("keeps the same billable key after a new component instance/tab reload without persisting raw content", async () => {
+    const store = new Map<string, string>();
+    const written: string[] = [];
+    const storage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => { written.push(key + ":" + value); store.set(key, value); },
+    };
+    let generated = 0;
+    const key = () => { generated++; return "aaaaaaaa-aaaa-4aaa-8aaa-" + String(generated).padStart(12, "0"); };
+    const payload = { workspaceId: 7, creatorProjectId: 12, shotId: 3, prompt: "PRIVATE_PROMPT_NEVER_IN_STORAGE", consent: "PRIVATE_CONSENT" };
+    const first = await creatorPersistentIntentKey({}, "IMAGE:3", payload, key, storage);
+    const again = await creatorPersistentIntentKey({}, "IMAGE:3", { ...payload }, key, storage);
+    expect(again).toBe(first);
+    expect(generated).toBe(1);
+    expect(written.join("\\n")).not.toContain(payload.prompt);
+    expect(written.join("\\n")).not.toContain(payload.consent);
+    expect([...store.keys()][0]).toMatch(/^sakthiai\\.creator\\.intent\\.v1:[0-9a-f]{64}$/);
+    const different = await creatorPersistentIntentKey({}, "VIDEO:3", payload, key, storage);
+    expect(different).not.toBe(first);
+    expect(generated).toBe(2);
+  });
+
+  it("fails closed without a writable tab mapping and never generates an untracked retry", async () => {
+    const intents: Record<string, { key: string; fingerprint: string }> = {};
+    const blocked = {
+      getItem: () => null,
+      setItem: () => { throw new Error("QuotaExceededError"); },
+    };
+    await expect(creatorPersistentIntentKey(intents, "IMAGE:3", { prompt: "A" },
+      () => "aaaaaaaa-aaaa-4aaa-8aaa-000000000001", blocked)).rejects.toThrow("CREATOR_IDEMPOTENCY_STORAGE_UNAVAILABLE");
+    expect(creator).toContain("await idempotencyKeyFor(`IMAGE:${shot.id}`, payload)");
+    expect(creator).toContain("await idempotencyKeyFor(`VIDEO:${shot.id}`, payload)");
+    expect(panel).toContain('await keyFor("speech", payload)');
+    expect(panel).toContain('await keyFor("avatar", payload)');
+  });
+
   it("keeps speech and avatar idempotency after mutation success", () => {
-    expect(panel).toContain('creatorIntentKey(intents.current, scope, payload');
+    expect(panel).toContain('creatorPersistentIntentKey(intents.current, scope, payload');
     expect(panel).toContain("const submitSpeech = trpc.creator.speechAvatar.submitSpeech.useMutation({ onSuccess: done, onError });");
     expect(panel).toContain("const submitAvatar = trpc.creator.speechAvatar.submitAvatarVideo.useMutation({ onSuccess: done, onError });");
     expect(panel).not.toContain("delete intents.current.speech");
@@ -58,7 +94,7 @@ describe("Creator paid requests retain the same idempotency key after success", 
   });
 
   it("keeps image/video idempotency after accepted submissions, consistent with backend deduplication", () => {
-    expect(creator).toContain("creatorIntentKey(generationIntents.current, scope, payload");
+    expect(creator).toContain("creatorPersistentIntentKey(generationIntents.current, scope, payload");
     expect(creator).not.toContain("clearGenerationIntent(");
     expect(creator).toContain("const submitImage = trpc.creator.submitImage.useMutation({ onSuccess: () => project.refetch() });");
     expect(creator).toContain("const submitVideo = trpc.creator.submitVideo.useMutation({ onSuccess: () => project.refetch() });");
