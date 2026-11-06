@@ -11,7 +11,7 @@ import { ArrowLeft, Clapperboard, Film, Image, Plus, RefreshCw, ShieldCheck, Upl
 import CreatorReferenceControls from "./CreatorReferenceControls";
 import CreatorSpendAdminPanel from "./CreatorSpendAdminPanel";
 import CreatorSpeechAvatarPanel from "./CreatorSpeechAvatarPanel";
-import { creatorIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
+import { creatorPersistentIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
 import { describeCreatorError } from "@shared/creatorErrors";
 
 type CueDraft = { startMs: number; endMs: number; text: string; language: "ta" | "en" };
@@ -108,7 +108,7 @@ export default function Creator() {
   const generationIntents = useRef<Record<string, CreatorRequestIntent>>({});
 
   function idempotencyKeyFor(scope: string, payload: unknown) {
-    return creatorIntentKey(generationIntents.current, scope, payload, () => crypto.randomUUID());
+    return creatorPersistentIntentKey(generationIntents.current, scope, payload, () => crypto.randomUUID());
   }
 
   const workspaces = trpc.workspace.list.useQuery(undefined, { enabled: isAuthenticated });
@@ -215,7 +215,7 @@ export default function Creator() {
 
   const operationError = [createProject.error, createScene.error, createShot.error, submitImage.error, submitVideo.error, retryGeneration.error, cancelGeneration.error, ingestAudio.error, saveCues.error, saveTimeline.error, renderCandidate.error, qualityReview.error, tamilReview.error, visualReview.error, finalizeMaster.error, renderVertical.error, reviewCrop.error, manifestError, panelError, pollError].find(Boolean);
 
-  function submitImageForShot(shot: { id: number; title: string; prompt: string | null }) {
+  async function submitImageForShot(shot: { id: number; title: string; prompt: string | null }) {
     if (!workspaceId || !projectId) return;
     const payload = {
       workspaceId,
@@ -225,11 +225,15 @@ export default function Creator() {
       aspectRatio: "16:9" as const,
       imageSize: "2K" as const,
     };
-    const idempotencyKey = idempotencyKeyFor(`IMAGE:${shot.id}`, payload);
-    submitImage.mutate({ ...payload, idempotencyKey });
+    try {
+      const idempotencyKey = await idempotencyKeyFor(`IMAGE:${shot.id}`, payload);
+      submitImage.mutate({ ...payload, idempotencyKey });
+    } catch (error) {
+      setPanelError(error); // No provider request if durable retry identity is unavailable.
+    }
   }
 
-  function submitVideoForShot(
+  async function submitVideoForShot(
     shot: { id: number; title: string; prompt: string | null },
     selectedFrames: FrameSelection,
   ) {
@@ -245,8 +249,12 @@ export default function Creator() {
       firstFrameAssetId: selectedFrames.firstFrameAssetId,
       lastFrameAssetId: selectedFrames.lastFrameAssetId,
     };
-    const idempotencyKey = idempotencyKeyFor(`VIDEO:${shot.id}`, payload);
-    submitVideo.mutate({ ...payload, idempotencyKey });
+    try {
+      const idempotencyKey = await idempotencyKeyFor(`VIDEO:${shot.id}`, payload);
+      submitVideo.mutate({ ...payload, idempotencyKey });
+    } catch (error) {
+      setPanelError(error); // No provider request if durable retry identity is unavailable.
+    }
   }
 
   async function uploadApprovedAudio() {
