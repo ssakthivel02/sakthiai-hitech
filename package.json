@@ -19,6 +19,7 @@
     "release:neutrality": "node scripts/validate-source-neutrality.mjs && node scripts/validate-source-neutrality.mjs --dist",
     "release:evidence": "tsx scripts/release-evidence.ts",
     "test:e2e": "node scripts/run-e2e.mjs",
+    "test:preview-live": "playwright test --config=playwright.live-preview.config.ts",
     "db:backfill-search-text": "tsx scripts/backfill-search-text.ts",
     "ops:import-beta-sources": "tsx scripts/import-beta-sources.ts",
     "db:push": "drizzle-kit migrate",
