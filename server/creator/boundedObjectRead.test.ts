@@ -17,7 +17,7 @@ describe("Creator checksum range safety", () => {
   });
   it("rejects a backend ignoring Range before consuming any bytes", async () => {
     let consumed = false;
-    const body = new ReadableStream<Uint8Array>({ pull() { consumed = true; } });
+    const body = { getReader() { consumed = true; throw new Error("SHOULD_NOT_READ"); } } as unknown as ReadableStream<Uint8Array>;
     await expect(readExactRangedObject(body, 3, undefined, 999999999)).rejects.toThrow("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
     expect(consumed).toBe(false);
   });
