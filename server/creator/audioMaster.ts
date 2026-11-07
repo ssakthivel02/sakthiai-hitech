@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { validateCreatorCaptionText } from "./captionIntegrity";
+import { parseWavDurationMs } from "./wavMasterValidation";
+export { parseWavDurationMs } from "./wavMasterValidation";
 import { and, eq } from "drizzle-orm";
 import {
   creatorAssets,
@@ -16,36 +18,6 @@ export type CaptionCueInput = {
   text: string;
   language?: "ta" | "en";
 };
-
-export function parseWavDurationMs(buffer: Buffer): number {
-  if (buffer.length < 44 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
-    throw new Error("CREATOR_AUDIO_INVALID_WAV");
-  }
-
-  let offset = 12;
-  let byteRate: number | null = null;
-  let dataBytes: number | null = null;
-
-  while (offset + 8 <= buffer.length) {
-    const id = buffer.toString("ascii", offset, offset + 4);
-    const size = buffer.readUInt32LE(offset + 4);
-    const body = offset + 8;
-    if (body + size > buffer.length) throw new Error("CREATOR_AUDIO_TRUNCATED_WAV");
-
-    if (id === "fmt ") {
-      if (size < 16) throw new Error("CREATOR_AUDIO_INVALID_WAV_FMT");
-      byteRate = buffer.readUInt32LE(body + 8);
-      if (!byteRate) throw new Error("CREATOR_AUDIO_INVALID_BYTE_RATE");
-    } else if (id === "data") {
-      dataBytes = size;
-    }
-
-    offset = body + size + (size % 2);
-  }
-
-  if (!byteRate || dataBytes === null) throw new Error("CREATOR_AUDIO_WAV_CHUNKS_MISSING");
-  return Math.max(1, Math.round((dataBytes / byteRate) * 1000));
-}
 
 export function validateCaptionCues(cues: CaptionCueInput[], durationMs: number): CaptionCueInput[] {
   if (!Number.isInteger(durationMs) || durationMs <= 0) throw new Error("CREATOR_AUDIO_DURATION_INVALID");
