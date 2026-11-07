@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { creatorAssets } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { storageListPage, storageRead } from "../storage";
+import { storageListPage, storageReadExactRange } from "../storage";
+import { CREATOR_CHECKSUM_MAX_BYTES } from "./boundedObjectRead";
 import { classifyCreatorInventory, type CreatorAssetReference, type CreatorObject } from "./orphanInventoryPolicy";
 
 /** Bounded, read-only page. No object deletion, writes, or automatic orphan claims. */
@@ -14,7 +15,7 @@ export async function auditCreatorStoragePage(input: {
 }, deps: {
   list?: typeof storageListPage;
   loadReferences?: (workspaceId: number, keys: string[]) => Promise<CreatorAssetReference[]>;
-  read?: typeof storageRead;
+  read?: typeof storageReadExactRange;
   now?: () => number;
 } = {}) {
   if (!Number.isSafeInteger(input.workspaceId) || input.workspaceId <= 0) throw new Error("CREATOR_INVENTORY_INVALID_WORKSPACE");
@@ -47,15 +48,15 @@ export async function auditCreatorStoragePage(input: {
   const references = await loadReferences(input.workspaceId, keys);
   if (references.some((r) => !keys.includes(r.storageKey))) throw new Error("CREATOR_INVENTORY_REFERENCE_SCOPE_VIOLATION");
   const entries = classifyCreatorInventory(page.objects, references, (deps.now ?? Date.now)());
-  const read = deps.read ?? storageRead;
+  const read = deps.read ?? storageReadExactRange;
   let verified = 0;
   for (const entry of entries) {
     if (verified >= verifyChecksumCount) break;
     if (entry.classification !== "REFERENCED" || entry.checksum !== "NOT_CHECKED" ||
-        entry.sizeBytes > 8 * 1024 * 1024 || !entry.expectedSha256) continue;
+        entry.sizeBytes < 1 || entry.sizeBytes > CREATOR_CHECKSUM_MAX_BYTES || !entry.expectedSha256) continue;
     verified++;
     try {
-      const bytes = Buffer.from(await read(entry.key));
+      const bytes = Buffer.from(await read(entry.key, entry.sizeBytes));
       const actual = createHash("sha256").update(bytes).digest("hex");
       entry.checksum = bytes.byteLength === entry.sizeBytes && actual === entry.expectedSha256 ? "MATCH" : "MISMATCH";
     } catch {
