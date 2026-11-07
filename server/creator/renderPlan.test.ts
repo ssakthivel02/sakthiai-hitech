@@ -102,6 +102,12 @@ describe("Creator deterministic render plan", () => {
     })).toThrow("CREATOR_RENDER_VISUAL_NOT_APPROVED");
   });
 
+  it("refuses forged SRT timestamps even if a persisted cue bypassed ingestion", () => {
+    expect(() => serializeSrt([
+      { startMs: 0, endMs: 1000, text: "முருகா\n00:00:01,000 --> 00:00:09,000", language: "ta", locked: true },
+    ], 10000)).toThrow("CREATOR_CAPTION_SRT_TIMING_MARKUP_FORBIDDEN");
+  });
+
   it("rejects unlocked or overlapping captions", () => {
     expect(() => serializeSrt([{ ...captions[0], locked: false }], 3000)).toThrow("CREATOR_RENDER_CAPTION_NOT_LOCKED");
     expect(() => serializeSrt([captions[0], { ...captions[1], startMs: 1400 }], 3000)).toThrow("CREATOR_RENDER_CAPTION_OVERLAP");

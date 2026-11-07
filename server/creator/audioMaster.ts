@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { validateCreatorCaptionText } from "./captionIntegrity";
 import { and, eq } from "drizzle-orm";
 import {
   creatorAssets,
@@ -51,7 +52,7 @@ export function validateCaptionCues(cues: CaptionCueInput[], durationMs: number)
   const normalized = cues.map((cue) => ({
     startMs: cue.startMs,
     endMs: cue.endMs,
-    text: cue.text.trim(),
+    text: validateCreatorCaptionText(cue.text),
     language: cue.language ?? "ta",
   }));
 
@@ -62,8 +63,6 @@ export function validateCaptionCues(cues: CaptionCueInput[], durationMs: number)
     }
     if (cue.endMs > durationMs) throw new Error("CREATOR_CAPTION_OUTSIDE_AUDIO_MASTER");
     if (cue.startMs < previousEnd) throw new Error("CREATOR_CAPTION_OVERLAP");
-    if (!cue.text) throw new Error("CREATOR_CAPTION_TEXT_REQUIRED");
-    if (cue.text.length > 600) throw new Error("CREATOR_CAPTION_TEXT_TOO_LONG");
     previousEnd = cue.endMs;
   }
   return normalized;

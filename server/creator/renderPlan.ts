@@ -1,3 +1,5 @@
+import { validateCreatorCaptionText } from "./captionIntegrity";
+
 export type RenderVisualItem = {
   assetId: number;
   shotId?: number | null;
@@ -80,8 +82,8 @@ export function serializeSrt(cues: RenderCaptionCue[], durationMs: number): stri
     }
     if (cue.startMs < previousEnd) throw new Error("CREATOR_RENDER_CAPTION_OVERLAP");
     if (cue.endMs > durationMs) throw new Error("CREATOR_RENDER_CAPTION_OUTSIDE_MASTER");
-    const text = cue.text.trim();
-    if (!text) throw new Error("CREATOR_RENDER_CAPTION_TEXT_REQUIRED");
+    if (!cue.text.trim()) throw new Error("CREATOR_RENDER_CAPTION_TEXT_REQUIRED");
+    const text = validateCreatorCaptionText(cue.text);
     previousEnd = cue.endMs;
     return `${index + 1}\n${formatSrtTime(cue.startMs)} --> ${formatSrtTime(cue.endMs)}\n${text}\n`;
   }).join("\n");

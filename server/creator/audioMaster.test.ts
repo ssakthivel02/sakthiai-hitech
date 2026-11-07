@@ -60,6 +60,15 @@ describe("Creator audio master", () => {
       .toThrow("CREATOR_CAPTION_OUTSIDE_AUDIO_MASTER");
   });
 
+  it("rejects SRT/ASS caption injection at ingest without rewriting Tamil text", () => {
+    expect(() => validateCaptionCues([
+      { startMs: 0, endMs: 1000, text: "முருகா\n00:00:01,000 --> 00:00:09,000" },
+    ], 10000)).toThrow("CREATOR_CAPTION_SRT_TIMING_MARKUP_FORBIDDEN");
+    expect(() => validateCaptionCues([
+      { startMs: 0, endMs: 1000, text: "{\\an8}முருகா" },
+    ], 10000)).toThrow("CREATOR_CAPTION_STYLE_MARKUP_FORBIDDEN");
+  });
+
   it("rejects empty cues and invalid master duration", () => {
     expect(() => validateCaptionCues([{ startMs: 0, endMs: 500, text: "   " }], 1000))
       .toThrow("CREATOR_CAPTION_TEXT_REQUIRED");
