@@ -20,6 +20,7 @@ import { createCreatorSpendHook, requireCreatorWorkspaceOwner, requirePaidCreato
 import { listCreatorProviderStatuses } from "./providerRegistry";
 import { creatorSpendAdminRouter } from "./spendAdmin";
 import { verifyCreatorRuntimeAcceptance } from "./runtimeAcceptance";
+import { auditCreatorStoragePage } from "./orphanReconciliation";
 import { creatorError, requirePaidGenerationReady } from "./routerGuards";
 import { creatorSpeechAvatarRouter } from "./speechAvatarRouter";
 import { createRuntimeVerifyGuard, RuntimeVerifyTimeoutError } from "./runtimeVerifyGuard";
@@ -119,6 +120,16 @@ export const creatorRouter = router({
   preflight: operatorProcedure.input(workspaceInput).query(async ({ ctx, input }) => {
     await requireWorkspace(ctx.user.id, input.workspaceId);
     return buildCreatorRuntimePreflight();
+  }),
+
+  // Operator-only, tenant-scoped, bounded READ-ONLY storage audit. Never deletes objects.
+  storageInventory: operatorProcedure.input(workspaceInput.extend({
+    continuationToken: z.string().min(1).max(2048).optional(),
+    maxKeys: z.number().int().min(1).max(200).default(100),
+    verifyChecksumCount: z.number().int().min(0).max(3).default(2),
+  })).query(async ({ ctx, input }) => {
+    await requireWorkspace(ctx.user.id, input.workspaceId);
+    return auditCreatorStoragePage(input);
   }),
 
   verifyRuntime: operatorProcedure.input(workspaceInput).mutation(async ({ ctx, input }) => {
