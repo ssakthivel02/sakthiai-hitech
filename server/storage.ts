@@ -1,3 +1,4 @@
+import { readExactRangedObject, CREATOR_CHECKSUM_MAX_BYTES } from "./creator/boundedObjectRead";
 import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ENV } from "./_core/env";
@@ -69,6 +70,25 @@ export async function storageRead(relKey: string): Promise<Uint8Array> {
   const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
   if (!result.Body) throw new Error("Storage object body missing");
   return result.Body.transformToByteArray();
+}
+
+/** Exact-size, bounded S3 GET. Range is required and the stream is capped even if
+ * a backend lies about Content-Length or ignores the requested range. */
+export async function storageReadExactRange(relKey: string, expectedSize: number): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(expectedSize) || expectedSize < 1 || expectedSize > CREATOR_CHECKSUM_MAX_BYTES) {
+    throw new Error("CREATOR_CHECKSUM_SIZE_OUT_OF_RANGE");
+  }
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  const result = await s3.send(new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Range: `bytes=0-${expectedSize - 1}`,
+  }));
+  if (!result.Body) throw new Error("CREATOR_CHECKSUM_MISSING_BODY");
+  // Refuse a full-object response before reading a single byte.
+  if (!result.ContentRange) throw new Error("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+  return readExactRangedObject(result.Body.transformToWebStream(), expectedSize, result.ContentRange, result.ContentLength);
 }
 
 export async function storageDelete(relKey: string): Promise<void> {
