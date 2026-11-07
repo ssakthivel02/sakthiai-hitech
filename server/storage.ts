@@ -138,7 +138,7 @@ export async function storageListPage(prefix: string, maxKeys = 100, continuatio
   isTruncated: boolean;
   nextContinuationToken?: string;
 }> {
-  if (!/^creator\\/[1-9][0-9]*\\/$/.test(prefix)) throw new Error("CREATOR_INVENTORY_PREFIX_INVALID");
+  if (!new RegExp("^creator/[1-9][0-9]*/$").test(prefix)) throw new Error("CREATOR_INVENTORY_PREFIX_INVALID");
   if (!Number.isInteger(maxKeys) || maxKeys < 1 || maxKeys > 200) throw new Error("CREATOR_INVENTORY_LIMIT_INVALID");
   const { client: s3, bucket } = getStorageConfig();
   const result = await s3.send(new ListObjectsV2Command({
