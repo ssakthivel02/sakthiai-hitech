@@ -60,6 +60,28 @@ describe("Creator bounded read-only object reconciliation", () => {
     expect(result.nextContinuationToken).toBe("next-token");
     expect(result.deletionPerformed).toBe(false);
   });
+  it("passes inventoried byte size into the bounded ranged read", async () => {
+    let requestedSize = -1;
+    const result = await auditCreatorStoragePage({ workspaceId: 7 }, {
+      list: async () => page(),
+      loadReferences: async () => reference(),
+      read: async (_key, expectedSize) => {
+        requestedSize = expectedSize;
+        return payload;
+      },
+    });
+    expect(requestedSize).toBe(payload.length);
+    expect(result.entries[0].checksum).toBe("MATCH");
+  });
+  it("fails closed if a ranged read detects post-list object growth", async () => {
+    const result = await auditCreatorStoragePage({ workspaceId: 7 }, {
+      list: async () => page(),
+      loadReferences: async () => reference(),
+      read: async () => { throw new Error("CREATOR_CHECKSUM_RANGE_NOT_HONORED"); },
+    });
+    expect(result.entries[0].checksum).toBe("READ_FAILED");
+    expect(result.deletionPerformed).toBe(false);
+  });
   it("records a failed checksum read rather than claiming verification", async () => {
     const result = await auditCreatorStoragePage({ workspaceId: 7 }, {
       list: async () => page(), loadReferences: async () => reference(), read: async () => { throw new Error("storage read failed"); },
