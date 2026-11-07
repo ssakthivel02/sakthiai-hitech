@@ -99,6 +99,8 @@ export async function ingestApprovedAudioMaster(input: {
   const checksumSha256 = createHash("sha256").update(input.data).digest("hex");
   const db = await requireDb();
 
+  // Cheap preflight prevents unnecessary object writes. These checks are NOT
+  // authoritative: another request may lock the master before we upload.
   const [project] = await db
     .select({ id: creatorProjects.id, audioMasterAssetId: creatorProjects.audioMasterAssetId })
     .from(creatorProjects)
@@ -130,39 +132,66 @@ export async function ingestApprovedAudioMaster(input: {
     ingestedAt: new Date().toISOString(),
   };
 
-  const result = await db.insert(creatorAssets).values({
-    workspaceId: input.workspaceId,
-    creatorProjectId: input.creatorProjectId,
-    assetType: "AUDIO_MASTER",
-    mimeType: input.mimeType,
-    storageKey: stored.key,
-    checksumSha256,
-    byteSize: input.data.byteLength,
-    immutable: 1,
-    provenanceJson: JSON.stringify(provenance),
-    reviewDecision: "APPROVED",
+  // All three database writes are atomic. The project row lock serializes
+  // concurrent master uploads and the checks MUST be repeated under that lock.
+  // A failed insert/update rolls back both the asset and the master pointer;
+  // no half-created timeline may be exposed to the renderer.
+  //
+  // Do not delete the uploaded object on an ambiguous commit/network failure:
+  // the transaction may have committed even if the client lost its response.
+  // Keeping an unreferenced object is safer than deleting a committed master.
+  // Orphans can be reconciled by storageKey after database recovery.
+  return db.transaction(async (tx) => {
+    const [lockedProject] = await tx
+      .select({ id: creatorProjects.id, audioMasterAssetId: creatorProjects.audioMasterAssetId })
+      .from(creatorProjects)
+      .where(and(eq(creatorProjects.id, input.creatorProjectId), eq(creatorProjects.workspaceId, input.workspaceId)))
+      .limit(1)
+      .for("update");
+    if (!lockedProject) throw new Error("CREATOR_PROJECT_NOT_FOUND");
+    if (lockedProject.audioMasterAssetId) throw new Error("CREATOR_AUDIO_MASTER_ALREADY_LOCKED");
+
+    const [lockedDuplicate] = await tx
+      .select({ id: creatorAssets.id })
+      .from(creatorAssets)
+      .where(and(eq(creatorAssets.workspaceId, input.workspaceId), eq(creatorAssets.checksumSha256, checksumSha256)))
+      .limit(1);
+    if (lockedDuplicate) throw new Error("CREATOR_AUDIO_DUPLICATE");
+
+    const result = await tx.insert(creatorAssets).values({
+      workspaceId: input.workspaceId,
+      creatorProjectId: input.creatorProjectId,
+      assetType: "AUDIO_MASTER",
+      mimeType: input.mimeType,
+      storageKey: stored.key,
+      checksumSha256,
+      byteSize: input.data.byteLength,
+      immutable: 1,
+      provenanceJson: JSON.stringify(provenance),
+      reviewDecision: "APPROVED",
+    });
+    const assetId = Number(result[0].insertId);
+    if (!assetId) throw new Error("CREATOR_AUDIO_ASSET_CREATE_FAILED");
+
+    await tx
+      .update(creatorProjects)
+      .set({ audioMasterAssetId: assetId })
+      .where(and(eq(creatorProjects.id, input.creatorProjectId), eq(creatorProjects.workspaceId, input.workspaceId)));
+
+    const timelineResult = await tx.insert(creatorTimelines).values({
+      workspaceId: input.workspaceId,
+      creatorProjectId: input.creatorProjectId,
+      name: "Master 16:9",
+      audioMasterAssetId: assetId,
+      width: 1920,
+      height: 1080,
+      fps: 24,
+    });
+    const timelineId = Number(timelineResult[0].insertId);
+    if (!timelineId) throw new Error("CREATOR_TIMELINE_CREATE_FAILED");
+
+    return { assetId, timelineId, durationMs, checksumSha256, storageKey: stored.key, immutable: true as const };
   });
-  const assetId = Number(result[0].insertId);
-  if (!assetId) throw new Error("CREATOR_AUDIO_ASSET_CREATE_FAILED");
-
-  await db
-    .update(creatorProjects)
-    .set({ audioMasterAssetId: assetId })
-    .where(and(eq(creatorProjects.id, input.creatorProjectId), eq(creatorProjects.workspaceId, input.workspaceId)));
-
-  const timelineResult = await db.insert(creatorTimelines).values({
-    workspaceId: input.workspaceId,
-    creatorProjectId: input.creatorProjectId,
-    name: "Master 16:9",
-    audioMasterAssetId: assetId,
-    width: 1920,
-    height: 1080,
-    fps: 24,
-  });
-  const timelineId = Number(timelineResult[0].insertId);
-  if (!timelineId) throw new Error("CREATOR_TIMELINE_CREATE_FAILED");
-
-  return { assetId, timelineId, durationMs, checksumSha256, storageKey: stored.key, immutable: true as const };
 }
 
 /**
