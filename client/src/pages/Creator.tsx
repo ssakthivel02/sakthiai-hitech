@@ -13,6 +13,7 @@ import CreatorReferenceControls from "./CreatorReferenceControls";
 type CueDraft = { startMs: number; endMs: number; text: string; language: "ta" | "en" };
 type TimelineDraft = { assetId: number; shotId?: number; startMs: number; endMs: number; track: 1; sortOrder: number };
 type FrameSelection = { firstFrameAssetId?: number; lastFrameAssetId?: number };
+type QualityScoreDraft = Record<(typeof qualityDimensionIds)[number], number | null>;
 
 const qualityDimensionIds = [
   "VQ-CONTENT-01",
@@ -64,10 +65,12 @@ export default function Creator() {
   const [captionEndMs, setCaptionEndMs] = useState(3000);
   const [cueDrafts, setCueDrafts] = useState<CueDraft[]>([]);
   const [timelineDrafts, setTimelineDrafts] = useState<TimelineDraft[]>([]);
-  const [reviewNotes, setReviewNotes] = useState("Human review completed against the approved Murugan audio, Tamil text and visual reference intent.");
+  const [qualityReviewNotes, setQualityReviewNotes] = useState("");
+  const [tamilReviewNotes, setTamilReviewNotes] = useState("");
+  const [visualReviewNotes, setVisualReviewNotes] = useState("");
   const [sourcePrompt, setSourcePrompt] = useState("Approved Murugan storyboard and shot prompts in this Creator project.");
   const [criticalDefects, setCriticalDefects] = useState("");
-  const [qualityScores, setQualityScores] = useState<Record<(typeof qualityDimensionIds)[number], number>>(() => Object.fromEntries(qualityDimensionIds.map(id => [id, 5])) as Record<(typeof qualityDimensionIds)[number], number>);
+  const [qualityScores, setQualityScores] = useState<QualityScoreDraft>(() => Object.fromEntries(qualityDimensionIds.map(id => [id, null])) as QualityScoreDraft);
   const generationIntents = useRef<Record<string, { idempotencyKey: string; fingerprint: string }>>({});
 
   function idempotencyKeyFor(scope: string, fingerprint: string) {
@@ -107,6 +110,15 @@ export default function Creator() {
   const activeTimeline = project.data?.timelines?.[0];
   const renderAssets = project.data?.assets?.filter(asset => asset.assetType === "RENDER") ?? [];
   const latestRenderAsset = renderAssets[0];
+  const qualityScoresComplete = qualityDimensionIds.every(id => qualityScores[id] !== null && Number.isFinite(qualityScores[id]) && qualityScores[id]! >= 0 && qualityScores[id]! <= 5);
+  useEffect(() => {
+    // A new project or candidate render must never inherit prior human review evidence.
+    setQualityScores(Object.fromEntries(qualityDimensionIds.map(id => [id, null])) as QualityScoreDraft);
+    setQualityReviewNotes("");
+    setTamilReviewNotes("");
+    setVisualReviewNotes("");
+    setCriticalDefects("");
+  }, [projectId, latestRenderAsset?.id]);
   const approvedVisualAssets = project.data?.assets?.filter(asset => (asset.assetType === "IMAGE" || asset.assetType === "VIDEO") && asset.reviewDecision === "APPROVED") ?? [];
   const eligibleConditioningAssets = project.data?.assets?.filter(asset =>
     (asset.assetType === "IMAGE" || asset.assetType === "REFERENCE") &&
@@ -277,11 +289,18 @@ export default function Creator() {
           <Card><CardHeader><CardTitle>4. Quality → Tamil → Visual → Final master</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 12 }}>
             <div>{latestRenderAsset ? <Badge>Latest render asset {latestRenderAsset.id}</Badge> : <Badge variant="outline">No render candidate yet</Badge>}</div>
             <Textarea value={sourcePrompt} onChange={e => setSourcePrompt(e.target.value)} placeholder="Approved source storyboard/prompt"/>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px,1fr))", gap: 8 }}>{qualityDimensionIds.map(id => <label key={id} style={{ display: "grid", gap: 4 }}><small>{id}</small><Input type="number" min={0} max={5} step={0.1} value={qualityScores[id]} onChange={e => setQualityScores(current => ({ ...current, [id]: Number(e.target.value) }))}/></label>)}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(160px,1fr))", gap: 8 }}>{qualityDimensionIds.map(id => <label key={id} style={{ display: "grid", gap: 4 }}><small>{id}</small><Input type="number" min={0} max={5} step={0.1} value={qualityScores[id] ?? ""} onChange={e => setQualityScores(current => ({ ...current, [id]: e.target.value === "" ? null : Number(e.target.value) }))}/></label>)}</div>
             <Textarea value={criticalDefects} onChange={e => setCriticalDefects(e.target.value)} placeholder="Critical defects, one per line. Leave blank if none."/>
-            <Button disabled={!latestRenderAsset || qualityReview.isPending} onClick={() => qualityReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, reviewerType: "HUMAN", sourcePromptOrStoryboard: sourcePrompt, dimensionScores: qualityScores, criticalDefects: criticalDefects.split("\n").map(v => v.trim()).filter(Boolean), notes: reviewNotes })}>Record governed quality review</Button>
-            <Textarea value={reviewNotes} onChange={e => setReviewNotes(e.target.value)} placeholder="Human review evidence notes"/>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button disabled={!latestRenderAsset || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Tamil PASS</Button><Button variant="outline" disabled={!latestRenderAsset || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Tamil REJECT</Button><Button disabled={!latestRenderAsset || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Visual PASS</Button><Button variant="outline" disabled={!latestRenderAsset || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Visual REJECT</Button></div>
+            <Button disabled={!latestRenderAsset || !qualityScoresComplete || !sourcePrompt.trim() || qualityReview.isPending} onClick={() => {
+              if (!qualityScoresComplete) return;
+              const dimensionScores = Object.fromEntries(qualityDimensionIds.map(id => [id, qualityScores[id]!])) as Record<(typeof qualityDimensionIds)[number], number>;
+              qualityReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, reviewerType: "HUMAN", sourcePromptOrStoryboard: sourcePrompt, dimensionScores, criticalDefects: criticalDefects.split("\n").map(v => v.trim()).filter(Boolean), notes: qualityReviewNotes });
+            }}>Record governed quality review</Button>
+            <small>All eight quality dimensions must be explicitly scored against this rendered candidate; no score is pre-approved.</small>
+            <Textarea value={qualityReviewNotes} onChange={e => setQualityReviewNotes(e.target.value)} placeholder="Quality inspection evidence and remediation notes"/>
+            <Textarea value={tamilReviewNotes} onChange={e => setTamilReviewNotes(e.target.value)} placeholder="Tamil reviewer: pronunciation, lyrics, captions and cultural evidence (required)"/>
+            <Textarea value={visualReviewNotes} onChange={e => setVisualReviewNotes(e.target.value)} placeholder="Visual reviewer: character identity, continuity, composition and defects (required)"/>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button disabled={!latestRenderAsset || !tamilReviewNotes.trim() || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: tamilReviewNotes })}>Tamil PASS</Button><Button variant="outline" disabled={!latestRenderAsset || !tamilReviewNotes.trim() || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: tamilReviewNotes })}>Tamil REJECT</Button><Button disabled={!latestRenderAsset || !visualReviewNotes.trim() || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: visualReviewNotes })}>Visual PASS</Button><Button variant="outline" disabled={!latestRenderAsset || !visualReviewNotes.trim() || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: visualReviewNotes })}>Visual REJECT</Button></div>
             <Button disabled={!latestRenderAsset || finalizeMaster.isPending} onClick={() => finalizeMaster.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id })}><ShieldCheck size={16}/> Promote approved 16:9 final master</Button>
             <div className="list">{project.data?.reviews?.map(review => <div key={review.id} className="list-row"><span>{review.reviewType} · {review.decision}</span><small>asset {review.assetId ?? "—"} · review {review.id}</small></div>)}</div>
             <div className="list">{project.data?.exports?.map(item => <div key={item.id} className="list-row"><span>Export #{item.id} · {item.status}</span><small>{item.width}×{item.height} · {item.renderer} · asset {item.assetId ?? "pending"}</small></div>)}</div>
