@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { auditCreatorStoragePage } from "./orphanReconciliation";
+import type { CreatorObject } from "./orphanInventoryPolicy";
 
 const payload = Buffer.from("Murugan approved media");
 const sha = createHash("sha256").update(payload).digest("hex");
 const key = "creator/7/10/audio-master/master.wav";
-const page = (objects = [{ key, sizeBytes: payload.length, lastModified: new Date("2026-11-07T00:00:00Z") }], isTruncated = false, nextContinuationToken?: string) =>
+const page = (objects: CreatorObject[] = [{ key, sizeBytes: payload.length, lastModified: new Date("2026-11-07T00:00:00Z") }], isTruncated = false, nextContinuationToken?: string) =>
   ({ objects, isTruncated, nextContinuationToken });
 const reference = () => [{ assetId: 33, storageKey: key, checksumSha256: sha, byteSize: payload.length }];
 
