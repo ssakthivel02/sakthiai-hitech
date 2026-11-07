@@ -165,6 +165,12 @@ export async function ingestApprovedAudioMaster(input: {
   return { assetId, timelineId, durationMs, checksumSha256, storageKey: stored.key, immutable: true as const };
 }
 
+/**
+ * A caption replacement is one unit of work: validate against the locked master,
+ * delete the old rows and insert the new rows in the SAME MySQL transaction.
+ * Locking the timeline row serializes concurrent replacements for one timeline.
+ * Any insert failure rolls back the delete, preserving the last approved cues.
+ */
 export async function replaceLockedCaptionCues(input: {
   workspaceId: number;
   creatorProjectId: number;
@@ -172,62 +178,65 @@ export async function replaceLockedCaptionCues(input: {
   cues: CaptionCueInput[];
 }) {
   const db = await requireDb();
-  const [timeline] = await db
-    .select({ id: creatorTimelines.id, audioMasterAssetId: creatorTimelines.audioMasterAssetId })
-    .from(creatorTimelines)
-    .where(
-      and(
-        eq(creatorTimelines.id, input.timelineId),
-        eq(creatorTimelines.workspaceId, input.workspaceId),
-        eq(creatorTimelines.creatorProjectId, input.creatorProjectId),
-      ),
-    )
-    .limit(1);
-  if (!timeline) throw new Error("CREATOR_TIMELINE_NOT_FOUND");
-  if (!timeline.audioMasterAssetId) throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_MISSING");
+  return db.transaction(async (tx) => {
+    const [timeline] = await tx
+      .select({ id: creatorTimelines.id, audioMasterAssetId: creatorTimelines.audioMasterAssetId })
+      .from(creatorTimelines)
+      .where(
+        and(
+          eq(creatorTimelines.id, input.timelineId),
+          eq(creatorTimelines.workspaceId, input.workspaceId),
+          eq(creatorTimelines.creatorProjectId, input.creatorProjectId),
+        ),
+      )
+      .limit(1)
+      .for("update");
+    if (!timeline) throw new Error("CREATOR_TIMELINE_NOT_FOUND");
+    if (!timeline.audioMasterAssetId) throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_MISSING");
 
-  const [audioMaster] = await db
-    .select({ id: creatorAssets.id, assetType: creatorAssets.assetType, immutable: creatorAssets.immutable, provenanceJson: creatorAssets.provenanceJson })
-    .from(creatorAssets)
-    .where(
-      and(
-        eq(creatorAssets.id, timeline.audioMasterAssetId),
-        eq(creatorAssets.workspaceId, input.workspaceId),
-        eq(creatorAssets.creatorProjectId, input.creatorProjectId),
-      ),
-    )
-    .limit(1);
-  if (!audioMaster || audioMaster.assetType !== "AUDIO_MASTER" || audioMaster.immutable !== 1) {
-    throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_INVALID");
-  }
+    const [audioMaster] = await tx
+      .select({ id: creatorAssets.id, assetType: creatorAssets.assetType, immutable: creatorAssets.immutable, provenanceJson: creatorAssets.provenanceJson })
+      .from(creatorAssets)
+      .where(
+        and(
+          eq(creatorAssets.id, timeline.audioMasterAssetId),
+          eq(creatorAssets.workspaceId, input.workspaceId),
+          eq(creatorAssets.creatorProjectId, input.creatorProjectId),
+        ),
+      )
+      .limit(1);
+    if (!audioMaster || audioMaster.assetType !== "AUDIO_MASTER" || audioMaster.immutable !== 1) {
+      throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_INVALID");
+    }
 
-  const audioDurationMs = readDurationFromProvenance(audioMaster.provenanceJson);
-  const cues = validateCaptionCues(input.cues, audioDurationMs);
+    const audioDurationMs = readDurationFromProvenance(audioMaster.provenanceJson);
+    const cues = validateCaptionCues(input.cues, audioDurationMs);
 
-  await db
-    .delete(creatorCaptionCues)
-    .where(
-      and(
-        eq(creatorCaptionCues.workspaceId, input.workspaceId),
-        eq(creatorCaptionCues.creatorProjectId, input.creatorProjectId),
-        eq(creatorCaptionCues.timelineId, input.timelineId),
-      ),
-    );
+    await tx
+      .delete(creatorCaptionCues)
+      .where(
+        and(
+          eq(creatorCaptionCues.workspaceId, input.workspaceId),
+          eq(creatorCaptionCues.creatorProjectId, input.creatorProjectId),
+          eq(creatorCaptionCues.timelineId, input.timelineId),
+        ),
+      );
 
-  if (cues.length) {
-    await db.insert(creatorCaptionCues).values(
-      cues.map((cue) => ({
-        workspaceId: input.workspaceId,
-        creatorProjectId: input.creatorProjectId,
-        timelineId: input.timelineId,
-        language: cue.language ?? "ta",
-        startMs: cue.startMs,
-        endMs: cue.endMs,
-        text: cue.text,
-        locked: 1,
-      })),
-    );
-  }
+    if (cues.length) {
+      await tx.insert(creatorCaptionCues).values(
+        cues.map((cue) => ({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          timelineId: input.timelineId,
+          language: cue.language ?? "ta",
+          startMs: cue.startMs,
+          endMs: cue.endMs,
+          text: cue.text,
+          locked: 1,
+        })),
+      );
+    }
 
-  return { timelineId: input.timelineId, audioMasterAssetId: audioMaster.id, audioDurationMs, cueCount: cues.length, locked: true as const };
+    return { timelineId: input.timelineId, audioMasterAssetId: audioMaster.id, audioDurationMs, cueCount: cues.length, locked: true as const };
+  });
 }
