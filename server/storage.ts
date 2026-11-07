@@ -1,4 +1,4 @@
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ENV } from "./_core/env";
 
@@ -130,4 +130,33 @@ export async function storageGetSignedUrl(relKey: string): Promise<string> {
     new GetObjectCommand({ Bucket: bucket, Key: key }),
     { expiresIn: 300 },
   );
+}
+
+/** Bounded S3 listing for operator-only Creator reconciliation; no writes or deletion. */
+export async function storageListPage(prefix: string, maxKeys = 100, continuationToken?: string): Promise<{
+  objects: Array<{ key: string; sizeBytes: number; lastModified: Date | null }>;
+  isTruncated: boolean;
+  nextContinuationToken?: string;
+}> {
+  if (!/^creator\\/[1-9][0-9]*\\/$/.test(prefix)) throw new Error("CREATOR_INVENTORY_PREFIX_INVALID");
+  if (!Number.isInteger(maxKeys) || maxKeys < 1 || maxKeys > 200) throw new Error("CREATOR_INVENTORY_LIMIT_INVALID");
+  const { client: s3, bucket } = getStorageConfig();
+  const result = await s3.send(new ListObjectsV2Command({
+    Bucket: bucket,
+    Prefix: prefix,
+    MaxKeys: maxKeys,
+    ContinuationToken: continuationToken,
+  }));
+  const objects = (result.Contents ?? []).map((item) => {
+    if (!item.Key || !item.Key.startsWith(prefix) || !Number.isSafeInteger(item.Size) || item.Size! < 0) {
+      throw new Error("CREATOR_INVENTORY_INVALID_STORAGE_OBJECT");
+    }
+    return { key: item.Key, sizeBytes: item.Size!, lastModified: item.LastModified ?? null };
+  });
+  if (result.IsTruncated && !result.NextContinuationToken) throw new Error("CREATOR_INVENTORY_INVALID_PAGE");
+  return {
+    objects,
+    isTruncated: Boolean(result.IsTruncated),
+    nextContinuationToken: result.NextContinuationToken,
+  };
 }
