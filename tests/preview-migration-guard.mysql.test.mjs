@@ -303,7 +303,7 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
     await exec(db.url, "INSERT INTO rateLimitWindows (bucketKey, windowStart, count, expiresAt) VALUES ('chat:1', 1, 3, 9999999999999)");
     const pre = await db.guard("pre");
     expect(pre.problems).toEqual([]);
-    expect(pre.report.pendingTags).toEqual(["0014_workspace_artifacts", "0015_artifact_file_references", "0016_creator_speech_avatar_consent"]);
+    expect(pre.report.pendingTags).toEqual(["0014_workspace_artifacts", "0015_artifact_file_references", "0016_creator_speech_avatar_consent", "0017_creator_render_claims"]);
     expect(pre.report.classification).toMatchObject({ state: "CONSISTENT_PREFIX", orphanPending: [], missingApplied: [] });
     await drizzleMigrate(db.url, path.join(root, "drizzle"));
     const post = await db.guard("post");
