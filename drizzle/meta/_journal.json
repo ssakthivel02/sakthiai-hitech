@@ -120,6 +120,13 @@
       "when": 1790985600000,
       "tag": "0016_creator_speech_avatar_consent",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1794100000000,
+      "tag": "0017_creator_render_claims",
+      "breakpoints": true
     }
   ]
 }
