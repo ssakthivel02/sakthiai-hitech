@@ -86,8 +86,10 @@ export async function storageReadExactRange(relKey: string, expectedSize: number
     Range: `bytes=0-${expectedSize - 1}`,
   }));
   if (!result.Body) throw new Error("CREATOR_CHECKSUM_MISSING_BODY");
-  // Refuse a full-object response before reading a single byte.
-  if (!result.ContentRange) throw new Error("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+  // Require HTTP 206 plus exact Content-Range; reject even forged range headers on HTTP 200.
+  if (result.$metadata?.httpStatusCode !== 206 || !result.ContentRange) {
+    throw new Error("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+  }
   return readExactRangedObject(result.Body.transformToWebStream(), expectedSize, result.ContentRange, result.ContentLength);
 }
 
