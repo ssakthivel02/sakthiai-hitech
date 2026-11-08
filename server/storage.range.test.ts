@@ -126,8 +126,17 @@ describe("Creator S3 exact-range adapter: command and HTTP response contract", (
     expect(sendMock).not.toHaveBeenCalled();
   });
 
-  it("propagates transport failure without inventing a verified result", async () => {
-    sendMock.mockRejectedValue(new Error("S3_RANGE_TRANSPORT_FAILED"));
-    await expect(storageReadExactRange(KEY, 4)).rejects.toThrow("S3_RANGE_TRANSPORT_FAILED");
+  it("propagates a rejected S3 transport promise unchanged, without inventing a verified result", async () => {
+    const transportFailure = new Error("S3_RANGE_TRANSPORT_FAILED");
+    sendMock.mockImplementationOnce(async () => { throw transportFailure; });
+
+    let caught: unknown;
+    try {
+      await storageReadExactRange(KEY, 4);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBe(transportFailure);
+    expect(sendMock).toHaveBeenCalledTimes(1);
   });
 });
