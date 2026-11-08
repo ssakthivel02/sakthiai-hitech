@@ -1,4 +1,5 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { readExactRangedObject, CREATOR_CHECKSUM_MAX_BYTES } from "./creator/boundedObjectRead";
+import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ENV } from "./_core/env";
 
@@ -63,6 +64,94 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
   return { key, url: `/api/storage/${key}` };
 }
 
+export async function storageRead(relKey: string): Promise<Uint8Array> {
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!result.Body) throw new Error("Storage object body missing");
+  return result.Body.transformToByteArray();
+}
+
+/** Exact-size, bounded S3 GET. Range is required and the stream is capped even if
+ * a backend lies about Content-Length or ignores the requested range. */
+export async function storageReadExactRange(relKey: string, expectedSize: number): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(expectedSize) || expectedSize < 1 || expectedSize > CREATOR_CHECKSUM_MAX_BYTES) {
+    throw new Error("CREATOR_CHECKSUM_SIZE_OUT_OF_RANGE");
+  }
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  const result = await s3.send(new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Range: `bytes=0-${expectedSize - 1}`,
+  }));
+  if (!result.Body) throw new Error("CREATOR_CHECKSUM_MISSING_BODY");
+  // Require HTTP 206 plus exact Content-Range; reject even forged range headers on HTTP 200.
+  if (result.$metadata?.httpStatusCode !== 206 || !result.ContentRange) {
+    // A noncompliant backend may still return a large streaming body. Cancel it
+    // without reading any bytes, and preserve the original contract error even
+    // when the SDK stream cannot be converted or cancelled.
+    try {
+      await result.Body.transformToWebStream().cancel("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+    } catch {
+      // Cleanup is best-effort; never turn a rejected range into success.
+    }
+    throw new Error("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+  }
+  return readExactRangedObject(result.Body.transformToWebStream(), expectedSize, result.ContentRange, result.ContentLength);
+}
+
+export async function storageDelete(relKey: string): Promise<void> {
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+type StorageProbeDependencies = {
+  put?: typeof storagePut;
+  read?: typeof storageRead;
+  delete?: typeof storageDelete;
+};
+
+export async function storageRoundTripProbe(
+  deps: StorageProbeDependencies = {},
+): Promise<{ pass: boolean; detail: string }> {
+  const payload = Buffer.from(`sakthiai-creator-storage-probe:${crypto.randomUUID()}`, "utf-8");
+  const put = deps.put ?? storagePut;
+  const read = deps.read ?? storageRead;
+  const remove = deps.delete ?? storageDelete;
+  let key: string | undefined;
+  let primaryFailure: { pass: false; detail: string } | null = null;
+
+  try {
+    const stored = await put(
+      "creator/runtime-probes/storage-canary.txt",
+      payload,
+      "text/plain; charset=utf-8",
+    );
+    key = stored.key;
+    const loaded = Buffer.from(await read(stored.key));
+    if (!loaded.equals(payload)) {
+      primaryFailure = { pass: false, detail: "Storage write/read round-trip returned different bytes." };
+    }
+  } catch {
+    primaryFailure = { pass: false, detail: "Storage write/read round-trip failed." };
+  }
+
+  if (key) {
+    try {
+      await remove(key);
+    } catch {
+      if (!primaryFailure) {
+        return { pass: false, detail: "Storage delete verification failed." };
+      }
+    }
+  }
+
+  if (primaryFailure) return primaryFailure;
+  return { pass: true, detail: "Storage write/read/delete round-trip succeeded and canary bytes matched." };
+}
+
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
   const { client: s3, bucket } = getStorageConfig();
   const key = normalizeKey(relKey);
@@ -71,4 +160,33 @@ export async function storageGetSignedUrl(relKey: string): Promise<string> {
     new GetObjectCommand({ Bucket: bucket, Key: key }),
     { expiresIn: 300 },
   );
+}
+
+/** Bounded S3 listing for operator-only Creator reconciliation; no writes or deletion. */
+export async function storageListPage(prefix: string, maxKeys = 100, continuationToken?: string): Promise<{
+  objects: Array<{ key: string; sizeBytes: number; lastModified: Date | null }>;
+  isTruncated: boolean;
+  nextContinuationToken?: string;
+}> {
+  if (!new RegExp("^creator/[1-9][0-9]*/$").test(prefix)) throw new Error("CREATOR_INVENTORY_PREFIX_INVALID");
+  if (!Number.isInteger(maxKeys) || maxKeys < 1 || maxKeys > 200) throw new Error("CREATOR_INVENTORY_LIMIT_INVALID");
+  const { client: s3, bucket } = getStorageConfig();
+  const result = await s3.send(new ListObjectsV2Command({
+    Bucket: bucket,
+    Prefix: prefix,
+    MaxKeys: maxKeys,
+    ContinuationToken: continuationToken,
+  }));
+  const objects = (result.Contents ?? []).map((item) => {
+    if (!item.Key || !item.Key.startsWith(prefix) || !Number.isSafeInteger(item.Size) || item.Size! < 0) {
+      throw new Error("CREATOR_INVENTORY_INVALID_STORAGE_OBJECT");
+    }
+    return { key: item.Key, sizeBytes: item.Size!, lastModified: item.LastModified ?? null };
+  });
+  if (result.IsTruncated && !result.NextContinuationToken) throw new Error("CREATOR_INVENTORY_INVALID_PAGE");
+  return {
+    objects,
+    isTruncated: Boolean(result.IsTruncated),
+    nextContinuationToken: result.NextContinuationToken,
+  };
 }
