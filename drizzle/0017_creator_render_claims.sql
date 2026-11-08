@@ -1,5 +1,3 @@
--- Additive, review-only until the Creator render dispatcher is deliberately integrated.
--- MySQL/InnoDB uniqueness is the cross-process serialization boundary.
 CREATE TABLE `creatorRenderClaims` (
   `id` int AUTO_INCREMENT NOT NULL,
   `workspaceId` int NOT NULL,
