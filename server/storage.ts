@@ -88,6 +88,14 @@ export async function storageReadExactRange(relKey: string, expectedSize: number
   if (!result.Body) throw new Error("CREATOR_CHECKSUM_MISSING_BODY");
   // Require HTTP 206 plus exact Content-Range; reject even forged range headers on HTTP 200.
   if (result.$metadata?.httpStatusCode !== 206 || !result.ContentRange) {
+    // A noncompliant backend may still return a large streaming body. Cancel it
+    // without reading any bytes, and preserve the original contract error even
+    // when the SDK stream cannot be converted or cancelled.
+    try {
+      await result.Body.transformToWebStream().cancel("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+    } catch {
+      // Cleanup is best-effort; never turn a rejected range into success.
+    }
     throw new Error("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
   }
   return readExactRangedObject(result.Body.transformToWebStream(), expectedSize, result.ContentRange, result.ContentLength);
