@@ -70,19 +70,23 @@ describe("Creator S3 exact-range adapter: command and HTTP response contract", (
 
   it("rejects HTTP 200 even when a backend forges valid Content-Range headers", async () => {
     const onStream = vi.fn();
+    const onCancel = vi.fn();
     sendMock.mockResolvedValue(s3Response({
       status: 200, contentRange: "bytes 0-3/4", contentLength: 4,
-      chunks: [Uint8Array.from([1, 2, 3, 4])], onStream,
+      chunks: [Uint8Array.from([1, 2, 3, 4])], onStream, onCancel,
     }));
     await expect(storageReadExactRange(KEY, 4)).rejects.toThrow("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
-    expect(onStream).not.toHaveBeenCalled();
+    expect(onStream).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a 200 full-object response with no Content-Range before reading", async () => {
     const onStream = vi.fn();
-    sendMock.mockResolvedValue(s3Response({ status: 200, contentLength: 900_000_000, onStream }));
+    const onCancel = vi.fn();
+    sendMock.mockResolvedValue(s3Response({ status: 200, contentLength: 900_000_000, onStream, onCancel }));
     await expect(storageReadExactRange(KEY, 4)).rejects.toThrow("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
-    expect(onStream).not.toHaveBeenCalled();
+    expect(onStream).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
   it("rejects a 206 response with missing or contradictory range metadata", async () => {
@@ -127,7 +131,38 @@ describe("Creator S3 exact-range adapter: command and HTTP response contract", (
   });
 
   it("propagates transport failure without inventing a verified result", async () => {
-    sendMock.mockRejectedValue(new Error("S3_RANGE_TRANSPORT_FAILED"));
-    await expect(storageReadExactRange(KEY, 4)).rejects.toThrow("S3_RANGE_TRANSPORT_FAILED");
+    sendMock.mockImplementationOnce(() => { throw new Error("S3_RANGE_TRANSPORT_FAILED"); });
+    let caught: unknown;
+    try {
+      await storageReadExactRange(KEY, 4);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("S3_RANGE_TRANSPORT_FAILED");
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the contract error if an invalid response body cannot be converted", async () => {
+    sendMock.mockResolvedValue({
+      $metadata: { httpStatusCode: 200 },
+      ContentLength: 900_000_000,
+      Body: { transformToWebStream: () => { throw new Error("STREAM_CONVERSION_FAILED"); } },
+    });
+    await expect(storageReadExactRange(KEY, 4)).rejects.toThrow("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+  });
+
+  it("preserves the contract error if cancellation itself rejects", async () => {
+    const onStream = vi.fn();
+    sendMock.mockResolvedValue({
+      $metadata: { httpStatusCode: 200 },
+      ContentLength: 900_000_000,
+      Body: { transformToWebStream: () => {
+        onStream();
+        return { cancel: () => Promise.reject(new Error("CANCEL_FAILED")) };
+      } },
+    });
+    await expect(storageReadExactRange(KEY, 4)).rejects.toThrow("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+    expect(onStream).toHaveBeenCalledTimes(1);
   });
 });
