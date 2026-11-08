@@ -162,7 +162,7 @@ export class MysqlCreatorRenderClaims {
             AND leaseUntil > UTC_TIMESTAMP(3) AND exportId IS NULL
         `);
         if (affected(bound) !== 1) throw new Error("CREATOR_RENDER_CLAIM_BIND_FAILED");
-        return { created: true, claimId, exportId, leaseToken, state: "RUNNING" as const, fingerprint };
+        return { created: true as const, claimId, exportId, leaseToken, state: "RUNNING" as const, fingerprint };
       });
     } catch (error) {
       if (!(error instanceof ExistingRenderClaim)) throw error;
