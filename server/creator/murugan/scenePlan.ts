@@ -86,6 +86,8 @@ export type PlannedShot = {
   anchorFor: readonly MuruganElement[];
   /** Earlier shot whose approved still supplies the same elements, for identity conditioning. */
   referenceFromShot?: string;
+  /** Exact prior approved anchor shot for each continuing element; one shot ID cannot represent mixed anchors. */
+  referenceFromShotByElement: Partial<Record<MuruganElement, string>>;
   firstFramePrompt: string;
   videoPrompt: string;
 };
@@ -164,14 +166,21 @@ export function buildScenePlan(input: ScenePlanInput): ScenePlan {
       const elements = [...new Set(line.elements)];
       const anchorFor = elements.filter(element => !firstSeen.has(element));
       anchorFor.forEach(element => firstSeen.set(element, shotId));
-      const referenceFromShot = elements.map(element => firstSeen.get(element)).find(id => id && id !== shotId);
+      const referenceFromShotByElement: Partial<Record<MuruganElement, string>> = {};
+      for (const element of elements) {
+        const anchor = firstSeen.get(element);
+        if (anchor && anchor !== shotId) referenceFromShotByElement[element] = anchor;
+      }
+      // Retain the single-reference field for older consumers, but do not use it
+      // as evidence that every element is conditioned on the same anchor.
+      const referenceFromShot = elements.map(element => referenceFromShotByElement[element]).find((id): id is string => Boolean(id));
       const scene = `${line.subject.trim()}, ${line.action.trim()}, in ${line.environment.trim()}`;
       const identity = elementBlock(bible, elements);
       const firstFramePrompt = [scene, identity, bible.style, `Avoid: ${bible.negativeConstraints.join("; ")}`].filter(Boolean).join(". ");
       shots.push({
         shotId, sceneId: `SCENE-${pad(sceneIndex + 1)}`, lineId: line.lineId, sceneIndex, shotIndex: part,
         startMs: start, endMs: end, durationSeconds: (end - start) / 1000, providerClipSeconds: clipSecondsFor(end - start),
-        elements, anchorFor, referenceFromShot,
+        elements, anchorFor, referenceFromShot, referenceFromShotByElement,
         firstFramePrompt,
         videoPrompt: `${scene}. Gentle, plausible motion only; keep the identity and objects of the first frame unchanged. ${identity}. ${bible.style}. Avoid: ${bible.negativeConstraints.join("; ")}`,
       });
@@ -218,6 +227,7 @@ export function verifyScenePlan(plan: ScenePlan): string[] {
   const problems: string[] = [];
   let cursor = 0;
   const seen = new Set<string>();
+  const anchors = new Map<MuruganElement, string>();
   for (const shot of plan.shots) {
     if (seen.has(shot.shotId)) problems.push(`duplicate ${shot.shotId}`);
     seen.add(shot.shotId);
@@ -228,6 +238,13 @@ export function verifyScenePlan(plan: ScenePlan): string[] {
     if (shot.firstFramePrompt.length > 8000) problems.push(`${shot.shotId} prompt too long`);
     for (const element of shot.elements) {
       if (!shot.firstFramePrompt.includes(plan.bible[element])) problems.push(`${shot.shotId} lacks ${element} identity block`);
+      const reference = shot.referenceFromShotByElement?.[element];
+      if (shot.anchorFor.includes(element)) {
+        if (anchors.has(element) || reference) problems.push(`${shot.shotId} invalid ${element} first anchor`);
+        anchors.set(element, shot.shotId);
+      } else if (!anchors.has(element) || reference !== anchors.get(element)) {
+        problems.push(`${shot.shotId} missing ${element} anchor reference`);
+      }
     }
   }
   if (cursor !== plan.audio.durationMs) problems.push("plan does not cover the audio master");
