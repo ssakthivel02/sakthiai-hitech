@@ -26,7 +26,7 @@ describe("Creator scene selection", () => {
   it("requires an explicit scene selector while preserving the existing shot-scoped API", () => {
     expect(source).toContain('aria-label="Select scene for new shot"');
     expect(source).toContain("setSelectedSceneId(e.target.value ? Number(e.target.value) : null)");
-    expect(source).toContain("setSelectedSceneId(null); }, [projectId]");
+    expect(source).toContain("setSelectedSceneId(null); setShotStartMs(0); setShotEndMs(8000); }, [projectId]");
     expect(source).toContain("sceneId: selectedScene!.id");
     expect(source).toContain("setSelectedSceneId(created.id)");
   });
