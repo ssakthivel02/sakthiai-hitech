@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
-import { creatorAssets, creatorTimelineItems, creatorTimelines } from "../../drizzle/schema";
+import { and, eq, inArray } from "drizzle-orm";
+import { creatorAssets, creatorShots, creatorTimelineItems, creatorTimelines } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { assertTimelineShotAttribution, requestedTimelineShotIds } from "./timelineShotAttribution";
 
 export type TimelineItemInput = {
   assetId: number;
@@ -72,6 +73,16 @@ export async function replaceApprovedTimelineItems(input: {
   }
 
   const normalized = validateTimelineCoverage(input.items, readDurationMs(audioMaster.provenanceJson));
+  const claimedShotIds = requestedTimelineShotIds(normalized);
+  // Scope the lookup to the exact workspace and project before writing any shot provenance.
+  const scopedShots = claimedShotIds.length
+    ? await db.select({ id: creatorShots.id }).from(creatorShots).where(and(
+        eq(creatorShots.workspaceId, input.workspaceId),
+        eq(creatorShots.creatorProjectId, input.creatorProjectId),
+        inArray(creatorShots.id, claimedShotIds),
+      ))
+    : [];
+  const scopedShotIds = new Set(scopedShots.map(shot => shot.id));
   for (const item of normalized) {
     const [asset] = await db.select().from(creatorAssets).where(and(
       eq(creatorAssets.id, item.assetId),
@@ -81,7 +92,7 @@ export async function replaceApprovedTimelineItems(input: {
     if (!asset) throw new Error("CREATOR_TIMELINE_ASSET_NOT_FOUND");
     if (asset.assetType !== "IMAGE" && asset.assetType !== "VIDEO") throw new Error("CREATOR_TIMELINE_ASSET_TYPE_INVALID");
     if (asset.reviewDecision !== "APPROVED") throw new Error("CREATOR_TIMELINE_ASSET_NOT_APPROVED");
-    if (item.shotId && asset.shotId && item.shotId !== asset.shotId) throw new Error("CREATOR_TIMELINE_SHOT_ASSET_MISMATCH");
+    assertTimelineShotAttribution(item, asset, scopedShotIds);
   }
 
   await db.transaction(async (tx) => {
