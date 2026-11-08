@@ -42,12 +42,24 @@ describe("Murugan scene plan", () => {
     expect(s1.anchorFor).toEqual(["murugan"]);
     expect(s2.anchorFor).toEqual(["vel", "peacock"]);
     expect(s2.referenceFromShot).toBe("SHOT-001");
+    expect(s2.referenceFromShotByElement).toEqual({ murugan: "SHOT-001" });
+    expect(s4.referenceFromShotByElement).toEqual({ murugan: "SHOT-001" });
     expect(s3.elements).toEqual([]);
     expect(s3.firstFramePrompt).not.toContain(plan.bible.peacock);
     expect(s4.anchorFor).toEqual([]);
     expect(s4.firstFramePrompt).toContain(plan.bible.murugan);
     expect(s2.firstFramePrompt).toContain("exactly one Vel");
     expect(s2.firstFramePrompt).toContain("exactly one peacock");
+  });
+
+  it("preserves separate Murugan, Vel and peacock anchors in a mixed-element continuation shot", () => {
+    const plan = buildScenePlan({ projectName: "p", audio: { sha256: SHA, durationMs: 15_000 }, lines: lines(3), referenceAssetIds: refs });
+    const continuation = { ...plan.shots[2], elements: ["murugan", "vel", "peacock"] as const, anchorFor: [] as const };
+    continuation.referenceFromShotByElement = { murugan: "SHOT-001", vel: "SHOT-002", peacock: "SHOT-002" };
+    const mixed = { ...plan, shots: [...plan.shots.slice(0, 2), continuation] };
+    expect(verifyScenePlan(mixed)).toEqual([]);
+    const missing = { ...continuation, referenceFromShotByElement: { murugan: "SHOT-001" } };
+    expect(verifyScenePlan({ ...mixed, shots: [...mixed.shots.slice(0, 2), missing] })).toContain("SHOT-003 missing vel anchor reference");
   });
 
   it("is deterministic and bound to the audio master", () => {
