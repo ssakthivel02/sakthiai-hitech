@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Clapperboard, Film, Image, Plus, RefreshCw, ShieldCheck, Upload, Play, RotateCcw, Ban, CheckCircle2, Smartphone, FileJson } from "lucide-react";
 import CreatorReferenceControls from "./CreatorReferenceControls";
+import { chooseCreatorScene } from "@/lib/creatorSceneSelection";
+import { isValidCreatorShotTiming } from "@/lib/creatorShotTiming";
 import CreatorSpendAdminPanel from "./CreatorSpendAdminPanel";
 import CreatorSpeechAvatarPanel from "./CreatorSpeechAvatarPanel";
 import { creatorIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
@@ -91,7 +93,10 @@ export default function Creator() {
   const [projectId, setProjectId] = useState<number>();
   const [projectName, setProjectName] = useState("Murugan Album Film");
   const [sceneTitle, setSceneTitle] = useState("Opening");
+  const [selectedSceneId, setSelectedSceneId] = useState<number | null>(null);
   const [shotTitle, setShotTitle] = useState("Murugan hero reveal");
+  const [shotStartMs, setShotStartMs] = useState(0);
+  const [shotEndMs, setShotEndMs] = useState(8000);
   const [shotPrompt, setShotPrompt] = useState("Cinematic Murugan devotional film frame, respectful Tamil iconography, 16:9 composition");
   const [frameSelections, setFrameSelections] = useState<Record<number, FrameSelection>>({});
   const [audioFile, setAudioFile] = useState<File>();
@@ -129,7 +134,9 @@ export default function Creator() {
   );
 
   const nextSceneIndex = useMemo(() => project.data?.scenes.length ?? 0, [project.data]);
-  const selectedScene = project.data?.scenes[project.data.scenes.length - 1];
+  const selectedScene = chooseCreatorScene(project.data?.scenes ?? [], selectedSceneId);
+  useEffect(() => { setSelectedSceneId(null); setShotStartMs(0); setShotEndMs(8000); }, [projectId]);
+  const validShotTiming = isValidCreatorShotTiming(shotStartMs, shotEndMs);
   const nextShotIndex = project.data?.shots.filter(shot => shot.sceneId === selectedScene?.id).length ?? 0;
   const activeTimeline = project.data?.timelines?.[0];
   const renderAssets = project.data?.assets?.filter(asset => asset.assetType === "RENDER" && renderSource(asset.provenanceJson) === "deterministic-creator-render") ?? [];
@@ -181,8 +188,14 @@ export default function Creator() {
   }, [activeTimeline?.id, project.data?.captionCues?.length, project.data?.timelineItems?.length]);
 
   const createProject = trpc.creator.workspace.createProject.useMutation({ onSuccess: created => { if (created?.id) setProjectId(created.id); projects.refetch(); } });
-  const createScene = trpc.creator.workspace.createScene.useMutation({ onSuccess: () => project.refetch() });
-  const createShot = trpc.creator.workspace.createShot.useMutation({ onSuccess: () => project.refetch() });
+  const createScene = trpc.creator.workspace.createScene.useMutation({ onSuccess: created => { setSelectedSceneId(created.id); void project.refetch(); } });
+  const createShot = trpc.creator.workspace.createShot.useMutation({ onSuccess: (_created, variables) => {
+    // Advance the next draft interval only after the server accepts this shot.
+    const nextStart = variables.endMs ?? 0;
+    setShotStartMs(nextStart);
+    setShotEndMs(nextStart + 8000);
+    void project.refetch();
+  } });
   // Keep each accepted submission's key: another click with unchanged inputs
   // must return its existing job rather than pay for a second generation.
   const submitImage = trpc.creator.submitImage.useMutation({ onSuccess: () => project.refetch() });
@@ -296,7 +309,10 @@ export default function Creator() {
           <Card><CardHeader><CardTitle><Clapperboard size={18}/> Storyboard / shot graph</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 16 }}>
             {!project.data ? <p>Select or create a Creator project.</p> : <>
               <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}><Input value={sceneTitle} onChange={e => setSceneTitle(e.target.value)} placeholder="Scene title"/><Button disabled={!projectId || !sceneTitle.trim() || createScene.isPending} onClick={() => createScene.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, sceneIndex: nextSceneIndex, title: sceneTitle })}><Plus size={16}/> Scene</Button></div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 8 }}><Input value={shotTitle} onChange={e => setShotTitle(e.target.value)} placeholder="Shot title"/><Input value={shotPrompt} onChange={e => setShotPrompt(e.target.value)} placeholder="Generation prompt"/><Button disabled={!selectedScene || !shotTitle.trim() || createShot.isPending} onClick={() => createShot.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, sceneId: selectedScene!.id, shotIndex: nextShotIndex, title: shotTitle, prompt: shotPrompt })}><Plus size={16}/> Shot</Button></div>
+              <label style={{ display: "grid", gap: 4 }}><small>Scene for new shot</small><select aria-label="Select scene for new shot" value={selectedScene?.id ?? ""} onChange={e => setSelectedSceneId(e.target.value ? Number(e.target.value) : null)}>{!project.data.scenes.length && <option value="">Create a scene first</option>}{project.data.scenes.map(scene => <option key={scene.id} value={scene.id}>{scene.sceneIndex + 1}. {scene.title}</option>)}</select></label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 8 }}><label style={{ display: "grid", gap: 4 }}><small>Shot start (ms)</small><Input type="number" min={0} step={1000} value={shotStartMs} onChange={e => setShotStartMs(Number(e.target.value))}/></label><label style={{ display: "grid", gap: 4 }}><small>Shot end (ms)</small><Input type="number" min={1} step={1000} value={shotEndMs} onChange={e => setShotEndMs(Number(e.target.value))}/></label></div>
+              <small>Use absolute shot timing against the audio master. Start must be non-negative and end must be later than start; these values are required for timeline assembly.</small>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 8 }}><Input value={shotTitle} onChange={e => setShotTitle(e.target.value)} placeholder="Shot title"/><Input value={shotPrompt} onChange={e => setShotPrompt(e.target.value)} placeholder="Generation prompt"/><Button disabled={!selectedScene || !shotTitle.trim() || !validShotTiming || createShot.isPending} onClick={() => createShot.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, sceneId: selectedScene!.id, shotIndex: nextShotIndex, title: shotTitle, prompt: shotPrompt, startMs: shotStartMs, endMs: shotEndMs })}><Plus size={16}/> Shot</Button></div>
               {project.data.scenes.map(scene => <div key={scene.id} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 12 }}><strong>{scene.sceneIndex + 1}. {scene.title}</strong><div style={{ display: "grid", gap: 8, marginTop: 10 }}>{project.data.shots.filter(shot => shot.sceneId === scene.id).map(shot => {
                 const selectedFrames = frameSelections[shot.id] ?? {};
                 return <div key={shot.id} className="list-row" style={{ alignItems: "stretch", gap: 10, flexWrap: "wrap" }}><div style={{ minWidth: "min(220px, 100%)", flex: "1 1 220px" }}><span>{shot.shotIndex + 1}. {shot.title}</span><small>{shot.status} · {shot.startMs ?? "?"}–{shot.endMs ?? "?"} ms · shotId {shot.id}</small><small>Next Veo lock: first {selectedFrames.firstFrameAssetId ?? "—"} · last {selectedFrames.lastFrameAssetId ?? "—"}</small></div><div style={{ display: "grid", gap: 6, minWidth: "min(340px, 100%)", flex: "1 1 340px" }}><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 6 }}><label style={{ display: "grid", gap: 3 }}><small>First frame</small><select value={selectedFrames.firstFrameAssetId ?? ""} onChange={e => setFrameSelections(current => ({ ...current, [shot.id]: { ...(current[shot.id] ?? {}), firstFrameAssetId: e.target.value ? Number(e.target.value) : undefined } }))}><option value="">None</option>{eligibleConditioningAssets.map(asset => <option key={`first-${asset.id}`} value={asset.id}>asset {asset.id} · {asset.assetType}{asset.shotId ? ` · shot ${asset.shotId}` : ""}</option>)}</select></label><label style={{ display: "grid", gap: 3 }}><small>Last frame</small><select value={selectedFrames.lastFrameAssetId ?? ""} onChange={e => setFrameSelections(current => ({ ...current, [shot.id]: { ...(current[shot.id] ?? {}), lastFrameAssetId: e.target.value ? Number(e.target.value) : undefined } }))}><option value="">None</option>{eligibleConditioningAssets.map(asset => <option key={`last-${asset.id}`} value={asset.id}>asset {asset.id} · {asset.assetType}{asset.shotId ? ` · shot ${asset.shotId}` : ""}</option>)}</select></label></div><div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}><Button size="sm" variant="outline" disabled={submitImage.isPending} onClick={() => submitImageForShot(shot)}><Image size={14}/> Image</Button><Button size="sm" variant="outline" disabled={submitVideo.isPending} onClick={() => submitVideoForShot(shot, selectedFrames)}><Film size={14}/> Video</Button></div></div></div>;
