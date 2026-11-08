@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { creatorIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
+import { creatorPersistentIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,7 +61,7 @@ export default function CreatorSpeechAvatarPanel(props: {
 
   /** Successful submissions also keep their key. Unchanged repeated clicks never pay twice. */
   function keyFor(scope: string, payload: unknown) {
-    return creatorIntentKey(intents.current, scope, payload, () => crypto.randomUUID());
+    return creatorPersistentIntentKey(intents.current, scope, payload, () => crypto.randomUUID());
   }
 
   const done = () => { onChanged(); consents.refetch(); };
@@ -81,16 +81,24 @@ export default function CreatorSpeechAvatarPanel(props: {
   const activeConsents = (consents.data ?? []).filter(c => c.purpose === "avatar_video" && !c.revokedAt && (!c.validUntil || new Date(c.validUntil).getTime() > now));
   const selectedConsent = activeConsents.find(c => c.id === avatarConsentId);
 
-  function sendSpeech() {
+  async function sendSpeech() {
     if (!speechShotId || !speechText.trim()) return;
     const payload = { workspaceId, creatorProjectId, shotId: speechShotId, text: speechText.trim(), languageCode, speaker: speaker.trim() || undefined };
-    submitSpeech.mutate({ ...payload, idempotencyKey: keyFor("speech", payload) });
+    try {
+      submitSpeech.mutate({ ...payload, idempotencyKey: await keyFor("speech", payload) });
+    } catch (error) {
+      onError(error); // Fail closed: do not submit on lost or unavailable tab retry identity.
+    }
   }
 
-  function sendAvatar() {
+  async function sendAvatar() {
     if (!selectedConsent || !avatarAudioId || !avatarShotId) return;
     const payload = { workspaceId, creatorProjectId, shotId: avatarShotId, avatarId: selectedConsent.providerSubjectId, consentId: selectedConsent.id, audioAssetId: avatarAudioId, live: avatarLive };
-    submitAvatar.mutate({ ...payload, idempotencyKey: keyFor("avatar", payload) });
+    try {
+      submitAvatar.mutate({ ...payload, idempotencyKey: await keyFor("avatar", payload) });
+    } catch (error) {
+      onError(error); // Fail closed: do not submit on lost or unavailable tab retry identity.
+    }
   }
 
   return (

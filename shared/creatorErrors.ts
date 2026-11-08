@@ -57,6 +57,12 @@ export function describeCreatorError(raw: string | null | undefined): CreatorErr
       return { code, kind: "blocked", title: "This provider cannot cancel", detail: "The provider offers no way to stop a render in progress, so cancellation was not attempted. The job may still complete and be charged." };
     case "CREATOR_WORKSPACE_OWNER_REQUIRED":
       return { code, kind: "blocked", title: "Workspace owner required", detail: "Only the workspace owner can do this: submit, retry or cancel paid generations, and record final review decisions or promote a final master." };
+    case "CREATOR_IDEMPOTENCY_STORAGE_UNAVAILABLE":
+      return { code, kind: "blocked", title: "Safe retry tracking unavailable", detail: "This browser cannot reliably remember your generation request. To prevent an accidental repeat charge, nothing was submitted.", action: "Enable same-tab session storage or use a supported browser. Check existing jobs before attempting a new request." };
+    case "CREATOR_IDEMPOTENCY_STORAGE_CORRUPT":
+      return { code, kind: "blocked", title: "Generation retry history is invalid", detail: "The saved retry key is invalid. Submission was blocked to avoid creating a second paid request.", action: "Do not clear browser storage and resubmit blindly. Review your existing jobs and ask the workspace owner for help." };
+    case "CREATOR_IDEMPOTENCY_FINGERPRINT_INVALID":
+      return { code, kind: "blocked", title: "Generation request could not be identified", detail: "The request cannot be safely matched to an existing generation, so it was not submitted.", action: "Check the request fields or contact the workspace owner." };
     case "CREATOR_SPEND_POLICY_INVALID":
       return { code, kind: "blocked", title: "Spending limits are not configured", detail: "Paid generation is enabled but its prices or daily limits are missing or invalid, so every request is refused.", action: "The administrator must complete the spend policy." };
     case "CREATOR_MODEL_NOT_PRICED":
