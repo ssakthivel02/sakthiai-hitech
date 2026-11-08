@@ -566,3 +566,28 @@ export const creatorSpendHolds = mysqlTable("creatorSpendHolds", {
   index("creatorSpendHolds_state_createdAt_idx").on(table.state, table.createdAt),
   index("creatorSpendHolds_workspaceId_createdAt_idx").on(table.workspaceId, table.createdAt),
 ]);
+
+/** Optional Creator render claim ledger. It does not activate render dispatch by itself.
+ * A row is unique per scoped canonical input and cannot be automatically reclaimed
+ * after expiry: stale or unknown outcomes require explicit reconciliation.
+ */
+export const creatorRenderClaims = mysqlTable("creatorRenderClaims", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  timelineId: int("timelineId").notNull(),
+  mode: mysqlEnum("mode", ["MASTER_CANDIDATE", "VERTICAL_DERIVATIVE"]).notNull(),
+  fingerprint: char("fingerprint", { length: 64 }).notNull(),
+  leaseToken: char("leaseToken", { length: 36 }).notNull(),
+  leaseUntil: datetime("leaseUntil", { fsp: 3 }).notNull(),
+  state: mysqlEnum("state", ["RUNNING", "SUCCEEDED", "NEEDS_RECONCILIATION"]).default("RUNNING").notNull(),
+  exportId: int("exportId"),
+  outputAssetId: int("outputAssetId"),
+  outputChecksumSha256: char("outputChecksumSha256", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  completedAt: timestamp("completedAt"),
+}, table => [
+  uniqueIndex("creatorRenderClaims_scope_fingerprint_uq").on(table.workspaceId, table.creatorProjectId, table.timelineId, table.mode, table.fingerprint),
+  index("creatorRenderClaims_state_lease_idx").on(table.state, table.leaseUntil),
+]);
