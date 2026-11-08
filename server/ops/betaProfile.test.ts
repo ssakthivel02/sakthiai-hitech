@@ -33,6 +33,11 @@ describe("private-beta runtime profile", () => {
     const warned = checkBetaProfile({ ...good, STORAGE_BUCKET: "b" }).findings;
     expect(warned).toEqual([expect.objectContaining({ level: "warn", variable: "STORAGE_*" })]);
   });
+  it("keeps Sentinel (incident investigation) off in the beta profile, and its absence is not a finding", () => {
+    expect(failing({ ...good, SENTINEL_ENABLED: "true" })).toContain("SENTINEL_ENABLED");
+    expect(failing({ ...good, SENTINEL_ENABLED: "TRUE" })).toContain("SENTINEL_ENABLED");
+    for (const off of [undefined, "", "false", "0"]) expect(failing({ ...good, SENTINEL_ENABLED: off }), String(off)).not.toContain("SENTINEL_ENABLED");
+  });
   it("pins the database name and requires Aiven CA trust material", () => {
     expect(failing({ ...good, DATABASE_EXPECTED_NAME: "other" })).toContain("DATABASE_EXPECTED_NAME");
     expect(failing({ ...good, DATABASE_URL: "postgres://u:p@h/db" })).toContain("DATABASE_URL");

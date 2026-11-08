@@ -9,7 +9,7 @@ This document defines repository-level evidence for the controlled-preview opera
 - Required readiness dependencies are database, authentication, LLM and storage.
 - Scanner readiness is reported separately and may remain `SCANNER_NOT_CONFIGURED`; that state must not be interpreted as secure-upload readiness.
 - `/releasez` must expose repository and commit identity. Controlled-preview acceptance requires a known exact deployed commit.
-- Render preview must use `/readyz` as the health check and keep automatic deployment disabled.
+- Render preview must use `/healthz` (liveness) as the platform health check, as in `render.yaml`, and keep automatic deployment disabled. `/readyz` is NOT the platform health check: it is the explicit dependency-qualification endpoint and legitimately returns 503 while dependencies are unconfigured, which would make Render treat the service as failing. `/releasez` reports the deployed release identity.
 
 ## Live acceptance still required
 

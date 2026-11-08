@@ -298,12 +298,12 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
   };
   const tables = async url => { const c = await mysql.createConnection(url); try { return (await c.query("SHOW TABLES"))[0].map(r => Object.values(r)[0]); } finally { await c.end(); } };
 
-  it("a database migrated by PR #29 alone (through 0013_rate_limit_windows) upgrades to 0014 under the guard, preserving limiter rows", async () => {
+  it("a database migrated by PR #29 alone (through 0013_rate_limit_windows) upgrades through 0017 under the guard, preserving limiter rows", async () => {
     const db = await scratchWithGuard("sakthi_rr", folderUpTo("0013_rate_limit_windows"));
     await exec(db.url, "INSERT INTO rateLimitWindows (bucketKey, windowStart, count, expiresAt) VALUES ('chat:1', 1, 3, 9999999999999)");
     const pre = await db.guard("pre");
     expect(pre.problems).toEqual([]);
-    expect(pre.report.pendingTags).toEqual(["0014_workspace_artifacts", "0015_artifact_file_references", "0016_creator_speech_avatar_consent"]);
+    expect(pre.report.pendingTags).toEqual(["0014_workspace_artifacts", "0015_artifact_file_references", "0016_creator_speech_avatar_consent", "0017_sentinel_investigations"]);
     expect(pre.report.classification).toMatchObject({ state: "CONSISTENT_PREFIX", orphanPending: [], missingApplied: [] });
     await drizzleMigrate(db.url, path.join(root, "drizzle"));
     const post = await db.guard("post");

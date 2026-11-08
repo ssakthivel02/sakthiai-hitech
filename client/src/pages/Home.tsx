@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Archive,
   BrainCircuit,
+  Radar,
   FileText,
   FolderKanban,
   LogOut,
@@ -203,6 +204,7 @@ export default function Home() {
           <a href="#files"><FileText size={17}/> Files <Badge>{files.data?.length ?? 0}</Badge></a>
           <Link href="/artifacts"><Archive size={17}/> Artifacts</Link>
           <Link href="/intelligence"><BrainCircuit size={17}/> Intelligence</Link>
+          <Link href="/sentinel"><Radar size={17}/> Sentinel</Link>
         </nav>
         <div className="identity">
           <div className="avatar">{(user?.name || "U").slice(0, 1)}</div>
