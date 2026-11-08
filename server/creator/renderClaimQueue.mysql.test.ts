@@ -121,7 +121,23 @@ describe.skipIf(skipMysqlSuite())("Creator render queue reservation atomicity (r
       "CREATE TRIGGER creatorExportInjectedAbort BEFORE INSERT ON creatorExports FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected queue insert failure'",
     );
     try {
-      await expect(a.claimAndQueueExport(intent())).rejects.toThrow("injected queue insert failure");
+      let failure: unknown;
+      try {
+        await a.claimAndQueueExport(intent());
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      // Drizzle wraps the server SIGNAL as a failed query; retain the SQL
+      // cause check instead of assuming the top-level message is unwrapped.
+      const chain: string[] = [];
+      for (let cause: unknown = failure, depth = 0; cause && depth < 6; depth++) {
+        if (cause instanceof Error) {
+          chain.push(cause.message);
+          cause = (cause as Error & { cause?: unknown }).cause;
+        } else break;
+      }
+      expect(chain.join("\n")).toContain("injected queue insert failure");
       expect(await claims()).toHaveLength(0);
       expect(await queuedRows()).toHaveLength(0);
     } finally {
