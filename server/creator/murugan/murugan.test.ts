@@ -53,13 +53,14 @@ describe("Murugan scene plan", () => {
   });
 
   it("preserves separate Murugan, Vel and peacock anchors in a mixed-element continuation shot", () => {
-    const plan = buildScenePlan({ projectName: "p", audio: { sha256: SHA, durationMs: 15_000 }, lines: lines(3), referenceAssetIds: refs });
-    const continuation = { ...plan.shots[2], elements: ["murugan", "vel", "peacock"] as const, anchorFor: [] as const };
-    continuation.referenceFromShotByElement = { murugan: "SHOT-001", vel: "SHOT-002", peacock: "SHOT-002" };
-    const mixed = { ...plan, shots: [...plan.shots.slice(0, 2), continuation] };
-    expect(verifyScenePlan(mixed)).toEqual([]);
+    const approvedLines = lines(3);
+    approvedLines[2] = { ...approvedLines[2], elements: ["murugan", "vel", "peacock"] };
+    const plan = buildScenePlan({ projectName: "p", audio: { sha256: SHA, durationMs: 15_000 }, lines: approvedLines, referenceAssetIds: refs });
+    const continuation = plan.shots[2];
+    expect(continuation.referenceFromShotByElement).toEqual({ murugan: "SHOT-001", vel: "SHOT-002", peacock: "SHOT-002" });
+    expect(verifyScenePlan(plan)).toEqual([]);
     const missing = { ...continuation, referenceFromShotByElement: { murugan: "SHOT-001" } };
-    expect(verifyScenePlan({ ...mixed, shots: [...mixed.shots.slice(0, 2), missing] })).toContain("SHOT-003 missing vel anchor reference");
+    expect(verifyScenePlan({ ...plan, shots: [...plan.shots.slice(0, 2), missing] })).toContain("SHOT-003 missing vel anchor reference");
   });
 
   it("is deterministic and bound to the audio master", () => {
