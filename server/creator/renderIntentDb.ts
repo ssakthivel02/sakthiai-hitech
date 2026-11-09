@@ -47,7 +47,7 @@ function durationMs(provenanceJson: string): number {
   return n;
 }
 function sha256(s: string): boolean { return typeof s === "string" && /^[a-f0-9]{64}$/i.test(s); }
-function immutableApproved(asset: StoredMedia | undefined, kind: string): void {
+function immutableApproved(asset: StoredMedia | undefined, kind: string): asserts asset is StoredMedia {
   if (!asset || asset.immutable !== 1 || asset.reviewDecision !== "APPROVED" || !sha256(asset.checksumSha256)) {
     throw new Error("CREATOR_RENDER_INTENT_SOURCE_NOT_IMMUTABLE_APPROVED:" + kind);
   }
