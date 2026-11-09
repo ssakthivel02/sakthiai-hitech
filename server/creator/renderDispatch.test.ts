@@ -85,6 +85,10 @@ describe("Creator render dispatch staging", () => {
     expect(x.render).toHaveBeenCalledTimes(1);
     expect(x.heartbeat).toHaveBeenCalledTimes(2);
     expect(x.finalizeVerifiedExport).toHaveBeenCalledTimes(1);
+    expect(x.finalizeVerifiedExport).toHaveBeenCalledWith(
+      expect.objectContaining({ fingerprint }), reservation.leaseToken, 22,
+      rendered, input, config, undefined,
+    );
     expect(x.markUnknown).not.toHaveBeenCalled();
   });
 

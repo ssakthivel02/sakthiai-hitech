@@ -179,7 +179,7 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
       expect(storedKey).toBe(key); expect(bytes).toBe(256);
       expect(sha).toBe(output.checksumSha256); verified++;
     };
-    const done = await store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output, verify);
+    const done = await store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output, scope(), config, verify);
     expect(done).toMatchObject({ exportId: reserved.exportId, reviewDecision: "PENDING" });
     expect(verified).toBe(1);
     const [assets] = await exec(sql`SELECT id, reviewDecision, immutable, provenanceJson
@@ -192,7 +192,7 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
     expect(exports[0]).toMatchObject({ status: "SUCCEEDED", assetId: done.assetId });
     const [claims] = await exec(sql`SELECT state, outputAssetId FROM creatorRenderClaims WHERE id=${reserved.claimId}`) as unknown as [Array<{state:string;outputAssetId:number}>];
     expect(claims[0]).toMatchObject({ state: "SUCCEEDED", outputAssetId: done.assetId });
-    await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output, verify))
+    await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output, scope(), config, verify))
       .rejects.toThrow("CREATOR_RENDER_FINALIZE_FENCE_LOST");
   });
 
@@ -210,13 +210,13 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
     const renderScope = { ...scope(), mode: "MASTER_CANDIDATE" as const, fingerprint: reserved.fingerprint };
     const ok = async () => undefined;
     const corrupt = async () => { throw new Error("STORAGE_SHA256_MISMATCH"); };
-    await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output, corrupt))
+    await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output, scope(), config, corrupt))
       .rejects.toThrow("STORAGE_SHA256_MISMATCH");
     await expect(store.finalizeVerifiedExport(renderScope, "00000000-0000-4000-8000-000000000000",
-      reserved.exportId, output, ok)).rejects.toThrow("CREATOR_RENDER_FINALIZE_FENCE_LOST");
+      reserved.exportId, output, scope(), config, ok)).rejects.toThrow("CREATOR_RENDER_FINALIZE_FENCE_LOST");
     await exec(sql`UPDATE creatorRenderClaims SET leaseUntil=DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND)
       WHERE id=${reserved.claimId}`);
-    await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output, ok))
+    await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output, scope(), config, ok))
       .rejects.toThrow("CREATOR_RENDER_FINALIZE_FENCE_LOST");
     const [assets] = await exec(sql`SELECT COUNT(*) AS n FROM creatorAssets
       WHERE storageKey=${output.storageKey}`) as unknown as [[{n:number}]];
@@ -241,7 +241,7 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
       FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected export finalization failure'`);
     try {
       await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output,
-        async () => undefined)).rejects.toThrow();
+        scope(), config, async () => undefined)).rejects.toThrow();
       const [assets] = await exec(sql`SELECT COUNT(*) AS n FROM creatorAssets WHERE storageKey=${output.storageKey}`) as unknown as [[{n:number}]];
       expect(Number(assets[0].n)).toBe(0);
       const [claims] = await exec(sql`SELECT state FROM creatorRenderClaims WHERE id=${reserved.claimId}`) as unknown as [Array<{state:string}>];
@@ -251,5 +251,64 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
     }
   });
 
+  it("rejects a Tamil-caption change between reservation and finalization without persisting an asset", async () => {
+    const { MysqlCreatorRenderClaims } = await import("./renderClaims");
+    const reserved = await reserveCreatorRenderIntentFromDatabase(scope(), config, async () => d.db);
+    if (!reserved.created) throw new Error("TEST_RESERVATION_NOT_CREATED");
+    const store = new MysqlCreatorRenderClaims(async () => d.db);
+    const output = {
+      storageKey: `creator/7/${ids.project}/renders/timeline-${ids.timeline}/export-${reserved.exportId}.mp4`,
+      checksumSha256: "d".repeat(64), byteSize: 256, width: 1920, height: 1080,
+      fps: 24, durationMs: 4000, frameCount: 96,
+      visualAssetIds: [ids.clip, ids.montage], renderer: "ffmpeg" as const,
+    };
+    const renderScope = { ...scope(), mode: "MASTER_CANDIDATE" as const, fingerprint: reserved.fingerprint };
+    await exec(sql`UPDATE creatorCaptionCues SET text='வேல் முருகா சரணம்' WHERE timelineId=${ids.timeline}`);
+    await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId,
+      output, scope(), config, async () => undefined)).rejects.toThrow("CREATOR_RENDER_FINALIZE_SOURCE_DRIFT");
+    const [assets] = await exec(sql`SELECT COUNT(*) AS n FROM creatorAssets WHERE storageKey=${output.storageKey}`) as unknown as [[{ n: number }]];
+    expect(Number(assets[0].n)).toBe(0);
+    const [claims] = await exec(sql`SELECT state FROM creatorRenderClaims WHERE id=${reserved.claimId}`) as unknown as [Array<{ state: string }>];
+    expect(claims[0].state).toBe("RUNNING");
+  });
+
+  it("holds the timeline lock across finalization and rejects a concurrently committed caption edit", async () => {
+    const { MysqlCreatorRenderClaims } = await import("./renderClaims");
+    const reserved = await reserveCreatorRenderIntentFromDatabase(scope(), config, async () => d.db);
+    if (!reserved.created) throw new Error("TEST_RESERVATION_NOT_CREATED");
+    const store = new MysqlCreatorRenderClaims(async () => d.db);
+    const output = {
+      storageKey: `creator/7/${ids.project}/renders/timeline-${ids.timeline}/export-${reserved.exportId}.mp4`,
+      checksumSha256: "d".repeat(64), byteSize: 256, width: 1920, height: 1080,
+      fps: 24, durationMs: 4000, frameCount: 96,
+      visualAssetIds: [ids.clip, ids.montage], renderer: "ffmpeg" as const,
+    };
+    const renderScope = { ...scope(), mode: "MASTER_CANDIDATE" as const, fingerprint: reserved.fingerprint };
+    let acquired!: () => void;
+    let release!: () => void;
+    const locked = new Promise<void>(resolve => { acquired = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const writer = d.db.transaction(async tx => {
+      await tx.execute(sql`SELECT id FROM creatorTimelines WHERE id=${ids.timeline} FOR UPDATE`);
+      acquired();
+      await gate;
+      await tx.execute(sql`UPDATE creatorCaptionCues SET text='முருகா சரணம்' WHERE timelineId=${ids.timeline}`);
+    });
+    await locked;
+    const pending = store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId,
+      output, scope(), config, async () => undefined);
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 80));
+      expect(settled).toBe(false);
+    } finally {
+      release();
+    }
+    await writer;
+    await expect(pending).rejects.toThrow("CREATOR_RENDER_FINALIZE_SOURCE_DRIFT");
+    const [assets] = await exec(sql`SELECT COUNT(*) AS n FROM creatorAssets WHERE storageKey=${output.storageKey}`) as unknown as [[{ n: number }]];
+    expect(Number(assets[0].n)).toBe(0);
+  });
 
 });

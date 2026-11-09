@@ -3,6 +3,7 @@ import { sql, type SQL } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/mysql2";
 import { getDb } from "../db";
 import { storageVerifySha256 } from "../storage";
+import type { CreatorDbRenderIntentInput, TrustedCreatorRendererConfig } from "./renderIntentDb";
 import { creatorRenderIntentFingerprint, type CreatorRenderIntentInput } from "./renderIntent";
 
 /**
@@ -290,7 +291,9 @@ export class MysqlCreatorRenderClaims {
    * This is a finalization primitive, NOT a worker dispatcher. The caller
    * must already have rendered under a newly-created reservation token.
    * Readback is performed before the DB transaction; the lease is rechecked
-   * under FOR UPDATE afterwards. Failed or expired fences create NO asset.
+   * under FOR UPDATE afterwards. The source timeline lock and fingerprint
+   * are checked inside that same transaction, preventing stale-caption commits.
+   * Failed or expired fences create NO asset.
    */
   async finalizeVerifiedExport(
     scopeInput: CreatorRenderClaimScope,
@@ -301,10 +304,20 @@ export class MysqlCreatorRenderClaims {
       width: number; height: number; fps: number; durationMs: number;
       frameCount: number; visualAssetIds: number[]; renderer: "ffmpeg";
     },
+    sourceInput: CreatorDbRenderIntentInput,
+    trustedConfig: TrustedCreatorRendererConfig,
     verifyArtifact: (key: string, size: number, checksumSha256: string) => Promise<void> = storageVerifySha256,
   ): Promise<{ assetId: number; exportId: number; reviewDecision: "PENDING" }> {
     const scope = validateScope(scopeInput);
     positiveInt(exportId);
+    // Finalization must be derived from the same server-owned source scope.
+    if (!sourceInput || sourceInput.workspaceId !== scope.workspaceId ||
+        sourceInput.creatorProjectId !== scope.creatorProjectId ||
+        sourceInput.timelineId !== scope.timelineId ||
+        (scope.mode === "MASTER_CANDIDATE" && sourceInput.verticalDerivativeOf !== undefined) ||
+        (scope.mode === "VERTICAL_DERIVATIVE" && sourceInput.verticalDerivativeOf === undefined)) {
+      throw new Error("CREATOR_RENDER_FINALIZE_SOURCE_SCOPE_INVALID");
+    }
     if (!/^[0-9a-f-]{36}$/i.test(leaseToken)) throw new Error("CREATOR_RENDER_CLAIM_TOKEN_INVALID");
     const expectedKey = `creator/${scope.workspaceId}/${scope.creatorProjectId}/renders/timeline-${scope.timelineId}/export-${exportId}.mp4`;
     if (output.storageKey !== expectedKey || output.renderer !== "ffmpeg") throw new Error("CREATOR_RENDER_OUTPUT_IDENTITY_INVALID");
@@ -320,8 +333,14 @@ export class MysqlCreatorRenderClaims {
     // A successful upload is NOT evidence of durable bytes. Do not insert
     // the asset or complete the claim until the stored bytes are verified.
     await verifyArtifact(output.storageKey, output.byteSize, output.checksumSha256.toLowerCase());
-    const db = await this.db();
-    return db.transaction(async tx => {
+    // Take the SAME timeline row lock as caption/timeline writers, and derive
+    // the current source fingerprint while that lock is held. Keep it held
+    // through the claim/export/asset commit; no post-check writer can slip in.
+    const { withCreatorRenderIntentTransaction } = await import("./renderIntentDb");
+    return withCreatorRenderIntentTransaction(sourceInput, trustedConfig, async (tx, current) => {
+      if (current.fingerprint !== scope.fingerprint || current.intent.mode !== scope.mode) {
+        throw new Error("CREATOR_RENDER_FINALIZE_SOURCE_DRIFT");
+      }
       const [claim] = rowsOf<{ id: number }>(await tx.execute(sql`
         SELECT id FROM creatorRenderClaims
         WHERE workspaceId = ${scope.workspaceId} AND creatorProjectId = ${scope.creatorProjectId}

@@ -170,7 +170,7 @@ export async function dispatchReservedCreatorRender(
     assertLease();
     const finalized = await claims.finalizeVerifiedExport(
       scope, reservation.leaseToken, reservation.exportId, rendered,
-      deps.workerDependencies?.verifyArtifact,
+      input, trustedConfig, deps.workerDependencies?.verifyArtifact,
     );
     return { ...finalized, claimId: reservation.claimId, dispatched: true as const };
   } catch (error) {
