@@ -41,6 +41,7 @@ describe("Creator caption font resolution", () => {
       readOutput: async () => Buffer.from("x"),
       executeFfmpeg,
       putArtifact: async key => ({ key, url: "/u" }),
+      verifyArtifact: async () => undefined,
     });
     const args = (executeFfmpeg.mock.calls[0] as unknown as [string[]])[0].join(" ");
     expect(args).toContain("force_style='FontName=Noto Sans Tamil'");
@@ -62,6 +63,7 @@ describe("Creator render worker", () => {
       readOutput: async () => output,
       executeFfmpeg,
       putArtifact,
+      verifyArtifact: async () => undefined,
     });
 
     expect(writeSubtitle).toHaveBeenCalledWith("/tmp/creator-render-test/captions.ta.srt", expect.stringContaining("வேல் முருகா"));
@@ -95,5 +97,22 @@ describe("Creator render worker", () => {
     const createTempDir = vi.fn(async () => "/tmp/should-not-exist");
     await expect(runCreatorRenderWorker({ ...renderInput, workspaceId: 0 }, { createTempDir })).rejects.toThrow("CREATOR_RENDER_ID_INVALID");
     expect(createTempDir).not.toHaveBeenCalled();
+  });
+
+  it("fails closed if object storage readback does not match", async () => {
+    const cleanupTempDir = vi.fn(async () => undefined);
+    const putArtifact = vi.fn(async (key: string) => ({ key, url: "/api/storage/render" }));
+    const verifyArtifact = vi.fn(async () => { throw new Error("CREATOR_STORAGE_READBACK_CHECKSUM_MISMATCH"); });
+    await expect(runCreatorRenderWorker(renderInput, {
+      createTempDir: async () => "/tmp/creator-render-readback-fail",
+      cleanupTempDir,
+      writeSubtitle: async () => undefined,
+      readOutput: async () => Buffer.from("synthetic-render"),
+      executeFfmpeg: async () => ({ exitCode: 0, stderr: "" }),
+      putArtifact, verifyArtifact,
+    })).rejects.toThrow("CREATOR_STORAGE_READBACK_CHECKSUM_MISMATCH");
+    expect(putArtifact).toHaveBeenCalledTimes(1);
+    expect(verifyArtifact).toHaveBeenCalledTimes(1);
+    expect(cleanupTempDir).toHaveBeenCalledTimes(1);
   });
 });

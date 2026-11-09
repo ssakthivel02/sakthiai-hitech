@@ -1,4 +1,5 @@
 import { readExactRangedObject, CREATOR_CHECKSUM_MAX_BYTES } from "./creator/boundedObjectRead";
+import { assertCreatorStoredObjectIntegrity, CREATOR_STORED_MEDIA_MAX_BYTES } from "./creator/storageIntegrity";
 import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ENV } from "./_core/env";
@@ -99,6 +100,24 @@ export async function storageReadExactRange(relKey: string, expectedSize: number
     throw new Error("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
   }
   return readExactRangedObject(result.Body.transformToWebStream(), expectedSize, result.ContentRange, result.ContentLength);
+}
+
+/** Verify persisted media bytes, not only the PutObject response or ETag. */
+export async function storageVerifySha256(relKey: string, expectedSize: number, expectedSha256: string): Promise<void> {
+  if (!Number.isSafeInteger(expectedSize) || expectedSize < 1 || expectedSize > CREATOR_STORED_MEDIA_MAX_BYTES ||
+      !/^[0-9a-f]{64}$/.test(expectedSha256)) throw new Error("CREATOR_STORAGE_EVIDENCE_INVALID");
+  const { client: s3, bucket } = getStorageConfig();
+  const result = await s3.send(new GetObjectCommand({
+    Bucket: bucket, Key: normalizeKey(relKey), Range: `bytes=0-${expectedSize - 1}`,
+  }), { abortSignal: AbortSignal.timeout(120_000) });
+  if (!result.Body) throw new Error("CREATOR_STORAGE_READBACK_MISSING_BODY");
+  await assertCreatorStoredObjectIntegrity({
+    stream: result.Body.transformToWebStream(),
+    statusCode: result.$metadata?.httpStatusCode,
+    contentRange: result.ContentRange,
+    contentLength: result.ContentLength,
+    expectedSize, expectedSha256,
+  });
 }
 
 export async function storageDelete(relKey: string): Promise<void> {

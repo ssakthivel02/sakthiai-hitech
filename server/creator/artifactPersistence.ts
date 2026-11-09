@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { creatorAssets, creatorGenerations, creatorShots } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { storagePut } from "../storage";
+import { storagePut, storageVerifySha256 } from "../storage";
+import { CREATOR_STORED_MEDIA_MAX_BYTES } from "./storageIntegrity";
 import {
   assertCreatorJobTransition,
   canTransitionCreatorJob,
@@ -69,23 +70,31 @@ export async function persistCreatorGenerationArtifact(input: {
     .limit(1);
   if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
 
+  if (generation.provider !== input.provider.id) throw new Error("CREATOR_ARTIFACT_PROVIDER_MISMATCH");
+
   if (generation.outputAssetId) {
     const [existing] = await db
       .select()
       .from(creatorAssets)
-      .where(and(eq(creatorAssets.id, generation.outputAssetId), eq(creatorAssets.workspaceId, input.workspaceId)))
+      .where(and(eq(creatorAssets.id, generation.outputAssetId), eq(creatorAssets.workspaceId, input.workspaceId), eq(creatorAssets.creatorProjectId, generation.creatorProjectId)))
       .limit(1);
     if (!existing) throw new Error("CREATOR_GENERATION_OUTPUT_ASSET_MISSING");
+    if (generation.status !== "SUCCEEDED") throw new Error("CREATOR_GENERATION_OUTPUT_STATE_INVALID");
+    if (typeof existing.byteSize !== "number" || !Number.isSafeInteger(existing.byteSize) || existing.byteSize < 1) {
+      throw new Error("CREATOR_GENERATION_OUTPUT_SIZE_INVALID");
+    }
+    // Replays must not report success for missing or corrupted stored bytes.
+    await storageVerifySha256(existing.storageKey, existing.byteSize, existing.checksumSha256);
     return { assetId: existing.id, storageKey: existing.storageKey, checksumSha256: existing.checksumSha256, reused: true };
   }
 
-  if (generation.provider !== input.provider.id) throw new Error("CREATOR_ARTIFACT_PROVIDER_MISMATCH");
   if (!input.provider.fetchArtifact) throw new Error("CREATOR_PROVIDER_ARTIFACT_FETCH_UNSUPPORTED");
   assertCreatorJobTransition(generation.status as CreatorJobState, "SUCCEEDED");
 
   const fetched = await input.provider.fetchArtifact(input.artifact);
   const data = Buffer.from(fetched.data);
   if (!data.byteLength) throw new Error("CREATOR_ARTIFACT_EMPTY");
+  if (data.byteLength > CREATOR_STORED_MEDIA_MAX_BYTES) throw new Error("CREATOR_ARTIFACT_TOO_LARGE");
   const mimeType = fetched.mimeType.split(";", 1)[0].trim().toLowerCase();
   const extension = extensionForCreatorMimeType(mimeType);
   const checksumSha256 = createHash("sha256").update(data).digest("hex");
@@ -95,6 +104,8 @@ export async function persistCreatorGenerationArtifact(input: {
     data,
     mimeType,
   );
+  // Do not create an APPROVED/PENDING database asset for a corrupted or missing object.
+  await storageVerifySha256(storage.key, data.byteLength, checksumSha256);
 
   const provenance = {
     schemaVersion: 1,

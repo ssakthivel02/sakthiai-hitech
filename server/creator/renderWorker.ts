@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { buildDeterministicRenderPlan, captionsNeedTamilFont, type CaptionFonts, type DeterministicRenderPlanInput } from "./renderPlan";
-import { storagePut } from "../storage";
+import { storagePut, storageVerifySha256 } from "../storage";
 
 export type FfmpegExecution = {
   exitCode: number;
@@ -15,6 +15,7 @@ export type FfmpegExecution = {
 export type RenderWorkerDependencies = {
   executeFfmpeg?: (args: string[]) => Promise<FfmpegExecution>;
   putArtifact?: (key: string, data: Buffer, contentType: string) => Promise<{ key: string; url: string }>;
+  verifyArtifact?: (key: string, size: number, checksumSha256: string) => Promise<void>;
   createTempDir?: () => Promise<string>;
   cleanupTempDir?: (path: string) => Promise<void>;
   readOutput?: (path: string) => Promise<Buffer>;
@@ -88,6 +89,7 @@ export async function runCreatorRenderWorker(input: Omit<DeterministicRenderPlan
   const readOutput = deps.readOutput ?? readFile;
   const execute = deps.executeFfmpeg ?? executeFfmpegBounded;
   const putArtifact = deps.putArtifact ?? storagePut;
+  const verifyArtifact = deps.verifyArtifact ?? storageVerifySha256;
 
   const tempDir = await createTempDir();
   const subtitlePath = join(tempDir, "captions.ta.srt");
@@ -112,6 +114,7 @@ export async function runCreatorRenderWorker(input: Omit<DeterministicRenderPlan
     const checksumSha256 = createHash("sha256").update(output).digest("hex");
     const storageKey = `creator/${input.workspaceId}/${input.creatorProjectId}/renders/timeline-${input.timelineId}/export-${input.exportId}.mp4`;
     const stored = await putArtifact(storageKey, output, "video/mp4");
+    await verifyArtifact(stored.key, output.byteLength, checksumSha256);
 
     return {
       storageKey: stored.key,
