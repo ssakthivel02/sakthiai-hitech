@@ -145,14 +145,22 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
   const statements = tag => readFileSync(path.join(root, "drizzle", `${tag}.sql`), "utf8").split("--> statement-breakpoint").map(x => x.trim()).filter(Boolean);
   const tagOf = prefix => journal.entries.find(e => e.tag.startsWith(prefix)).tag;
 
-  it("ground truth: every real-migrator prefix 0..11 classifies clean (EMPTY or CONSISTENT_PREFIX, nothing missing or unmanaged)", async () => {
-    for (let n = 0; n <= journal.entries.length; n++) {
+  // Each prefix keeps the same assertions and timeout, but owns its scratch DB lifetime.
+  // Keeping every migrated schema until afterAll makes cleanup scale with journal length.
+  it.each(Array.from({ length: journal.entries.length + 1 }, (_, n) => n))(
+    "ground truth: real-migrator prefix %i classifies clean",
+    async n => {
       const db = await stateDatabase(url => (n ? drizzleMigrate(url, folderUpTo(journal.entries[n - 1].tag)) : Promise.resolve()));
-      const pre = await db.guard("pre");
-      expect(pre.problems, `prefix ${n}`).toEqual([]);
-      expect(pre.report.classification, `prefix ${n}`).toMatchObject({ state: n ? "CONSISTENT_PREFIX" : "EMPTY", missingApplied: [], orphanPending: [], unmanagedObjects: [], unmanagedTables: [] });
-    }
-  });
+      try {
+        const pre = await db.guard("pre");
+        expect(pre.problems, `prefix ${n}`).toEqual([]);
+        expect(pre.report.classification, `prefix ${n}`).toMatchObject({ state: n ? "CONSISTENT_PREFIX" : "EMPTY", missingApplied: [], orphanPending: [], unmanagedObjects: [], unmanagedTables: [] });
+      } finally {
+        // The registered fallback is idempotent (DROP DATABASE IF EXISTS).
+        await dropScratchDatabase(base, db.name);
+      }
+    },
+  );
 
   it("classifies an empty target as EMPTY with every migration pending, and an unrelated table as unmanaged (not a failure)", async () => {
     const db = await stateDatabase(url => exec(url, "CREATE TABLE ops_note (id int PRIMARY KEY)", "INSERT INTO ops_note VALUES (1)"));
