@@ -62,9 +62,6 @@ function setup() {
 describe("Creator render dispatch staging", () => {
   it("never starts work or exposes a token for a duplicate reservation", async () => {
     const x = setup();
-    x.reserve.mockImplementationOnce(async () => ({
-      ...reservation, created: false as never,
-    }));
     // A duplicate response does not carry a lease token; exercise the real union shape.
     x.deps.reserve = async () => ({
       created: false, claimId: 21, exportId: 22, outputAssetId: null,
