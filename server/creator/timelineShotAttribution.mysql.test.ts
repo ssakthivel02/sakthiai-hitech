@@ -163,4 +163,30 @@ describe.skipIf(skipMysqlSuite())("Creator shot attribution: real MySQL tenant b
       timelineId: ids.timeline,
     });
   });
+  it("serializes timeline replacement behind the render-intent timeline row lock", async () => {
+    let release!: () => void;
+    let signalLocked!: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    const locked = new Promise<void>(resolve => { signalLocked = resolve; });
+    const reader = database.db.transaction(async tx => {
+      await tx.execute(sql`SELECT id FROM creatorTimelines WHERE id = ${ids.timeline} FOR UPDATE`);
+      signalLocked();
+      await hold;
+    });
+    await locked;
+    let writerSettled = false;
+    const writer = replaceApprovedTimelineItems(input(ids.montage, ids.shotA))
+      .finally(() => { writerSettled = true; });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      expect(writerSettled).toBe(false);
+      expect(await countItems()).toBe(0);
+    } finally {
+      release();
+      await reader;
+    }
+    await writer;
+    expect(await countItems()).toBe(1);
+  });
+
 });
