@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
 
 /**
@@ -141,6 +142,11 @@ describe.skipIf(skipMysqlSuite())("Creator shot attribution: real MySQL tenant b
         readOutput: async () => Buffer.from("synthetic-render"),
         executeFfmpeg: async () => ({ exitCode: 0, stderr: "" }),
         putArtifact: async key => ({ key, url: "/api/storage/synthetic" }),
+        verifyArtifact: async (_key, expectedSize, expectedSha256) => {
+          const stored = Buffer.from("synthetic-render");
+          expect(expectedSize).toBe(stored.byteLength);
+          expect(expectedSha256).toBe(createHash("sha256").update(stored).digest("hex"));
+        },
         captionFonts: { dir: "/fonts", family: "Noto Sans Tamil" },
       },
     );
