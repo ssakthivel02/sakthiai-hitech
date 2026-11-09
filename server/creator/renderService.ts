@@ -1,14 +1,16 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   creatorAssets,
   creatorCaptionCues,
   creatorExports,
+  creatorShots,
   creatorTimelineItems,
   creatorTimelines,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { storageGetSignedUrl } from "../storage";
 import { runCreatorRenderWorker, type RenderWorkerDependencies } from "./renderWorker";
+import { assertTimelineShotAttribution, requestedTimelineShotIds } from "./timelineShotAttribution";
 
 async function requireDb() {
   const db = await getDb();
@@ -111,6 +113,18 @@ export async function executeCreatorTimelineExport(input: {
     ))
     .orderBy(creatorTimelineItems.startMs, creatorTimelineItems.sortOrder, creatorTimelineItems.id);
 
+  // Revalidate stored shot attribution at dispatch, including legacy timeline rows.
+  // A deleted, moved or foreign-project shot cannot be presented as render provenance.
+  const claimedShotIds = requestedTimelineShotIds(timelineItems);
+  const scopedShots = claimedShotIds.length
+    ? await db.select({ id: creatorShots.id }).from(creatorShots).where(and(
+        eq(creatorShots.workspaceId, input.workspaceId),
+        eq(creatorShots.creatorProjectId, input.creatorProjectId),
+        inArray(creatorShots.id, claimedShotIds),
+      ))
+    : [];
+  const scopedShotIds = new Set(scopedShots.map(shot => shot.id));
+
   const getSignedUrl = deps.getSignedUrl ?? storageGetSignedUrl;
   const visualItems = [];
   for (const item of timelineItems) {
@@ -125,6 +139,7 @@ export async function executeCreatorTimelineExport(input: {
       .limit(1);
     if (!asset) throw new Error("CREATOR_RENDER_TIMELINE_ASSET_NOT_FOUND");
     if (asset.assetType !== "IMAGE" && asset.assetType !== "VIDEO") throw new Error("CREATOR_RENDER_TIMELINE_ASSET_INVALID");
+    assertTimelineShotAttribution(item, asset, scopedShotIds);
     visualItems.push({
       assetId: asset.id,
       shotId: item.shotId,
