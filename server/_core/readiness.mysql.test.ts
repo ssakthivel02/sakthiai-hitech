@@ -30,42 +30,42 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
     const db = await migratedThrough("0010_resumable_ingestion");
     try {
       const state = await probeSchemaReadiness(readColumns(db));
-      expect(state).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorRenderClaims", "creatorSpendHolds", "creatorSpendWindows", "rateLimitWindows"] });
+      expect(state).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "creatorSpendHolds", "creatorSpendWindows", "rateLimitWindows"] });
     } finally { await db.close(); }
   });
 
   it("a database at 0011 is NOT ready: exactly the two 0012 audit columns (and 0013's and 0014's tables) are missing", async () => {
     const db = await migratedThrough("0011_creator_spend_ledger");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorRenderClaims", "rateLimitWindows"], missingColumns: 2 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "rateLimitWindows"], missingColumns: 2 });
     } finally { await db.close(); }
   });
 
   it("a database at 0012 is NOT ready: only 0013's rate-limit table and 0014's artifacts table are missing", async () => {
     const db = await migratedThrough("0012_creator_spend_settlement_audit");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorRenderClaims", "rateLimitWindows"], missingColumns: 0 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "rateLimitWindows"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 
   it("a database at 0013 (rate-limit table, before workspace artifacts) is NOT ready: 0014's artifacts and 0015's link tables are missing", async () => {
     const db = await migratedThrough("0013_rate_limit_windows");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorRenderClaims"], missingColumns: 0 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 
   it("a database at 0014 (artifacts, before file references) is NOT ready: only 0015's link table is missing", async () => {
     const db = await migratedThrough("0014_workspace_artifacts");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "creatorConsents", "creatorRenderClaims"], missingColumns: 0 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 
   it("a database at 0015 (before speech/avatar consent) is NOT ready: only 0016's consent table is missing", async () => {
     const db = await migratedThrough("0015_artifact_file_references");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["creatorConsents", "creatorRenderClaims"], missingColumns: 0 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 
