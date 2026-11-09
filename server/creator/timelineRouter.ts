@@ -3,6 +3,8 @@ import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { executeCreatorTimelineExport } from "./renderService";
+import { dispatchReservedCreatorRender } from "./renderDispatch";
+import { CREATOR_CAPTION_FONT_FAMILY } from "./renderWorker";
 import { getCreatorExportManifest } from "./exportManifest";
 import { reviewVerticalDerivative } from "./derivativeReview";
 import { requireCreatorWorkspaceOwner } from "./paidGeneration";
@@ -44,6 +46,58 @@ export const creatorTimelineRouter = router({
       await requireWorkspace(ctx.user.id, input.workspaceId);
       try {
         return await replaceApprovedTimelineItems(input);
+      } catch (error) {
+        mapTimelineError(error);
+      }
+    }),
+
+
+  /**
+   * Explicit, owner-only P0 acceptance lane. OFF by default, even for owners.
+   * This synchronous HTTP entry point is NOT a production queue or publishing API.
+   * Never accepts caller-owned checksums, renderer settings, URLs or a lease token.
+   */
+  renderFencedCandidate: protectedProcedure
+    .input(workspaceInput.extend({
+      creatorProjectId: z.number().int().positive(),
+      timelineId: z.number().int().positive(),
+      confirmCandidateOnly: z.literal(true),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
+      if (process.env.CREATOR_FENCED_RENDER_ENABLED !== "true") {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "CREATOR_FENCED_RENDER_DISABLED" });
+      }
+      try {
+        const result = await dispatchReservedCreatorRender({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          timelineId: input.timelineId,
+        }, {
+          rendererVersion: "ffmpeg-v1",
+          fontFamily: CREATOR_CAPTION_FONT_FAMILY,
+        });
+        if (!result.dispatched) {
+          return {
+            dispatched: false as const,
+            claimId: result.claimId,
+            exportId: result.exportId,
+            state: result.state,
+            finalMaster: false as const,
+            publishApproved: false as const,
+            nextGate: "EXISTING_RENDER_CLAIM" as const,
+          };
+        }
+        return {
+          dispatched: true as const,
+          claimId: result.claimId,
+          exportId: result.exportId,
+          assetId: result.assetId,
+          reviewDecision: "PENDING" as const,
+          finalMaster: false as const,
+          publishApproved: false as const,
+          nextGate: "VIDEO_QUALITY_AND_HUMAN_REVIEW" as const,
+        };
       } catch (error) {
         mapTimelineError(error);
       }
