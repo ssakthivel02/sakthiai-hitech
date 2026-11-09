@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
@@ -66,8 +66,14 @@ describe.skipIf(skipMysqlSuite())("backup / restore / rollback rehearsal on a th
   }
 
   beforeAll(async () => { const c = await mysqlP.createConnection(base).catch(() => null); if (c) { engine = ((await c.query("SELECT VERSION() v")) as any)[0][0].v; await c.end(); } });
+  // Each scenario owns its databases; retaining every migrated schema until afterAll
+  // makes the final cleanup grow with the journal and the number of scenarios.
+  const cleanupScratch = async () => {
+    for (const n of scratch.splice(0)) await dropScratchDatabase(base, n).catch(() => undefined);
+  };
+  afterEach(cleanupScratch);
   afterAll(async () => {
-    for (const n of scratch) await dropScratchDatabase(base, n).catch(() => undefined);
+    await cleanupScratch();
     rmSync(dir, { recursive: true, force: true });
     mkdirSync(path.dirname(REPORT), { recursive: true });
     writeFileSync(REPORT, `${JSON.stringify({
