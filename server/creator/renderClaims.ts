@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/mysql2";
 import { getDb } from "../db";
+import { storageVerifySha256 } from "../storage";
 import { creatorRenderIntentFingerprint, type CreatorRenderIntentInput } from "./renderIntent";
 
 /**
@@ -281,6 +282,126 @@ export class MysqlCreatorRenderClaims {
         AND state = 'RUNNING' AND leaseUntil > UTC_TIMESTAMP(3)
     `);
     return affected(result) === 1;
+  }
+
+
+  /**
+   * Atomic, lease-fenced persistence of a storage-verified FFmpeg result.
+   * This is a finalization primitive, NOT a worker dispatcher. The caller
+   * must already have rendered under a newly-created reservation token.
+   * Readback is performed before the DB transaction; the lease is rechecked
+   * under FOR UPDATE afterwards. Failed or expired fences create NO asset.
+   */
+  async finalizeVerifiedExport(
+    scopeInput: CreatorRenderClaimScope,
+    leaseToken: string,
+    exportId: number,
+    output: {
+      storageKey: string; checksumSha256: string; byteSize: number;
+      width: number; height: number; fps: number; durationMs: number;
+      frameCount: number; visualAssetIds: number[]; renderer: "ffmpeg";
+    },
+    verifyArtifact: (key: string, size: number, checksumSha256: string) => Promise<void> = storageVerifySha256,
+  ): Promise<{ assetId: number; exportId: number; reviewDecision: "PENDING" }> {
+    const scope = validateScope(scopeInput);
+    positiveInt(exportId);
+    if (!/^[0-9a-f-]{36}$/i.test(leaseToken)) throw new Error("CREATOR_RENDER_CLAIM_TOKEN_INVALID");
+    const expectedKey = `creator/${scope.workspaceId}/${scope.creatorProjectId}/renders/timeline-${scope.timelineId}/export-${exportId}.mp4`;
+    if (output.storageKey !== expectedKey || output.renderer !== "ffmpeg") throw new Error("CREATOR_RENDER_OUTPUT_IDENTITY_INVALID");
+    if (!/^[a-f0-9]{64}$/i.test(output.checksumSha256)) throw new Error("CREATOR_RENDER_OUTPUT_CHECKSUM_INVALID");
+    if (!Number.isSafeInteger(output.byteSize) || output.byteSize <= 0 || output.byteSize > 1024 * 1024 * 1024 ||
+        ![output.width, output.height, output.fps, output.durationMs, output.frameCount].every(
+          n => Number.isSafeInteger(n) && n > 0
+        ) || !Array.isArray(output.visualAssetIds) || !output.visualAssetIds.length ||
+        !output.visualAssetIds.every(n => Number.isSafeInteger(n) && n > 0)) {
+      throw new Error("CREATOR_RENDER_OUTPUT_METADATA_INVALID");
+    }
+
+    // A successful upload is NOT evidence of durable bytes. Do not insert
+    // the asset or complete the claim until the stored bytes are verified.
+    await verifyArtifact(output.storageKey, output.byteSize, output.checksumSha256.toLowerCase());
+    const db = await this.db();
+    return db.transaction(async tx => {
+      const [claim] = rowsOf<{ id: number }>(await tx.execute(sql`
+        SELECT id FROM creatorRenderClaims
+        WHERE workspaceId = ${scope.workspaceId} AND creatorProjectId = ${scope.creatorProjectId}
+          AND timelineId = ${scope.timelineId} AND mode = ${scope.mode}
+          AND fingerprint = ${scope.fingerprint} AND leaseToken = ${leaseToken}
+          AND exportId = ${exportId} AND state = 'RUNNING'
+          AND leaseUntil > UTC_TIMESTAMP(3) FOR UPDATE
+      `));
+      if (!claim) throw new Error("CREATOR_RENDER_FINALIZE_FENCE_LOST");
+
+      const [queued] = rowsOf<{
+        id: number; status: string; assetId: number | null; parametersJson: string | null;
+        width: number; height: number;
+      }>(await tx.execute(sql`
+        SELECT id, status, assetId, parametersJson, width, height FROM creatorExports
+        WHERE id = ${exportId} AND workspaceId = ${scope.workspaceId}
+          AND creatorProjectId = ${scope.creatorProjectId} AND timelineId = ${scope.timelineId}
+        FOR UPDATE
+      `));
+      if (!queued || (queued.status !== "QUEUED" && queued.status !== "RUNNING") ||
+          queued.assetId !== null || !queued.parametersJson) {
+        throw new Error("CREATOR_RENDER_FINALIZE_EXPORT_INVALID");
+      }
+      let snapshot: {
+        intentFingerprint?: string; mode?: string; audioMasterAssetId?: number;
+        audioMasterChecksumSha256?: string; visualAssetIds?: number[];
+        durationMs?: number; fps?: number; derivativeOfRenderAssetId?: number | null;
+      };
+      try { snapshot = JSON.parse(queued.parametersJson); }
+      catch { throw new Error("CREATOR_RENDER_FINALIZE_SNAPSHOT_INVALID"); }
+      if (snapshot.intentFingerprint !== scope.fingerprint || snapshot.mode !== scope.mode ||
+          !Number.isSafeInteger(snapshot.audioMasterAssetId) ||
+          !/^[a-f0-9]{64}$/i.test(snapshot.audioMasterChecksumSha256 ?? "") ||
+          queued.width !== output.width || queued.height !== output.height ||
+          snapshot.durationMs !== output.durationMs || snapshot.fps !== output.fps ||
+          JSON.stringify(snapshot.visualAssetIds) !== JSON.stringify(output.visualAssetIds)) {
+        throw new Error("CREATOR_RENDER_FINALIZE_SNAPSHOT_DRIFT");
+      }
+
+      const provenance = {
+        source: scope.mode === "MASTER_CANDIDATE" ? "deterministic-creator-render" : "deterministic-creator-derivative",
+        renderer: "ffmpeg", exportId, timelineId: scope.timelineId,
+        intentFingerprint: scope.fingerprint, audioMasterAssetId: snapshot.audioMasterAssetId,
+        audioMasterChecksumSha256: snapshot.audioMasterChecksumSha256,
+        visualAssetIds: output.visualAssetIds, durationMs: output.durationMs,
+        frameCount: output.frameCount, width: output.width, height: output.height,
+        fps: output.fps, checksumSha256: output.checksumSha256.toLowerCase(),
+        derivativeOfRenderAssetId: snapshot.derivativeOfRenderAssetId ?? null,
+        renderedAt: new Date().toISOString(),
+      };
+      const inserted = await tx.execute(sql`
+        INSERT INTO creatorAssets
+          (workspaceId, creatorProjectId, assetType, mimeType, storageKey,
+           checksumSha256, byteSize, immutable, provenanceJson, reviewDecision)
+        VALUES (${scope.workspaceId}, ${scope.creatorProjectId}, 'RENDER', 'video/mp4',
+          ${output.storageKey}, ${output.checksumSha256.toLowerCase()}, ${output.byteSize},
+          1, ${JSON.stringify(provenance)}, 'PENDING')
+      `);
+      const assetId = lastInsertId(inserted);
+      if (!assetId) throw new Error("CREATOR_RENDER_FINALIZE_ASSET_INSERT_FAILED");
+      const exported = await tx.execute(sql`
+        UPDATE creatorExports SET status = 'SUCCEEDED', assetId = ${assetId},
+          checksumSha256 = ${output.checksumSha256.toLowerCase()}, completedAt = UTC_TIMESTAMP()
+        WHERE id = ${exportId} AND workspaceId = ${scope.workspaceId}
+          AND creatorProjectId = ${scope.creatorProjectId} AND timelineId = ${scope.timelineId}
+          AND assetId IS NULL AND status IN ('QUEUED','RUNNING')
+      `);
+      if (affected(exported) !== 1) throw new Error("CREATOR_RENDER_FINALIZE_EXPORT_UPDATE_FAILED");
+      const completed = await tx.execute(sql`
+        UPDATE creatorRenderClaims SET state = 'SUCCEEDED', outputAssetId = ${assetId},
+          outputChecksumSha256 = ${output.checksumSha256.toLowerCase()}, completedAt = UTC_TIMESTAMP()
+        WHERE id = ${claim.id} AND workspaceId = ${scope.workspaceId}
+          AND creatorProjectId = ${scope.creatorProjectId} AND timelineId = ${scope.timelineId}
+          AND mode = ${scope.mode} AND fingerprint = ${scope.fingerprint}
+          AND leaseToken = ${leaseToken} AND exportId = ${exportId}
+          AND state = 'RUNNING' AND leaseUntil > UTC_TIMESTAMP(3)
+      `);
+      if (affected(completed) !== 1) throw new Error("CREATOR_RENDER_FINALIZE_FENCE_LOST");
+      return { assetId, exportId, reviewDecision: "PENDING" as const };
+    });
   }
 
   /** A timeout/crash/output ambiguity is a quarantine, never auto-retry. */
