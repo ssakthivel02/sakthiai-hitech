@@ -55,7 +55,7 @@ export async function resolveTrustedCreatorRenderMedia(intent: CreatorRenderInte
     if (!asset || asset.assetType !== expectedType || asset.immutable !== 1 ||
         asset.reviewDecision !== "APPROVED" ||
         asset.checksumSha256.toLowerCase() !== sha256.toLowerCase() ||
-        !Number.isSafeInteger(asset.byteSize) || asset.byteSize <= 0) {
+        typeof asset.byteSize !== "number" || !Number.isSafeInteger(asset.byteSize) || asset.byteSize <= 0) {
       throw new Error("CREATOR_RENDER_DISPATCH_SOURCE_DRIFT");
     }
     await storageVerifySha256(asset.storageKey, asset.byteSize, sha256.toLowerCase());
