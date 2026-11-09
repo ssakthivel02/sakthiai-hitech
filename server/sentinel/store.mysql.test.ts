@@ -11,7 +11,7 @@ import { tenantOf } from "./config";
 
 /**
  * Real-SQL integration for the Sentinel store. Runs ONLY against a throwaway database created by server/testing/mysqlTestDb.ts
- * (TEST_DATABASE_URL, loopback, refuses managed hosts). The journaled migrations (including 0017_sentinel_investigations) are applied to that throwaway database by the harness.
+ * (TEST_DATABASE_URL, loopback, refuses managed hosts). The journaled migrations (including 0021_sentinel_investigations) are applied to that throwaway database by the harness.
  *   TEST_DATABASE_URL=mysql://user:pass@127.0.0.1:3306 pnpm vitest run server/sentinel/store.mysql.test.ts
  */
 const skip = skipMysqlSuite();

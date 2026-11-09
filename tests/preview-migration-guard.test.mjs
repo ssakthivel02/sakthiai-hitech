@@ -128,7 +128,7 @@ describe("schema classification against the journal (no database)", () => {
     const schemaTs = readFileSync(path.join(root, "drizzle/schema.ts"), "utf8");
     const declaredTables = [...schemaTs.matchAll(/mysqlTable\(\s*"([^"]+)"/g)].map(m => m[1]).sort();
     expect([...new Set(objects.flatMap(o => o.tables))].sort()).toEqual(declaredTables);
-    expect(objects.flatMap(o => o.columns)).toHaveLength(412); // 372 through 0016 + 40 Sentinel columns in 0017
+    expect(objects.flatMap(o => o.columns)).toHaveLength(463); // 423 through proposed 0020 + 40 Sentinel columns in 0021
   });
 
   it("refuses to classify a migration containing DDL it does not understand (fails closed)", () => {

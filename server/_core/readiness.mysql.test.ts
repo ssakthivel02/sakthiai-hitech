@@ -7,8 +7,36 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
   const readColumns = (db: Awaited<ReturnType<typeof createTestDatabase>>) => async () =>
     (await db.pool.promise().query("SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"))[0] as Array<{ t: string; c: string }>;
 
-  it("a database at 0016 is behind until Sentinel migration 0017", async () => {
+  it("schema at 0016_creator_speech_avatar_consent requires the remaining proposed migrations", async () => {
     const db = await migratedThrough("0016_creator_speech_avatar_consent");
+    try {
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
+    } finally { await db.close(); }
+  });
+
+  it("schema at 0017_creator_render_claims requires the remaining proposed migrations", async () => {
+    const db = await migratedThrough("0017_creator_render_claims");
+    try {
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
+    } finally { await db.close(); }
+  });
+
+  it("schema at 0018_creator_murugan_bible_approvals requires the remaining proposed migrations", async () => {
+    const db = await migratedThrough("0018_creator_murugan_bible_approvals");
+    try {
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["creatorMuruganShotLocks", "creatorMuruganShotPlans", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
+    } finally { await db.close(); }
+  });
+
+  it("schema at 0019_creator_murugan_shot_plans requires the remaining proposed migrations", async () => {
+    const db = await migratedThrough("0019_creator_murugan_shot_plans");
+    try {
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["creatorMuruganShotLocks", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
+    } finally { await db.close(); }
+  });
+
+  it("schema at 0020_creator_murugan_shot_locks requires the remaining proposed migrations", async () => {
+    const db = await migratedThrough("0020_creator_murugan_shot_locks");
     try {
       expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
     } finally { await db.close(); }
@@ -37,42 +65,42 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
     const db = await migratedThrough("0010_resumable_ingestion");
     try {
       const state = await probeSchemaReadiness(readColumns(db));
-      expect(state).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorSpendHolds", "creatorSpendWindows", "rateLimitWindows", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"] });
+      expect(state).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "creatorSpendHolds", "creatorSpendWindows", "rateLimitWindows", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"] });
     } finally { await db.close(); }
   });
 
-  it("a database at 0011 is NOT ready: the two 0012 audit columns and later tables are missing", async () => {
+  it("a database at 0011 is NOT ready: exactly the two 0012 audit columns (and 0013's and 0014's tables) are missing", async () => {
     const db = await migratedThrough("0011_creator_spend_ledger");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "rateLimitWindows", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 2 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "rateLimitWindows", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 2 });
     } finally { await db.close(); }
   });
 
-  it("a database at 0012 is NOT ready: later migration tables are missing", async () => {
+  it("a database at 0012 is NOT ready: only 0013's rate-limit table and 0014's artifacts table are missing", async () => {
     const db = await migratedThrough("0012_creator_spend_settlement_audit");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "rateLimitWindows", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "rateLimitWindows", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 
-  it("a database at 0013 (rate-limit table, before workspace artifacts) is NOT ready: later migration tables are missing", async () => {
+  it("a database at 0013 (rate-limit table, before workspace artifacts) is NOT ready: 0014's artifacts and 0015's link tables are missing", async () => {
     const db = await migratedThrough("0013_rate_limit_windows");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "artifacts", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 
-  it("a database at 0014 (artifacts, before file references) is NOT ready: later migration tables are missing", async () => {
+  it("a database at 0014 (artifacts, before file references) is NOT ready: only 0015's link table is missing", async () => {
     const db = await migratedThrough("0014_workspace_artifacts");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "creatorConsents", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["artifactFileReferences", "creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 
-  it("a database at 0015 (before speech/avatar consent) is NOT ready: consent and Sentinel tables are missing", async () => {
+  it("a database at 0015 (before speech/avatar consent) is NOT ready: only 0016's consent table is missing", async () => {
     const db = await migratedThrough("0015_artifact_file_references");
     try {
-      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["creatorConsents", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
+      expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "behind", missingTables: ["creatorConsents", "creatorMuruganBibleApprovals", "creatorMuruganShotLocks", "creatorMuruganShotPlans", "creatorRenderClaims", "sentinelAudit", "sentinelEvents", "sentinelInvestigations"], missingColumns: 0 });
     } finally { await db.close(); }
   });
 

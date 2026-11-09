@@ -33,7 +33,7 @@ function toRecord(r: Row): InvestigationRecord {
 const toEvent = (r: Row): StoredEvent => ({ seq: Number(r.seq), type: r.type, vt: Number(r.vt), payload: parseJson<unknown>(r.payloadJson, null), prev: r.prev, hash: r.hash });
 
 /**
- * MySQL SentinelStore (raw SQL, same style as MysqlTaskStore). Tables are created by drizzle/0017_sentinel_investigations.sql (journaled, additive, InnoDB) and declared in
+ * MySQL SentinelStore (raw SQL, same style as MysqlTaskStore). Tables are created by drizzle/0021_sentinel_investigations.sql (journaled, additive, InnoDB) and declared in
  * drizzle/schema.ts; the feature stays inert until SENTINEL_ENABLED (default off). Every query filters by workspaceId.
  */
 export class MysqlSentinelStore implements SentinelStore {

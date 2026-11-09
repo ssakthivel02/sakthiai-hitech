@@ -630,3 +630,84 @@ export const creatorSpendHolds = mysqlTable("creatorSpendHolds", {
   index("creatorSpendHolds_state_createdAt_idx").on(table.state, table.createdAt),
   index("creatorSpendHolds_workspaceId_createdAt_idx").on(table.workspaceId, table.createdAt),
 ]);
+
+/** Optional Creator render claim ledger. It does not activate render dispatch by itself.
+ * A row is unique per scoped canonical input and cannot be automatically reclaimed
+ * after expiry: stale or unknown outcomes require explicit reconciliation.
+ */
+export const creatorRenderClaims = mysqlTable("creatorRenderClaims", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  timelineId: int("timelineId").notNull(),
+  mode: mysqlEnum("mode", ["MASTER_CANDIDATE", "VERTICAL_DERIVATIVE"]).notNull(),
+  fingerprint: char("fingerprint", { length: 64 }).notNull(),
+  leaseToken: char("leaseToken", { length: 36 }).notNull(),
+  leaseUntil: datetime("leaseUntil", { fsp: 3 }).notNull(),
+  state: mysqlEnum("state", ["RUNNING", "SUCCEEDED", "NEEDS_RECONCILIATION"]).default("RUNNING").notNull(),
+  exportId: int("exportId"),
+  outputAssetId: int("outputAssetId"),
+  outputChecksumSha256: char("outputChecksumSha256", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  completedAt: timestamp("completedAt"),
+}, table => [
+  uniqueIndex("creatorRenderClaims_scope_fingerprint_uq").on(table.workspaceId, table.creatorProjectId, table.timelineId, table.mode, table.fingerprint),
+  index("creatorRenderClaims_state_lease_idx").on(table.state, table.leaseUntil),
+]);
+
+/** Murugan: owner-approved character bible. Unmerged, additive 0018 migration.
+ * Revocation is explicit. No external generation is activated by schema presence. */
+export const creatorMuruganBibleApprovals = mysqlTable("creatorMuruganBibleApprovals", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  bibleId: varchar("bibleId", { length: 120 }).notNull(),
+  contentSha256: varchar("contentSha256", { length: 64 }).notNull(),
+  contentJson: text("contentJson").notNull(),
+  approvedByUserId: int("approvedByUserId").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+}, table => [
+  uniqueIndex("creatorMuruganBibleApprovals_identity_uq").on(table.workspaceId, table.creatorProjectId, table.bibleId),
+]);
+
+/** Murugan: immutable approved shot-plan snapshot. Additive 0019 migration. */
+export const creatorMuruganShotPlans = mysqlTable("creatorMuruganShotPlans", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  planId: varchar("planId", { length: 64 }).notNull(),
+  contentSha256: varchar("contentSha256", { length: 64 }).notNull(),
+  snapshotJson: text("snapshotJson").notNull(),
+  approvedByUserId: int("approvedByUserId").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+}, table => [
+  uniqueIndex("creatorMuruganShotPlans_identity_uq").on(table.workspaceId, table.creatorProjectId, table.contentSha256),
+]);
+
+/** Murugan: per-shot immutable reference binding; revoked locks are not reused.
+ * Additive 0020 migration, without enabling paid generation. */
+export const creatorMuruganShotLocks = mysqlTable("creatorMuruganShotLocks", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  snapshotId: int("snapshotId").notNull(),
+  snapshotSha256: varchar("snapshotSha256", { length: 64 }).notNull(),
+  creatorShotId: int("creatorShotId").notNull(),
+  shotId: varchar("shotId", { length: 80 }).notNull(),
+  bindingId: varchar("bindingId", { length: 64 }).notNull(),
+  selectionJson: text("selectionJson").notNull(),
+  firstFrameAssetId: int("firstFrameAssetId").notNull(),
+  lastFrameAssetId: int("lastFrameAssetId"),
+  contentSha256: varchar("contentSha256", { length: 64 }).notNull(),
+  approvedByUserId: int("approvedByUserId").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+}, table => [
+  uniqueIndex("creatorMuruganShotLocks_unique_shot_uq").on(table.workspaceId, table.creatorProjectId, table.snapshotId, table.creatorShotId),
+]);
