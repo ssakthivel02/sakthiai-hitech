@@ -188,11 +188,9 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
       }>];
     expect(assets[0]).toMatchObject({ reviewDecision: "PENDING", immutable: 1 });
     expect(JSON.parse(assets[0].provenanceJson).intentFingerprint).toBe(reserved.fingerprint);
-    const [exports] = await exec(sql`SELECT status, assetId FROM creatorExports WHERE id=${reserved.exportId}`)
-      as unknown as [Array<{status:string;assetId:number}>];
+    const [exports] = await exec(sql`SELECT status, assetId FROM creatorExports WHERE id=${reserved.exportId}`) as unknown as [Array<{status:string;assetId:number}>];
     expect(exports[0]).toMatchObject({ status: "SUCCEEDED", assetId: done.assetId });
-    const [claims] = await exec(sql`SELECT state, outputAssetId FROM creatorRenderClaims WHERE id=${reserved.claimId}`)
-      as unknown as [Array<{state:string;outputAssetId:number}>];
+    const [claims] = await exec(sql`SELECT state, outputAssetId FROM creatorRenderClaims WHERE id=${reserved.claimId}`) as unknown as [Array<{state:string;outputAssetId:number}>];
     expect(claims[0]).toMatchObject({ state: "SUCCEEDED", outputAssetId: done.assetId });
     await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output, verify))
       .rejects.toThrow("CREATOR_RENDER_FINALIZE_FENCE_LOST");
@@ -223,8 +221,7 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
     const [assets] = await exec(sql`SELECT COUNT(*) AS n FROM creatorAssets
       WHERE storageKey=${output.storageKey}`) as unknown as [[{n:number}]];
     expect(Number(assets[0].n)).toBe(0);
-    const [exports] = await exec(sql`SELECT status, assetId FROM creatorExports WHERE id=${reserved.exportId}`)
-      as unknown as [Array<{status:string;assetId:number|null}>];
+    const [exports] = await exec(sql`SELECT status, assetId FROM creatorExports WHERE id=${reserved.exportId}`) as unknown as [Array<{status:string;assetId:number|null}>];
     expect(exports[0]).toMatchObject({ status: "QUEUED", assetId: null });
   });
 
@@ -245,11 +242,9 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
     try {
       await expect(store.finalizeVerifiedExport(renderScope, reserved.leaseToken, reserved.exportId, output,
         async () => undefined)).rejects.toThrow();
-      const [assets] = await exec(sql`SELECT COUNT(*) AS n FROM creatorAssets WHERE storageKey=${output.storageKey}`)
-        as unknown as [[{n:number}]];
+      const [assets] = await exec(sql`SELECT COUNT(*) AS n FROM creatorAssets WHERE storageKey=${output.storageKey}`) as unknown as [[{n:number}]];
       expect(Number(assets[0].n)).toBe(0);
-      const [claims] = await exec(sql`SELECT state FROM creatorRenderClaims WHERE id=${reserved.claimId}`)
-        as unknown as [Array<{state:string}>];
+      const [claims] = await exec(sql`SELECT state FROM creatorRenderClaims WHERE id=${reserved.claimId}`) as unknown as [Array<{state:string}>];
       expect(claims[0].state).toBe("RUNNING");
     } finally {
       await exec(sql`DROP TRIGGER IF EXISTS creatorFinalizeAbort`);
