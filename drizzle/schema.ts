@@ -591,3 +591,59 @@ export const creatorRenderClaims = mysqlTable("creatorRenderClaims", {
   uniqueIndex("creatorRenderClaims_scope_fingerprint_uq").on(table.workspaceId, table.creatorProjectId, table.timelineId, table.mode, table.fingerprint),
   index("creatorRenderClaims_state_lease_idx").on(table.state, table.leaseUntil),
 ]);
+
+/** Murugan: owner-approved character bible. Unmerged, additive 0018 migration.
+ * Revocation is explicit. No external generation is activated by schema presence. */
+export const creatorMuruganBibleApprovals = mysqlTable("creatorMuruganBibleApprovals", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  bibleId: varchar("bibleId", { length: 120 }).notNull(),
+  contentSha256: varchar("contentSha256", { length: 64 }).notNull(),
+  contentJson: text("contentJson").notNull(),
+  approvedByUserId: int("approvedByUserId").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+}, table => [
+  uniqueIndex("creatorMuruganBibleApprovals_identity_uq").on(table.workspaceId, table.creatorProjectId, table.bibleId),
+]);
+
+/** Murugan: immutable approved shot-plan snapshot. Additive 0019 migration. */
+export const creatorMuruganShotPlans = mysqlTable("creatorMuruganShotPlans", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  planId: varchar("planId", { length: 64 }).notNull(),
+  contentSha256: varchar("contentSha256", { length: 64 }).notNull(),
+  snapshotJson: text("snapshotJson").notNull(),
+  approvedByUserId: int("approvedByUserId").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+}, table => [
+  uniqueIndex("creatorMuruganShotPlans_identity_uq").on(table.workspaceId, table.creatorProjectId, table.contentSha256),
+]);
+
+/** Murugan: per-shot immutable reference binding; revoked locks are not reused.
+ * Additive 0020 migration, without enabling paid generation. */
+export const creatorMuruganShotLocks = mysqlTable("creatorMuruganShotLocks", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  snapshotId: int("snapshotId").notNull(),
+  snapshotSha256: varchar("snapshotSha256", { length: 64 }).notNull(),
+  creatorShotId: int("creatorShotId").notNull(),
+  shotId: varchar("shotId", { length: 80 }).notNull(),
+  bindingId: varchar("bindingId", { length: 64 }).notNull(),
+  selectionJson: text("selectionJson").notNull(),
+  firstFrameAssetId: int("firstFrameAssetId").notNull(),
+  lastFrameAssetId: int("lastFrameAssetId"),
+  contentSha256: varchar("contentSha256", { length: 64 }).notNull(),
+  approvedByUserId: int("approvedByUserId").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+}, table => [
+  uniqueIndex("creatorMuruganShotLocks_unique_shot_uq").on(table.workspaceId, table.creatorProjectId, table.snapshotId, table.creatorShotId),
+]);
