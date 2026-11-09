@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readExactRangedObject, CREATOR_CHECKSUM_MAX_BYTES } from "./creator/boundedObjectRead";
 import { assertCreatorStoredObjectIntegrity, CREATOR_STORED_MEDIA_MAX_BYTES } from "./creator/storageIntegrity";
 import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -128,7 +129,9 @@ export async function storageDelete(relKey: string): Promise<void> {
 
 type StorageProbeDependencies = {
   put?: typeof storagePut;
+  /** Optional legacy test seam; production must use the bounded range verifier. */
   read?: typeof storageRead;
+  verify?: typeof storageVerifySha256;
   delete?: typeof storageDelete;
 };
 
@@ -137,7 +140,17 @@ export async function storageRoundTripProbe(
 ): Promise<{ pass: boolean; detail: string }> {
   const payload = Buffer.from(`sakthiai-creator-storage-probe:${crypto.randomUUID()}`, "utf-8");
   const put = deps.put ?? storagePut;
-  const read = deps.read ?? storageRead;
+  // Runtime readiness must exercise the SAME HTTP 206 / SHA-256 contract as
+  // Creator artifact persistence. An ordinary full-object GET is insufficient.
+  // The injected read seam is retained only for existing isolated unit tests.
+  const verify = deps.verify ?? (deps.read
+    ? async (key: string, size: number, checksum: string) => {
+        const loaded = Buffer.from(await deps.read!(key));
+        if (loaded.byteLength !== size || createHash("sha256").update(loaded).digest("hex") !== checksum) {
+          throw new Error("CREATOR_STORAGE_PROBE_MISMATCH");
+        }
+      }
+    : storageVerifySha256);
   const remove = deps.delete ?? storageDelete;
   let key: string | undefined;
   let primaryFailure: { pass: false; detail: string } | null = null;
@@ -149,10 +162,7 @@ export async function storageRoundTripProbe(
       "text/plain; charset=utf-8",
     );
     key = stored.key;
-    const loaded = Buffer.from(await read(stored.key));
-    if (!loaded.equals(payload)) {
-      primaryFailure = { pass: false, detail: "Storage write/read round-trip returned different bytes." };
-    }
+    await verify(stored.key, payload.byteLength, createHash("sha256").update(payload).digest("hex"));
   } catch {
     primaryFailure = { pass: false, detail: "Storage write/read round-trip failed." };
   }
@@ -168,7 +178,7 @@ export async function storageRoundTripProbe(
   }
 
   if (primaryFailure) return primaryFailure;
-  return { pass: true, detail: "Storage write/read/delete round-trip succeeded and canary bytes matched." };
+  return { pass: true, detail: "Storage write/verified-read/delete round-trip succeeded; canary SHA-256 matched." };
 }
 
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
