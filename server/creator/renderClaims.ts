@@ -204,10 +204,6 @@ export class MysqlCreatorRenderClaims {
     return this.resolveDuplicate(scope);
   }
 
-Id),
-    };
-  }
-
   /** Only created:true authorizes a FUTURE caller to start rendering. */
   async claim(input: CreatorRenderClaimScope, leaseSeconds = 1800): Promise<CreatorRenderClaimResult> {
     const scope = validateScope(input);
