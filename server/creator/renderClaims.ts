@@ -420,7 +420,7 @@ export class MysqlCreatorRenderClaims {
       `);
       if (affected(completed) !== 1) throw new Error("CREATOR_RENDER_FINALIZE_FENCE_LOST");
       return { assetId, exportId, reviewDecision: "PENDING" as const };
-    });
+    }, async () => this.db());
   }
 
   /** A timeout/crash/output ambiguity is a quarantine, never auto-retry. */
