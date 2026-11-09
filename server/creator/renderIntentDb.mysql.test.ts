@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
 import { creatorRenderIntentFingerprint } from "./renderIntent";
-import { readCreatorRenderIntentFromDatabase } from "./renderIntentDb";
+import { readCreatorRenderIntentFromDatabase, reserveCreatorRenderIntentFromDatabase } from "./renderIntentDb";
 
 /** Real disposable SQL: no FFmpeg invocation, signed URLs or provider calls. */
 describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeout: 60_000 }, () => {
@@ -55,6 +55,8 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
   });
   afterAll(async () => { await d?.close(); });
   beforeEach(async () => {
+    await exec(sql`DELETE FROM creatorRenderClaims WHERE timelineId = ${ids.timeline}`);
+    await exec(sql`DELETE FROM creatorExports WHERE timelineId = ${ids.timeline}`);
     await exec(sql`UPDATE creatorAssets SET immutable=1, reviewDecision='APPROVED' WHERE id IN (${ids.audio},${ids.clip},${ids.montage})`);
     await exec(sql`UPDATE creatorAssets SET checksumSha256=${"b".repeat(64)} WHERE id=${ids.clip}`);
     await exec(sql`UPDATE creatorTimelines SET audioMasterAssetId=${ids.audio} WHERE id=${ids.timeline}`);
@@ -125,4 +127,37 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
     await exec(sql`UPDATE creatorAssets SET reviewDecision='APPROVED', provenanceJson=${JSON.stringify({source:"deterministic-creator-render",timelineId:ids.timeline,visualAssetIds:[ids.montage,ids.clip],audioMasterChecksumSha256:"a".repeat(64)})} WHERE id=${master}`);
     await expect(read({verticalDerivativeOf:master})).rejects.toThrow("CREATOR_RENDER_INTENT_DERIVATIVE_SOURCE_DRIFT");
   });
+  it("reserves one source-derived claim and QUEUED export; duplicate never receives a lease token", async () => {
+    const reservation = () => reserveCreatorRenderIntentFromDatabase(scope(), config, async () => d.db);
+    const first = await reservation();
+    expect(first.created).toBe(true);
+    if (!first.created) throw new Error("EXPECTED_FIRST_RESERVATION");
+    const second = await reservation();
+    expect(second).toMatchObject({
+      created: false, claimId: first.claimId, exportId: first.exportId,
+      fingerprint: first.fingerprint,
+    });
+    expect("leaseToken" in second).toBe(false);
+    const [rows] = await exec(sql`SELECT COUNT(*) AS n FROM creatorExports WHERE timelineId = ${ids.timeline}`) as unknown as [[{ n: number }]];
+    expect(Number(rows[0].n)).toBe(1);
+
+    // A new approved Tamil cue snapshot is a DIFFERENT export reservation.
+    await exec(sql`UPDATE creatorCaptionCues SET text = 'வேல் முருகா சரணம்' WHERE timelineId = ${ids.timeline}`);
+    const changed = await reservation();
+    expect(changed.created).toBe(true);
+    expect(changed.fingerprint).not.toBe(first.fingerprint);
+  });
+
+  it("rolls back both claim and export when queue insertion fails", async () => {
+    await exec(sql`CREATE TRIGGER creatorIntentQueueAbort BEFORE INSERT ON creatorExports
+      FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'injected atomic reservation failure'`);
+    try {
+      await expect(reserveCreatorRenderIntentFromDatabase(scope(), config, async () => d.db)).rejects.toThrow();
+      const [rows] = await exec(sql`SELECT COUNT(*) AS n FROM creatorRenderClaims WHERE timelineId = ${ids.timeline}`) as unknown as [[{ n: number }]];
+      expect(Number(rows[0].n)).toBe(0);
+    } finally {
+      await exec(sql`DROP TRIGGER IF EXISTS creatorIntentQueueAbort`);
+    }
+  });
+
 });

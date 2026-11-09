@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/mysql2";
 import { getDb } from "../db";
 import { creatorRenderIntentFingerprint, type CreatorRenderIntentInput } from "./renderIntent";
@@ -10,6 +10,8 @@ import { creatorRenderIntentFingerprint, type CreatorRenderIntentInput } from ".
  * and can never launch a replacement without an independently reviewed reconciler.
  */
 type Db = ReturnType<typeof drizzle>;
+/** Minimal SQL surface shared by Drizzle MySQL transactions. */
+export type CreatorRenderSqlTransaction = { execute(query: SQL): Promise<unknown> };
 export type CreatorRenderClaimDbProvider = () => Promise<Db | null | undefined>;
 export type CreatorRenderMode = "MASTER_CANDIDATE" | "VERTICAL_DERIVATIVE";
 export type CreatorRenderClaimState = "RUNNING" | "SUCCEEDED" | "NEEDS_RECONCILIATION";
@@ -26,7 +28,7 @@ type ClaimRow = { id: number; state: CreatorRenderClaimState; exportId: number |
 export type CreatorRenderQueuedResult =
   | { created: true; claimId: number; exportId: number; leaseToken: string; state: "RUNNING"; fingerprint: string }
   | { created: false; claimId: number; exportId: number | null; outputAssetId: number | null; state: CreatorRenderClaimState; fingerprint: string };
-class ExistingRenderClaim extends Error {
+export class ExistingRenderClaim extends Error {
   constructor() { super("CREATOR_RENDER_CLAIM_EXISTS"); }
 }
 
@@ -85,16 +87,17 @@ export class MysqlCreatorRenderClaims {
 
 
   /**
-   * ATOMIC pre-dispatch step. Unlike claim()+bindExport(), this either creates
-   * one UNIQUE claim plus its QUEUED creatorExports row in the same transaction,
-   * or creates neither. It does NOT schedule FFmpeg or authorize future retries.
-   *
-   * IMPORTANT: caller MUST collect an immutable, consistent media snapshot and
-   * validate it inside a timeline-scoped lock before calling this method.
-   * Runtime wiring, crash reconciliation and worker fencing are separate work.
+   * Execute the claim + QUEUED export reservation on the caller's transaction.
+   * The caller MUST already hold the scoped creatorTimelines FOR UPDATE lock,
+   * and MUST derive the intent from source rows read on that same transaction.
+   * This method never commits, signs URLs, starts FFmpeg, or returns a worker
+   * token for an existing claim.
    */
-  async claimAndQueueExport(input: CreatorRenderIntentInput, leaseSeconds = 1800): Promise<CreatorRenderQueuedResult> {
-    // Fingerprint validation is server-side and happens before any DB call.
+  async reserveInsideTransaction(
+    tx: CreatorRenderSqlTransaction,
+    input: CreatorRenderIntentInput,
+    leaseSeconds = 1800,
+  ): Promise<Extract<CreatorRenderQueuedResult, { created: true }>> {
     const { fingerprint, version } = creatorRenderIntentFingerprint(input);
     const scope = validateScope({
       workspaceId: input.workspaceId,
@@ -104,7 +107,6 @@ export class MysqlCreatorRenderClaims {
       fingerprint,
     });
     validLeaseSeconds(leaseSeconds);
-    const db = await this.db();
     const leaseToken = randomUUID();
     const snapshot = {
       intentVersion: version,
@@ -122,61 +124,87 @@ export class MysqlCreatorRenderClaims {
       fps: input.output.fps,
       derivativeOfRenderAssetId: input.derivativeOf?.assetId ?? null,
       derivativeOfChecksumSha256: input.derivativeOf?.checksumSha256.toLowerCase() ?? null,
-      // Media signed URLs and private credentials must never enter this ledger.
     };
+
+    let claimId: number;
     try {
-      return await db.transaction(async tx => {
-        let claimId: number;
-        try {
-          const inserted = await tx.execute(sql`
-            INSERT INTO creatorRenderClaims
-              (workspaceId, creatorProjectId, timelineId, mode, fingerprint, leaseToken, leaseUntil, state)
-            VALUES (${scope.workspaceId}, ${scope.creatorProjectId}, ${scope.timelineId}, ${scope.mode},
-              ${fingerprint}, ${leaseToken},
-              DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${leaseSeconds} SECOND), 'RUNNING')
-          `);
-          claimId = lastInsertId(inserted);
-          if (!claimId) throw new Error("CREATOR_RENDER_CLAIM_INSERT_INVALID");
-        } catch (error) {
-          if (duplicateKey(error)) throw new ExistingRenderClaim();
-          throw error;
-        }
-
-        const exported = await tx.execute(sql`
-          INSERT INTO creatorExports
-            (workspaceId, creatorProjectId, timelineId, status, width, height,
-             format, renderer, parametersJson)
-          VALUES (${scope.workspaceId}, ${scope.creatorProjectId}, ${scope.timelineId},
-            'QUEUED', ${input.output.width}, ${input.output.height},
-            'mp4', 'ffmpeg', ${JSON.stringify(snapshot)})
-        `);
-        const exportId = lastInsertId(exported);
-        if (!exportId) throw new Error("CREATOR_RENDER_EXPORT_CREATE_FAILED");
-
-        const bound = await tx.execute(sql`
-          UPDATE creatorRenderClaims SET exportId = ${exportId}
-          WHERE id = ${claimId} AND workspaceId = ${scope.workspaceId}
-            AND creatorProjectId = ${scope.creatorProjectId} AND timelineId = ${scope.timelineId}
-            AND mode = ${scope.mode} AND fingerprint = ${fingerprint}
-            AND leaseToken = ${leaseToken} AND state = 'RUNNING'
-            AND leaseUntil > UTC_TIMESTAMP(3) AND exportId IS NULL
-        `);
-        if (affected(bound) !== 1) throw new Error("CREATOR_RENDER_CLAIM_BIND_FAILED");
-        return { created: true as const, claimId, exportId, leaseToken, state: "RUNNING" as const, fingerprint };
-      });
+      const inserted = await tx.execute(sql`
+        INSERT INTO creatorRenderClaims
+          (workspaceId, creatorProjectId, timelineId, mode, fingerprint, leaseToken, leaseUntil, state)
+        VALUES (${scope.workspaceId}, ${scope.creatorProjectId}, ${scope.timelineId}, ${scope.mode},
+          ${fingerprint}, ${leaseToken},
+          DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${leaseSeconds} SECOND), 'RUNNING')
+      `);
+      claimId = lastInsertId(inserted);
+      if (!claimId) throw new Error("CREATOR_RENDER_CLAIM_INSERT_INVALID");
     } catch (error) {
-      if (!(error instanceof ExistingRenderClaim)) throw error;
+      if (duplicateKey(error)) throw new ExistingRenderClaim();
+      throw error;
     }
-    // Only after the unique insert's transaction resolves can a duplicate
-    // read an authoritative exportId. Never hand out the worker's lease token.
+
+    const exported = await tx.execute(sql`
+      INSERT INTO creatorExports
+        (workspaceId, creatorProjectId, timelineId, status, width, height,
+         format, renderer, parametersJson)
+      VALUES (${scope.workspaceId}, ${scope.creatorProjectId}, ${scope.timelineId},
+        'QUEUED', ${input.output.width}, ${input.output.height},
+        'mp4', 'ffmpeg', ${JSON.stringify(snapshot)})
+    `);
+    const exportId = lastInsertId(exported);
+    if (!exportId) throw new Error("CREATOR_RENDER_EXPORT_CREATE_FAILED");
+
+    const bound = await tx.execute(sql`
+      UPDATE creatorRenderClaims SET exportId = ${exportId}
+      WHERE id = ${claimId} AND workspaceId = ${scope.workspaceId}
+        AND creatorProjectId = ${scope.creatorProjectId} AND timelineId = ${scope.timelineId}
+        AND mode = ${scope.mode} AND fingerprint = ${fingerprint}
+        AND leaseToken = ${leaseToken} AND state = 'RUNNING'
+        AND leaseUntil > UTC_TIMESTAMP(3) AND exportId IS NULL
+    `);
+    if (affected(bound) !== 1) throw new Error("CREATOR_RENDER_CLAIM_BIND_FAILED");
+    return { created: true, claimId, exportId, leaseToken, state: "RUNNING", fingerprint };
+  }
+
+  /** Duplicate lookup happens only AFTER the failed unique insert rolls back. */
+  async resolveDuplicate(scopeInput: CreatorRenderClaimScope): Promise<Extract<CreatorRenderQueuedResult, { created: false }>> {
+    const scope = validateScope(scopeInput);
+    const db = await this.db();
     await this.quarantineExpired(scope, db);
     const existing = await this.read(db, scope);
     if (!existing) throw new Error("CREATOR_RENDER_CLAIM_DUPLICATE_NOT_FOUND");
     return {
-      created: false, claimId: Number(existing.id), fingerprint,
+      created: false, claimId: Number(existing.id), fingerprint: scope.fingerprint,
       state: existing.state,
       exportId: existing.exportId === null ? null : Number(existing.exportId),
       outputAssetId: existing.outputAssetId === null ? null : Number(existing.outputAssetId),
+    };
+  }
+
+  /**
+   * Legacy input-driven reservation remains available to existing tests, but
+   * must not be wired to the production renderer. Use the database-derived
+   * same-transaction reservation from renderIntentDb.ts for runtime work.
+   */
+  async claimAndQueueExport(input: CreatorRenderIntentInput, leaseSeconds = 1800): Promise<CreatorRenderQueuedResult> {
+    const { fingerprint } = creatorRenderIntentFingerprint(input);
+    const scope = validateScope({
+      workspaceId: input.workspaceId,
+      creatorProjectId: input.creatorProjectId,
+      timelineId: input.timelineId,
+      mode: input.mode,
+      fingerprint,
+    });
+    validLeaseSeconds(leaseSeconds);
+    const db = await this.db();
+    try {
+      return await db.transaction(tx => this.reserveInsideTransaction(tx, input, leaseSeconds));
+    } catch (error) {
+      if (!(error instanceof ExistingRenderClaim)) throw error;
+    }
+    return this.resolveDuplicate(scope);
+  }
+
+Id),
     };
   }
 
