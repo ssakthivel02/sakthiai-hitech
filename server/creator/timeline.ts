@@ -78,7 +78,7 @@ export async function replaceApprovedTimelineItems(input: {
     const claimedShotIds = requestedTimelineShotIds(normalized);
     // Scope the lookup to the exact workspace and project before writing any shot provenance.
     const scopedShots = claimedShotIds.length
-      ? await db.select({ id: creatorShots.id }).from(creatorShots).where(and(
+      ? await tx.select({ id: creatorShots.id }).from(creatorShots).where(and(
           eq(creatorShots.workspaceId, input.workspaceId),
           eq(creatorShots.creatorProjectId, input.creatorProjectId),
           inArray(creatorShots.id, claimedShotIds),
