@@ -105,11 +105,16 @@ export async function withCreatorRenderIntentTransaction<T>(
     if (timeline.width !== 1920 || timeline.height !== 1080 || !positive(timeline.fps) ||
         !timeline.audioMasterAssetId) throw new Error("CREATOR_RENDER_INTENT_MASTER_PROFILE_INVALID");
 
+    // Lock every source approval/identity row in the same transaction as the
+    // timeline, caption snapshot, claim reservation and finalizer. A concurrent
+    // asset rejection or shot reassignment must either finish before our read
+    // (and be rejected) or wait until this transaction commits; a plain SELECT
+    // at REPEATABLE READ could accept a stale approved-source snapshot.
     const [audio] = await tx.select().from(creatorAssets).where(and(
       eq(creatorAssets.id, timeline.audioMasterAssetId),
       eq(creatorAssets.workspaceId, input.workspaceId),
       eq(creatorAssets.creatorProjectId, input.creatorProjectId),
-    )).limit(1);
+    )).limit(1).for("update");
     immutableApproved(audio, "audio");
     if (audio.assetType !== "AUDIO_MASTER") throw new Error("CREATOR_RENDER_INTENT_AUDIO_TYPE_INVALID");
 
@@ -126,7 +131,7 @@ export async function withCreatorRenderIntentTransaction<T>(
       eq(creatorShots.workspaceId, input.workspaceId),
       eq(creatorShots.creatorProjectId, input.creatorProjectId),
       inArray(creatorShots.id, shotIds),
-    )) : [];
+    )).for("update") : [];
     const validShotIds = new Set(shots.map(row => row.id));
     if (validShotIds.size !== shotIds.length) throw new Error("CREATOR_RENDER_INTENT_FOREIGN_SHOT");
 
@@ -136,7 +141,7 @@ export async function withCreatorRenderIntentTransaction<T>(
         eq(creatorAssets.id, item.assetId),
         eq(creatorAssets.workspaceId, input.workspaceId),
         eq(creatorAssets.creatorProjectId, input.creatorProjectId),
-      )).limit(1);
+      )).limit(1).for("update");
       immutableApproved(asset, "visual");
       if (asset.assetType !== "IMAGE" && asset.assetType !== "VIDEO") {
         throw new Error("CREATOR_RENDER_INTENT_VISUAL_TYPE_INVALID");
@@ -168,7 +173,7 @@ export async function withCreatorRenderIntentTransaction<T>(
         eq(creatorAssets.id, input.verticalDerivativeOf),
         eq(creatorAssets.workspaceId, input.workspaceId),
         eq(creatorAssets.creatorProjectId, input.creatorProjectId),
-      )).limit(1);
+      )).limit(1).for("update");
       if (!parent) throw new Error("CREATOR_RENDER_INTENT_DERIVATIVE_MASTER_NOT_FOUND");
       approvedMasterProvenance(parent, input.timelineId, visuals.map(row => row.assetId), audio.checksumSha256);
       derivativeOf = { assetId: parent.id, checksumSha256: parent.checksumSha256 };
