@@ -40,9 +40,27 @@ export interface SentinelHandlerDeps {
 const toStored = (e: TraceEvent): StoredEvent => ({ seq: e.seq, type: e.type, vt: e.vt, payload: e.payload, prev: e.prev, hash: e.hash });
 const resultOf = (id: string, s: FinalSummary): SentinelTaskResult => ({ investigationId: id, status: s.status, stopReason: s.stopReason, outcome: s.outcome, label: s.label, verified: s.verified, eventCount: s.eventCount, traceHead: s.traceHead });
 
-/** Model calls already spent in earlier attempts (each persisted decision records which format-retry attempt produced it). */
-const priorModelCalls = (events: StoredEvent[]): number =>
-  events.filter((e) => e.type === "decision").reduce((n, e) => n + 1 + Number((e.payload as { model_meta?: { attempt?: number } }).model_meta?.attempt ?? 0), 0);
+/** Trace decisions omit failed/ambiguous requests, so the task checkpoint owns the call budget. */
+function reservedModelCalls(checkpoint: unknown, investigationId: string, events: StoredEvent[]): number {
+  if (checkpoint == null) {
+    if (events.length === 0) return 0;
+    throw new TaskFatalError("active investigation has no durable model-call budget; start a new investigation", "BUDGET_DENIED");
+  }
+  const saved = checkpoint as { investigationId?: unknown; modelCalls?: unknown } | null;
+  if (!saved || typeof saved !== "object" || saved.investigationId !== investigationId) {
+    throw new TaskFatalError("investigation checkpoint does not match this investigation", "NON_RETRYABLE");
+  }
+  if (saved.modelCalls === undefined) {
+    // Old active checkpoints cannot establish how many failed requests were sent. Never grant a fresh allowance.
+    throw new TaskFatalError("investigation checkpoint has no durable model-call budget; start a new investigation", "BUDGET_DENIED");
+  }
+  if (typeof saved.modelCalls !== "number" || !Number.isSafeInteger(saved.modelCalls) || saved.modelCalls < 0) {
+    throw new TaskFatalError("invalid investigation model-call budget checkpoint", "NON_RETRYABLE");
+  }
+  const recorded = events.filter(e => e.type === "decision").reduce((n, e) => n + 1 + Number((e.payload as { model_meta?: { attempt?: number } }).model_meta?.attempt ?? 0), 0);
+  if (!Number.isSafeInteger(recorded) || saved.modelCalls < recorded) throw new TaskFatalError("model-call budget checkpoint is behind recorded decisions", "NON_RETRYABLE");
+  return saved.modelCalls;
+}
 
 /**
  * sentinel.investigate - durable, resumable, cancellable read-only incident investigation.
@@ -55,7 +73,7 @@ const priorModelCalls = (events: StoredEvent[]): number =>
  * At-least-once window: a crash between "tool_request" and "tool_result" re-executes that one READ-ONLY call on resume. Nothing here writes
  * to a target system: write tools are denied by the broker and cannot be bound.
  */
-export function createSentinelInvestigateHandler(deps: SentinelHandlerDeps): TaskHandler<unknown, { investigationId: string; seq: number; traceHead: string }> {
+export function createSentinelInvestigateHandler(deps: SentinelHandlerDeps): TaskHandler<unknown, { investigationId: string; seq: number; traceHead: string | null; modelCalls: number }> {
   const enabled = deps.enabled ?? (() => sentinelEnabled());
   const cfgOf = deps.config ?? (() => sentinelRuntimeConfig());
   return async (ctx) => {
@@ -88,8 +106,36 @@ export function createSentinelInvestigateHandler(deps: SentinelHandlerDeps): Tas
     try { resumeFrom = checkpointFromEvents(row.id, stored) ?? undefined; }
     catch { throw new TaskFatalError("stored investigation could not be resumed", "NON_RETRYABLE"); }
 
-    const model: ProviderModel = deps.modelFor?.(ctx) ?? new TaskModelTransport(ctx);
-    const policy = new GatewayPolicy(model, { maxModelCalls: Math.max(1, cfg.maxModelCalls - priorModelCalls(stored)), formatRetries: cfg.formatRetries });
+    let persisted = stored.length;
+    let persistedHead = stored.at(-1)?.hash ?? null;
+    let modelCalls = reservedModelCalls(ctx.checkpoint, id, stored);
+    let reservationFailed = false;
+    let reservationError: unknown;
+    const underlying: ProviderModel = deps.modelFor?.(ctx) ?? new TaskModelTransport(ctx);
+    const model: ProviderModel = {
+      id: underlying.id, kind: underlying.kind,
+      get lastError() { return underlying.lastError; },
+      complete: async (request) => {
+        try {
+          ctx.throwIfCancelled();
+          if (modelCalls >= cfg.maxModelCalls) throw new TaskFatalError("investigation model-call budget exhausted", "BUDGET_DENIED");
+          // Reserve durably BEFORE sending. Failed requests and crashes consume a unit; ambiguity never refunds one.
+          // Increment locally first as well, so an ambiguous checkpoint failure cannot be overwritten by a lower count.
+          modelCalls++;
+          try { await ctx.saveCheckpoint({ investigationId: id, seq: persisted, traceHead: persistedHead, modelCalls }); }
+          catch (e) {
+            if (!(e instanceof TaskCancelledError) && !(e instanceof TaskLeaseLostError)) { reservationFailed = true; reservationError = e; }
+            throw e;
+          }
+          return await underlying.complete(request);
+        } catch (e) {
+          if (e instanceof TaskLeaseLostError) leaseLost = true;
+          if (e instanceof TaskCancelledError) token.cancelled = true;
+          throw e;
+        }
+      },
+    };
+    const policy = new GatewayPolicy(model, { maxModelCalls: Math.max(0, cfg.maxModelCalls - modelCalls), formatRetries: cfg.formatRetries });
     const transport: ToolTransport = deps.transportFor?.(row) ?? new McpDiagnosticTransport({ service: deps.mcp, workspaceId, userId: row.createdByUserId, tenant: caseDoc.tenant, bindings: row.bindings });
 
     const token: CancelToken = { cancelled: false };
@@ -100,15 +146,15 @@ export function createSentinelInvestigateHandler(deps: SentinelHandlerDeps): Tas
     }, cfg.cancelPollMs);
     poll.unref?.();
 
-    let persisted = stored.length;
     const flush = async (cp: Checkpoint): Promise<void> => {
       const fresh = cp.trace.slice(persisted);
       if (!fresh.length) return;
       const percent = Math.min(95, Math.round((cp.step / Math.max(1, caseDoc.limits.max_steps)) * 90));
-      try { await ctx.saveCheckpoint({ investigationId: id, seq: cp.trace.length, traceHead: cp.trace_head }, { percent, note: `step ${cp.step} ${cp.phase === "AWAIT_TOOL" ? "calling tool" : "deciding"}` }); }
+      try { await ctx.saveCheckpoint({ investigationId: id, seq: cp.trace.length, traceHead: cp.trace_head, modelCalls }, { percent, note: `step ${cp.step} ${cp.phase === "AWAIT_TOOL" ? "calling tool" : "deciding"}` }); }
       catch (e) { if (e instanceof TaskCancelledError) token.cancelled = true; else throw e; }   // lease loss propagates and nothing further is written
       await deps.store.appendEvents(workspaceId, id, fresh.map(toStored));
       persisted = cp.trace.length;
+      persistedHead = cp.trace_head;
     };
 
     let result: RunResult;
@@ -121,6 +167,7 @@ export function createSentinelInvestigateHandler(deps: SentinelHandlerDeps): Tas
       });
     } finally { clearInterval(poll); }
     if (leaseLost) throw new TaskLeaseLostError();
+    if (reservationFailed) throw reservationError;
 
     // Provider trouble with attempts left: do NOT record a terminal outcome; the worker retries with backoff and resumes from the stored events.
     const providerStop = result.stop_reason === "POLICY_ERROR" || result.stop_reason === "POLICY_TIMEOUT";

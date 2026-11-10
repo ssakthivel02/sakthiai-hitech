@@ -8,6 +8,7 @@ import { createSentinelInvestigateHandler } from "./handler";
 import { verifyTrace } from "./engine/trace";
 import { FakeTools, ID, WS, fakeCtx, goodModel, newRow } from "./testkit";
 import { tenantOf } from "./config";
+import { MysqlTaskStore, TaskWorker, TaskRetryableError } from "../tasks";
 
 /**
  * Real-SQL integration for the Sentinel store. Runs ONLY against a throwaway database created by server/testing/mysqlTestDb.ts
@@ -38,6 +39,29 @@ describe.skipIf(skip)("MysqlSentinelStore with the real handler", () => {
     config: () => ({ policyTimeoutMs: 5000, toolAttemptTimeoutMs: 2000, maxModelCalls: 24, formatRetries: 1, cancelPollMs: 20 }), ...over });
   const seed = async () => { for (const t of names) await db.pool.promise().query(`DELETE FROM \`${t}\``); const r = await store.create(newRow()); await store.attachTask(r.workspaceId, r.id, "22222222-2222-4222-8222-222222222222"); };
 
+  it("persists failed-call reservations across real SQL task-worker retries", async () => {
+    for (const t of names) await db.pool.promise().query(`DELETE FROM \`${t}\``);
+    const tasks = new MysqlTaskStore(async () => db.db);
+    const row = await store.create(newRow());
+    const queued = await tasks.create({ workspaceId: WS, type: "sentinel.investigate", input: { investigationId: row.id }, maxAttempts: 2 });
+    await store.attachTask(WS, row.id, queued.task.id);
+    let calls = 0;
+    const error = new TaskRetryableError("provider unavailable", "PROVIDER_UNAVAILABLE");
+    const model = { id: "failing", kind: "mock" as const, lastError: error, complete: async () => { calls++; throw error; } };
+    const handler = createSentinelInvestigateHandler(deps({
+      config: () => ({ policyTimeoutMs: 5000, toolAttemptTimeoutMs: 2000, maxModelCalls: 1, formatRetries: 0, cancelPollMs: 20 }),
+      transportFor: () => new FakeTools(), modelFor: () => model,
+    }));
+    const worker = (owner: string) => new TaskWorker({ store: tasks, handlers: { "sentinel.investigate": handler }, owner, leaseMs: 5000, backoffBaseMs: 0, backoffMaxMs: 0 });
+    expect((await worker("first").runOnce()).status).toBe("waiting");
+    const saved = await tasks.get(WS, queued.task.id);
+    expect(saved!.checkpoint).toMatchObject({ investigationId: ID, modelCalls: 1 });
+    expect((await worker("second").runOnce()).status).toBe("succeeded");
+    expect(calls).toBe(1);
+    expect((await store.get(WS, ID))!.status).toBe("FAILED");
+    expect((await tasks.get(WS, queued.task.id))!.attempt).toBe(2);
+  });
+
   it("runs a full investigation through the real handler and persists a verifiable trace in SQL", async () => {
     await seed();
     const tools = new FakeTools(); const { ctx } = fakeCtx();
@@ -54,10 +78,13 @@ describe.skipIf(skip)("MysqlSentinelStore with the real handler", () => {
   it("resumes after a simulated crash from the SQL events without repeating completed tool calls", async () => {
     await seed();
     const t1 = new FakeTools();
-    const crash = fakeCtx({ onCheckpoint: (c) => { if (c === 4) throw new Error("simulated process crash"); } });
+    const crash = fakeCtx({ onCheckpoint: async (_n, data) => {
+      const old = await store.readEvents(WS, ID);
+      if (old.some(e => e.type === "tool_result") && (data as { seq: number }).seq > old.length) throw new Error("simulated process crash");
+    } });
     await expect(createSentinelInvestigateHandler(deps({ transportFor: () => t1, modelFor: () => goodModel() }))(crash.ctx)).rejects.toThrow(/simulated process crash/);
     const mid = await store.readEvents(WS, ID); expect(mid.length).toBeGreaterThan(0); expect((await store.get(WS, ID))!.status).toBe("RUNNING");
-    const t2 = new FakeTools(); t2.n = 100; const { ctx } = fakeCtx({ attempt: 2 });
+    const t2 = new FakeTools(); t2.n = 100; const { ctx } = fakeCtx({ attempt: 2, checkpoint: crash.state.savedCheckpoint });
     const out = await createSentinelInvestigateHandler(deps({ transportFor: () => t2, modelFor: () => goodModel() }))(ctx) as { status: string };
     expect(out.status).toBe("COMPLETED");
     const events = await store.readEvents(WS, ID);

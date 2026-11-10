@@ -22,12 +22,12 @@ export const task = (over: Partial<TaskRecord> = {}): TaskRecord => ({
   createdAt: new Date(), updatedAt: new Date(), startedAt: null, finishedAt: null, ...over,
 });
 
-export function fakeCtx(over: { task?: Partial<TaskRecord>; input?: unknown; attempt?: number; onCheckpoint?: (n: number) => void } = {}) {
-  const state = { cancelled: false, lost: false, checkpoints: 0 };
+export function fakeCtx(over: { task?: Partial<TaskRecord>; input?: unknown; attempt?: number; checkpoint?: unknown; onCheckpoint?: (n: number, data: unknown) => void | Promise<void> } = {}) {
+  const state = { cancelled: false, lost: false, checkpoints: 0, savedCheckpoint: undefined as unknown };
   const t = task({ ...(over.task ?? {}), ...(over.input !== undefined ? { input: over.input } : {}), ...(over.attempt ? { attempt: over.attempt } : {}) });
   const ctx: TaskContext = {
-    task: t, input: t.input, checkpoint: null, attempt: t.attempt,
-    saveCheckpoint: async () => { if (state.lost) throw new TaskLeaseLostError(); state.checkpoints++; over.onCheckpoint?.(state.checkpoints); if (state.cancelled) throw new TaskCancelledError(); },
+    task: t, input: t.input, checkpoint: over.checkpoint ?? t.checkpoint, attempt: t.attempt,
+    saveCheckpoint: async (data) => { if (state.lost) throw new TaskLeaseLostError(); state.checkpoints++; await over.onCheckpoint?.(state.checkpoints, data); if (state.cancelled) throw new TaskCancelledError(); state.savedCheckpoint = structuredClone(data); },
     throwIfCancelled: () => { if (state.lost) throw new TaskLeaseLostError(); if (state.cancelled) throw new TaskCancelledError(); },
     effect: async (_k, run) => run(),
     invokeModel: async () => { throw new Error("invokeModel must not be called in this test"); },

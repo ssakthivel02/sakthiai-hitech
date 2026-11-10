@@ -50,15 +50,17 @@ function crashing(store: InMemorySentinelStore, at: number, when: "before" | "af
 async function runToCompletion(base: InMemorySentinelStore, wrap: (s: InMemorySentinelStore) => InMemorySentinelStore, onCrash?: () => void) {
   const allTools: FakeTools[] = [];
   let crashes = 0;
+  let checkpoint: unknown = null;
   for (let attempt = 1; attempt <= 6; attempt++) {
     const tools = new FakeTools(); tools.n = attempt * 100; allTools.push(tools);
+    const context = fakeCtx({ attempt, checkpoint });
     try {
-      const out = await createSentinelInvestigateHandler(deps(wrap(base), tools))(fakeCtx({ attempt }).ctx);
+      const out = await createSentinelInvestigateHandler(deps(wrap(base), tools))(context.ctx);
       return { out: out as { status: string; label: string | null; outcome: string | null; verified: boolean | null }, tools: allTools, crashes };
     } catch (e) {
       if (!/simulated process crash/.test(String((e as Error).message))) throw e;
       crashes += 1; onCrash?.();
-    }
+    } finally { checkpoint = context.state.savedCheckpoint ?? checkpoint; }
   }
   throw new Error("did not finish within 6 attempts");
 }
@@ -112,15 +114,21 @@ describe("crash-injection sweep over every store write", () => {
   });
 
   it("a crash inside the task checkpoint call (lease/heartbeat path) also converges", async () => {
-    for (let k = 1; k <= 8; k++) {
+    const baselineStore = await seeded(); const baselineCtx = fakeCtx();
+    await createSentinelInvestigateHandler(deps(baselineStore, new FakeTools()))(baselineCtx.ctx);
+    expect(baselineCtx.state.checkpoints).toBeGreaterThanOrEqual(8);
+    for (let k = 1; k <= baselineCtx.state.checkpoints; k++) {
       const store = await seeded();
       let crashed = false; const all: FakeTools[] = [];
+      let checkpoint: unknown = null;
       let out: { status: string; label: string | null } | null = null;
       for (let attempt = 1; attempt <= 4 && !out; attempt++) {
         const tools = new FakeTools(); tools.n = attempt * 100; all.push(tools);
-        const ctx = fakeCtx({ attempt, onCheckpoint: (c) => { if (!crashed && c === k) { crashed = true; throw new Error("simulated process crash (checkpoint)"); } } }).ctx;
+        const context = fakeCtx({ attempt, checkpoint, onCheckpoint: (c) => { if (!crashed && c === k) { crashed = true; throw new Error("simulated process crash (checkpoint)"); } } });
+        const ctx = context.ctx;
         try { out = await createSentinelInvestigateHandler(deps(store, tools))(ctx) as { status: string; label: string | null }; }
         catch (e) { if (!/simulated process crash/.test(String((e as Error).message))) throw e; }
+        finally { checkpoint = context.state.savedCheckpoint ?? checkpoint; }
       }
       expect(out, `checkpoint #${k}`).toMatchObject({ status: "COMPLETED", label: "DISK_FULL" });
       const events = await store.readEvents(WS, ID);

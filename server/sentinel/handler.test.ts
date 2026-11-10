@@ -34,6 +34,67 @@ describe("sentinel.investigate handler", () => {
     expect(fin.remediation).toMatchObject({ executed: false, requires_approval: true });
   });
 
+  it("does not reset the model-call allowance after a retryable provider failure", async () => {
+    const store = new InMemorySentinelStore(); await seed(store);
+    let calls = 0;
+    const error = new TaskRetryableError("provider unavailable", "PROVIDER_UNAVAILABLE");
+    const model = { id: "failing", kind: "mock" as const, lastError: error, complete: async () => { calls++; throw error; } };
+    const handler = createSentinelInvestigateHandler(deps(store, {
+      config: () => ({ policyTimeoutMs: 5000, toolAttemptTimeoutMs: 2000, maxModelCalls: 1, formatRetries: 0, cancelPollMs: 20 }),
+      transportFor: () => new FakeTools(), modelFor: () => model,
+    }));
+    const first = fakeCtx({ task: { maxAttempts: 2 } });
+    await expect(handler(first.ctx)).rejects.toBeInstanceOf(TaskRetryableError);
+    expect(calls).toBe(1);
+    const second = fakeCtx({ attempt: 2, task: { maxAttempts: 2 }, checkpoint: first.state.savedCheckpoint });
+    await handler(second.ctx);
+    expect(calls).toBe(1);
+    expect((await store.get(WS, ID))!.status).toBe("FAILED");
+  });
+
+  it("never sends a request when the durable allowance is already exhausted", async () => {
+    const store = new InMemorySentinelStore(); await seed(store);
+    const model = goodModel();
+    const retry = fakeCtx({ attempt: 2, checkpoint: { investigationId: ID, seq: 0, traceHead: null, modelCalls: 1 } });
+    const out = await createSentinelInvestigateHandler(deps(store, {
+      config: () => ({ policyTimeoutMs: 5000, toolAttemptTimeoutMs: 2000, maxModelCalls: 1, formatRetries: 0, cancelPollMs: 20 }),
+      transportFor: () => new FakeTools(), modelFor: () => model,
+    }))(retry.ctx) as { status: string };
+    expect(out.status).toBe("FAILED"); expect(model.calls).toHaveLength(0);
+  });
+
+  it("fails closed for legacy or invalid active budget checkpoints", async () => {
+    for (const budget of [undefined, -1, 1.5, "1"]) {
+      const store = new InMemorySentinelStore(); await seed(store);
+      const model = goodModel();
+      const retry = fakeCtx({ attempt: 2, checkpoint: { investigationId: ID, seq: 0, traceHead: null, ...(budget !== undefined ? { modelCalls: budget } : {}) } });
+      await expect(createSentinelInvestigateHandler(deps(store, { modelFor: () => model }))(retry.ctx)).rejects.toBeInstanceOf(TaskFatalError);
+      expect(model.calls).toHaveLength(0);
+    }
+  });
+
+  it("reserves durably before dispatch and never refunds an ambiguous crash reservation", async () => {
+    const store = new InMemorySentinelStore(); await seed(store);
+    const model = goodModel(); const first = fakeCtx();
+    const save = first.ctx.saveCheckpoint;
+    first.ctx.saveCheckpoint = async (data, progress) => {
+      await save(data, progress);
+      if ((data as { modelCalls?: number }).modelCalls === 1) {
+        first.state.lost = true;
+        throw new TaskLeaseLostError();
+      }
+    };
+    const handler = createSentinelInvestigateHandler(deps(store, {
+      config: () => ({ policyTimeoutMs: 5000, toolAttemptTimeoutMs: 2000, maxModelCalls: 1, formatRetries: 0, cancelPollMs: 20 }),
+      transportFor: () => new FakeTools(), modelFor: () => model,
+    }));
+    await expect(handler(first.ctx)).rejects.toBeInstanceOf(TaskLeaseLostError);
+    expect(model.calls).toHaveLength(0);
+    expect((first.state.savedCheckpoint as { modelCalls: number }).modelCalls).toBe(1);
+    await handler(fakeCtx({ attempt: 2, checkpoint: first.state.savedCheckpoint }).ctx);
+    expect(model.calls).toHaveLength(0);
+  });
+
   it("is default-disabled", async () => {
     const store = new InMemorySentinelStore(); await seed(store);
     const { ctx } = fakeCtx();
@@ -53,23 +114,30 @@ describe("sentinel.investigate handler", () => {
   it("resumes from stored events after a crash without repeating completed tool calls", async () => {
     const store = new InMemorySentinelStore(); await seed(store);
     const tools1 = new FakeTools();
-    let n = 0;
-    const crash = fakeCtx({ onCheckpoint: (c) => { n = c; if (c === 4) throw new Error("simulated process crash"); } });
+    const crash = fakeCtx({ onCheckpoint: async (_n, data) => {
+      const old = await store.readEvents(WS, ID);
+      if (old.some(e => e.type === "tool_result") && (data as { seq: number }).seq > old.length) throw new Error("simulated process crash");
+    } });
     await expect(createSentinelInvestigateHandler(deps(store, { transportFor: () => tools1, modelFor: () => goodModel() }))(crash.ctx)).rejects.toThrow(/simulated process crash/);
     const mid = await store.readEvents(WS, ID);
     expect(mid.length).toBeGreaterThan(0); expect((await store.get(WS, ID))!.status).toBe("RUNNING");
     const doneBefore = mid.filter((e) => e.type === "tool_result").length;
     expect(doneBefore).toBeGreaterThanOrEqual(1);
 
+    const inconsistent = fakeCtx({ attempt: 2, checkpoint: { ...(crash.state.savedCheckpoint as object), modelCalls: 0 } });
+    const denied = goodModel();
+    await expect(createSentinelInvestigateHandler(deps(store, { modelFor: () => denied }))(inconsistent.ctx)).rejects.toBeInstanceOf(TaskFatalError);
+    expect(denied.calls).toHaveLength(0);
+
     const tools2 = new FakeTools(); tools2.n = 100;
-    const second = fakeCtx({ attempt: 2 });
+    const second = fakeCtx({ attempt: 2, checkpoint: crash.state.savedCheckpoint });
     const out = await createSentinelInvestigateHandler(deps(store, { transportFor: () => tools2, modelFor: () => goodModel() }))(second.ctx) as { status: string };
     expect(out.status).toBe("COMPLETED");
     const events = await store.readEvents(WS, ID);
     expect(verifyTrace(events, ID).ok).toBe(true);
     expect(events.filter((e) => e.type === "resumed").length).toBe(1);
     expect(tools1.calls.length + tools2.calls.length).toBe(2 + (mid[mid.length - 1]!.type === "tool_request" ? 1 : 0));
-    expect(n).toBe(4);
+    expect((crash.state.savedCheckpoint as { modelCalls: number }).modelCalls).toBe(2);
   });
 
   it("finishes from stored terminal events without running anything (crash between append and finalise)", async () => {

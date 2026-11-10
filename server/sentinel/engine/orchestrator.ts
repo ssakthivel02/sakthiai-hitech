@@ -62,7 +62,7 @@ export async function investigateAsync(c: CaseDoc, o: AsyncRunOptions): Promise<
         let d: Decision;
         try { d = await guarded(o.policy.next(a.view, ac.signal), ac.signal, o.policyTimeoutMs); }
         catch (e) {
-          if (e instanceof Interrupted && e.kind === "ABORT") inv.cancelInFlight("policy");
+          if (token.cancelled || ac.signal.aborted || (e instanceof Interrupted && e.kind === "ABORT")) inv.cancelInFlight("policy");
           else inv.policyFailure(e instanceof Interrupted ? "POLICY_TIMEOUT" : String((e as Error)?.message ?? e));
           break;
         }
