@@ -38,7 +38,7 @@ import { creatorTimelineRouter } from "./timelineRouter";
 import { MysqlCreatorRenderClaims } from "./renderClaims";
 import { readCreatorRenderIntentFromDatabase, reserveCreatorRenderIntentFromDatabase } from "./renderIntentDb";
 import { resolveCreatorCaptionFonts } from "./renderWorker";
-import { storagePut, storageVerifySha256 } from "../storage";
+import { storageListCreatorRenderObjects, storagePut, storageVerifySha256 } from "../storage";
 
 const hasMediaTools = spawnSync("ffmpeg", ["-version"]).status === 0 &&
   spawnSync("ffprobe", ["-version"]).status === 0;
@@ -211,6 +211,16 @@ describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
       expect(asset.reviewDecision).toBe("PENDING");
       expect(asset.byteSize).toBe(bytes!.byteLength);
       expect(asset.checksumSha256).toBe(digest(bytes!));
+      if (realMinio) {
+        // Re-check AFTER transactional finalization; an in-memory map alone
+        // is not evidence that the persisted S3 object still matches MySQL.
+        await storageVerifySha256(asset.storageKey, asset.byteSize, asset.checksumSha256);
+        const inventory = await storageListCreatorRenderObjects({
+          workspaceId: 7, creatorProjectId: ids.project, timelineId: ids.timeline,
+          exportId: result.exportId, claimId: result.claimId,
+        });
+        expect(inventory).toEqual([{ key: asset.storageKey, sizeBytes: asset.byteSize }]);
+      }
       const provenance = JSON.parse(asset.provenanceJson);
       expect(provenance).toMatchObject({
         source: "deterministic-creator-render", renderer: "ffmpeg",
@@ -276,6 +286,21 @@ describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
       const [claims] = await exec(sql`SELECT state FROM creatorRenderClaims
         WHERE id = ${winner.claimId}`) as unknown as [[{ state: string }]];
       expect(claims[0].state).toBe("SUCCEEDED");
+      if (realMinio) {
+        // Concurrent requests must not create two independently named S3
+        // objects for the same immutable export, even if both see QUEUED.
+        const inventory = await storageListCreatorRenderObjects({
+          workspaceId: 7, creatorProjectId: ids.project, timelineId: ids.timeline,
+          exportId: winner.exportId, claimId: winner.claimId,
+        });
+        expect(inventory).toHaveLength(1);
+        const persisted = await first<{
+          storageKey: string; byteSize: number; checksumSha256: string;
+        }>(sql`SELECT storageKey, byteSize, checksumSha256 FROM creatorAssets
+               WHERE id = (SELECT assetId FROM creatorExports WHERE id = ${winner.exportId})`);
+        expect(inventory).toEqual([{ key: persisted.storageKey, sizeBytes: persisted.byteSize }]);
+        await storageVerifySha256(persisted.storageKey, persisted.byteSize, persisted.checksumSha256);
+      }
     }, 120_000);
   },
 );
