@@ -117,6 +117,15 @@ jobs:
       - name: Production source neutrality guard
         run: node scripts/validate-source-neutrality.mjs
 
+      - name: Install FFmpeg and FFprobe for real Creator media tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
       - name: Typecheck
         run: pnpm check
 
