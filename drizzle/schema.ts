@@ -281,6 +281,20 @@ export const creatorProviderJobs = mysqlTable("creatorProviderJobs", {
   uniqueIndex("creatorProviderJobs_workspace_job_uq").on(table.workspaceId, table.providerJobId),
 ]);
 
+/** Exclusive, recoverable artifact upload lease; provider generation is never re-submitted. */
+export const creatorArtifactLeases = mysqlTable("creatorArtifactLeases", {
+  generationId: int("generationId").primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  providerJobId: varchar("providerJobId", { length: 512 }).notNull(),
+  leaseToken: char("leaseToken", { length: 36 }).notNull(),
+  leaseUntil: datetime("leaseUntil", { fsp: 3 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  index("creatorArtifactLeases_workspace_until_idx").on(table.workspaceId, table.leaseUntil),
+]);
+
 export const creatorTimelines = mysqlTable("creatorTimelines", {
   id: int("id").autoincrement().primaryKey(),
   workspaceId: int("workspaceId").notNull(),
