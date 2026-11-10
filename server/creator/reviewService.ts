@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { creatorAssets, creatorReviews, creatorTimelines } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { scoreCreatorRenderQuality, type CreatorQualityReviewerType } from "./qualityGate";
+import { scoreCreatorRenderQuality, type CreatorOutputEvidence, type CreatorQualityReviewerType } from "./qualityGate";
 
 async function requireDb() {
   const db = await getDb();
@@ -20,6 +20,7 @@ function parseRenderProvenance(value: string) {
       height?: unknown;
       fps?: unknown;
       durationMs?: unknown;
+      outputEvidence?: unknown;
     };
     if (
       parsed.source === "deterministic-creator-render" &&
@@ -35,6 +36,38 @@ function parseRenderProvenance(value: string) {
     // Fall through to bounded Creator error.
   }
   throw new Error("CREATOR_REVIEW_RENDER_PROVENANCE_INVALID");
+}
+
+/**
+ * Use FFprobe-derived evidence persisted by the renderer, not source metadata
+ * masquerading as proof that the output contains video/audio. Older render
+ * assets without measured evidence must be re-qualified before quality PASS.
+ */
+function requireMeasuredOutputEvidence(provenance: {
+  outputEvidence?: unknown; width?: unknown; height?: unknown; fps?: unknown; durationMs?: unknown;
+}): CreatorOutputEvidence {
+  const raw = provenance.outputEvidence;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("CREATOR_QUALITY_OUTPUT_EVIDENCE_REQUIRED");
+  }
+  const value = raw as Record<string, unknown>;
+  if (!Number.isSafeInteger(value.width) || Number(value.width) <= 0 ||
+      !Number.isSafeInteger(value.height) || Number(value.height) <= 0 ||
+      typeof value.fps !== "number" || !Number.isFinite(value.fps) || value.fps <= 0 ||
+      typeof value.durationSeconds !== "number" || !Number.isFinite(value.durationSeconds) ||
+      value.durationSeconds <= 0 || typeof value.hasAudio !== "boolean") {
+    throw new Error("CREATOR_QUALITY_OUTPUT_EVIDENCE_INVALID");
+  }
+  const measured: CreatorOutputEvidence = {
+    width: Number(value.width), height: Number(value.height),
+    fps: value.fps, durationSeconds: value.durationSeconds, hasAudio: value.hasAudio,
+  };
+  if (measured.width !== provenance.width || measured.height !== provenance.height ||
+      Math.abs(measured.fps - Number(provenance.fps)) > 0.01 ||
+      Math.abs(measured.durationSeconds * 1000 - Number(provenance.durationMs)) > 100) {
+    throw new Error("CREATOR_QUALITY_OUTPUT_EVIDENCE_DRIFT");
+  }
+  return measured;
 }
 
 async function requireRenderAsset(input: { workspaceId: number; creatorProjectId: number; assetId: number }) {
@@ -87,17 +120,12 @@ export async function recordCreatorQualityReview(input: {
   if (!timeline || !timeline.audioMasterAssetId) throw new Error("CREATOR_QUALITY_TIMELINE_NOT_FOUND");
   if (timeline.audioMasterAssetId !== Number(provenance.audioMasterAssetId)) throw new Error("CREATOR_QUALITY_AUDIO_MASTER_DRIFT");
 
+  const measuredOutput = requireMeasuredOutputEvidence(provenance);
   const score = scoreCreatorRenderQuality({
     reviewerType: input.reviewerType,
     dimensionScores: input.dimensionScores,
     criticalDefects: input.criticalDefects,
-    actual: {
-      width: Number(provenance.width),
-      height: Number(provenance.height),
-      fps: Number(provenance.fps),
-      durationSeconds: Number(provenance.durationMs) / 1000,
-      hasAudio: Boolean(provenance.audioMasterAssetId && provenance.audioMasterChecksumSha256),
-    },
+    actual: measuredOutput,
     target: {
       width: timeline.width,
       height: timeline.height,

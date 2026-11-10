@@ -52,8 +52,8 @@ describe.skipIf(skipMysqlSuite())("16:9 master review authorization (real SQL)",
   });
   afterAll(async () => { await database?.close(); });
 
-  async function freshMaster(label: string) {
-    const provenance = JSON.stringify({ source: "deterministic-creator-render", timelineId: ids.timeline, audioMasterAssetId: ids.audio, audioMasterChecksumSha256: "a".repeat(64), width: 1920, height: 1080, fps: 24, durationMs: 4000 });
+  async function freshMaster(label: string, outputEvidence: unknown = { width: 1920, height: 1080, fps: 24, durationSeconds: 4, hasAudio: true }) {
+    const provenance = JSON.stringify({ source: "deterministic-creator-render", timelineId: ids.timeline, audioMasterAssetId: ids.audio, audioMasterChecksumSha256: "a".repeat(64), width: 1920, height: 1080, fps: 24, durationMs: 4000, outputEvidence });
     await run(sql`INSERT INTO creatorAssets (workspaceId, creatorProjectId, assetType, mimeType, storageKey, checksumSha256, byteSize, immutable, provenanceJson, reviewDecision) VALUES
       (7, ${ids.project}, 'RENDER', 'video/mp4', ${`r/${label}.mp4`}, ${label.padEnd(64, "0")}, 1000, 1, ${provenance}, 'PENDING')`);
     return (await one<{ id: number }>(sql`SELECT id FROM creatorAssets WHERE storageKey = ${`r/${label}.mp4`}`)).id;
@@ -91,12 +91,31 @@ describe.skipIf(skipMysqlSuite())("16:9 master review authorization (real SQL)",
     const base = { workspaceId: 7, creatorProjectId: ids.project, assetId };
     const quality = await caller(501).creator.review.quality({ ...base, reviewerType: "HUMAN", sourcePromptOrStoryboard: "approved storyboard and shot prompts", dimensionScores: dims, criticalDefects: [] });
     expect(quality.decision).toBe("PASS");
+    expect(quality.quality.outputConformance.actual).toEqual({ width: 1920, height: 1080, fps: 24, durationSeconds: 4, hasAudio: true });
     await expect(caller(501).creator.review.humanTamil({ ...base, decision: "PASS", notes: "Tamil checked against approved text" })).resolves.toMatchObject({ decision: "PASS" });
     await expect(caller(501).creator.review.humanVisual({ ...base, decision: "PASS", notes: "visual checked" })).resolves.toMatchObject({ decision: "PASS" });
     const finalMaster = await caller(501).creator.review.finalizeMaster(base);
     expect(finalMaster).toMatchObject({ finalMaster: true, assetId });
     const after = await counts(assetId);
     expect(after).toEqual({ reviews: 3, reviewDecision: "APPROVED" });
+  });
+
+  it("rejects absent, malformed or forged FFprobe evidence before recording quality approval", async () => {
+    const examples = [
+      { label: "no-evidence", evidence: null, code: "CREATOR_QUALITY_OUTPUT_EVIDENCE_REQUIRED" },
+      { label: "malformed-evidence", evidence: { width: "1920", height: 1080, fps: 24, durationSeconds: 4, hasAudio: true }, code: "CREATOR_QUALITY_OUTPUT_EVIDENCE_INVALID" },
+      { label: "wrong-width-evidence", evidence: { width: 1280, height: 1080, fps: 24, durationSeconds: 4, hasAudio: true }, code: "CREATOR_QUALITY_OUTPUT_EVIDENCE_DRIFT" },
+      { label: "no-audio-evidence", evidence: { width: 1920, height: 1080, fps: 24, durationSeconds: 4, hasAudio: false }, code: "CREATOR_QUALITY_OUTPUT_NONCONFORMANT:audio" },
+    ];
+    for (const item of examples) {
+      const assetId = await freshMaster(item.label, item.evidence);
+      await expect(caller(501).creator.review.quality({
+        workspaceId: 7, creatorProjectId: ids.project, assetId,
+        reviewerType: "HUMAN", sourcePromptOrStoryboard: "approved storyboard",
+        dimensionScores: dims, criticalDefects: [],
+      })).rejects.toMatchObject({ message: item.code });
+      expect(await counts(assetId)).toEqual({ reviews: 0, reviewDecision: "PENDING" });
+    }
   });
 
   it("a member can still read the project (getProject is unaffected)", async () => {
