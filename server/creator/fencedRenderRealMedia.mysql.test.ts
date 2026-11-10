@@ -38,6 +38,7 @@ import { creatorTimelineRouter } from "./timelineRouter";
 import { MysqlCreatorRenderClaims } from "./renderClaims";
 import { readCreatorRenderIntentFromDatabase, reserveCreatorRenderIntentFromDatabase } from "./renderIntentDb";
 import { resolveCreatorCaptionFonts } from "./renderWorker";
+import { storagePut, storageVerifySha256 } from "../storage";
 
 const hasMediaTools = spawnSync("ffmpeg", ["-version"]).status === 0 &&
   spawnSync("ffprobe", ["-version"]).status === 0;
@@ -45,6 +46,14 @@ if (process.env.MYSQL_REQUIRED === "1" && !hasMediaTools) {
   throw new Error("CREATOR_FENCED_REAL_MEDIA_CI_FFMPEG_FFPROBE_REQUIRED");
 }
 const digest = (data: Buffer) => createHash("sha256").update(data).digest("hex");
+/** Opt-in only: the SAME real-MySQL + real-FFmpeg route also writes to real disposable MinIO. */
+const realMinio = process.env.CREATOR_MINIO_TEST_ACK === "disposable-local-only";
+if (realMinio && (process.env.STORAGE_ENDPOINT !== "http://127.0.0.1:9000" ||
+    process.env.STORAGE_BUCKET !== "creator-minio-ci" ||
+    process.env.STORAGE_FORCE_PATH_STYLE !== "true" ||
+    !process.env.TEST_DATABASE_URL?.startsWith("mysql://root:ci-only-root-password@127.0.0.1:3306"))) {
+  throw new Error("CREATOR_FENCED_MINIO_MYSQL_DISPOSABLE_GUARD");
+}
 
 function caller() {
   const now = new Date();
@@ -62,7 +71,8 @@ function caller() {
 
 /** Real disposable MySQL + actual FFmpeg/FFprobe + real route. Storage is an in-memory SHA-verified fixture. */
 describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
-  "Creator fenced route real-media integration (disposable MySQL)", { timeout: 180_000 }, () => {
+  realMinio ? "Creator fenced route MySQL + FFmpeg + real MinIO integration" :
+    "Creator fenced route real-media integration (disposable MySQL)", { timeout: 180_000 }, () => {
     let d: TestDatabase;
     let dir: string;
     let audioPath: string;
@@ -150,19 +160,26 @@ describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
         },
         workerDependencies: {
           captionFonts: resolveCreatorCaptionFonts(),
-          putArtifact: async (key, bytes) => {
-            // Production storagePut appends eight lowercase hex characters.
-            // Exercise the REAL returned object identity through the fenced
-            // MySQL finalizer rather than the old unsuffixed test-only key.
-            const storedKey = key.replace(/\.mp4$/, "_a0b1c2d3.mp4");
-            if (outputs.has(storedKey)) throw new Error("CREATOR_DUPLICATE_STORAGE_WRITE");
-            outputs.set(storedKey, Buffer.from(bytes));
-            return { key: storedKey, url: `memory://${storedKey}` };
+          putArtifact: async (key, bytes, contentType) => {
+            // In the integrated acceptance lane, the real AWS SDK writes the
+            // actual FFmpeg bytes to disposable MinIO. The local map counts
+            // executions only; it is NOT used as storage integrity evidence.
+            const stored = realMinio
+              ? await storagePut(key, bytes, contentType)
+              : { key: key.replace(/\.mp4$/, "_a0b1c2d3.mp4"), url: "" };
+            if (outputs.has(stored.key)) throw new Error("CREATOR_DUPLICATE_STORAGE_WRITE");
+            outputs.set(stored.key, Buffer.from(bytes));
+            return stored;
           },
           verifyArtifact: async (key, size, sha) => {
-            const stored = outputs.get(key);
-            if (!stored || stored.byteLength !== size || digest(stored) !== sha) {
-              throw new Error("CREATOR_REAL_MEDIA_STORAGE_READBACK_FAILED");
+            if (realMinio) {
+              // Actual HTTP 206 ranged GET and SHA-256 verification.
+              await storageVerifySha256(key, size, sha);
+            } else {
+              const stored = outputs.get(key);
+              if (!stored || stored.byteLength !== size || digest(stored) !== sha) {
+                throw new Error("CREATOR_REAL_MEDIA_STORAGE_READBACK_FAILED");
+              }
             }
           },
         },
@@ -189,7 +206,7 @@ describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
       }>(sql`SELECT reviewDecision, checksumSha256, byteSize, provenanceJson, storageKey
              FROM creatorAssets WHERE id = ${result.assetId}`);
       const bytes = outputs.get(asset.storageKey);
-      expect(asset.storageKey).toMatch(/export-[1-9][0-9]*_a0b1c2d3\.mp4$/);
+      expect(asset.storageKey).toMatch(/export-[1-9][0-9]*_[0-9a-f]{8}\.mp4$/);
       expect(bytes).toBeDefined();
       expect(asset.reviewDecision).toBe("PENDING");
       expect(asset.byteSize).toBe(bytes!.byteLength);
