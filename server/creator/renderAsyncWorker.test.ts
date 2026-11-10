@@ -152,4 +152,16 @@ describe("bounded Creator render queue consumer", () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 
+  it("reports interruption even when the final claim finishes as shutdown arrives", async () => {
+    const controller = new AbortController();
+    const result = await runCreatorRenderQueueBatch(1, {
+      env: enabled, abortSignal: controller.signal,
+      load: async () => [row],
+      dispatch: async () => { controller.abort(); return {}; },
+    });
+    expect(result).toMatchObject({
+      attempted: 1, dispatched: 1, interrupted: true,
+    });
+  });
+
 });
