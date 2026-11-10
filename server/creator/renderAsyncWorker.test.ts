@@ -112,4 +112,44 @@ describe("bounded Creator render queue consumer", () => {
       expect.anything(), expect.anything(),
     );
   });
+  it("does not scan when shutdown is already requested", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const load = vi.fn(async () => [row]);
+    await expect(runCreatorRenderQueueBatch(1, {
+      env: enabled, load, abortSignal: controller.signal,
+    })).rejects.toThrow("CREATOR_RENDER_WORKER_STOP_REQUESTED");
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch a claim if shutdown happens during discovery", async () => {
+    const controller = new AbortController();
+    const dispatch = vi.fn(async () => ({}));
+    const result = await runCreatorRenderQueueBatch(1, {
+      env: enabled, abortSignal: controller.signal,
+      load: async () => { controller.abort(); return [row]; }, dispatch,
+    });
+    expect(result).toMatchObject({
+      attempted: 0, dispatched: 0, failed: 0, interrupted: true,
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("stops before a second claim after supervised shutdown", async () => {
+    const controller = new AbortController();
+    const second = { ...row, claimId: 20, exportId: 21 };
+    const dispatch = vi.fn(async () => {
+      controller.abort();
+      return { reviewDecision: "PENDING" };
+    });
+    const result = await runCreatorRenderQueueBatch(2, {
+      env: enabled, abortSignal: controller.signal,
+      load: async () => [row, second], dispatch,
+    });
+    expect(result).toMatchObject({
+      attempted: 1, dispatched: 1, failed: 0, interrupted: true,
+    });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+
 });
