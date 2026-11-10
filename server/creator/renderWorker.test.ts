@@ -41,6 +41,7 @@ describe("Creator caption font resolution", () => {
       readOutput: async () => Buffer.from("x"),
       executeFfmpeg,
       putArtifact: async key => ({ key, url: "/u" }),
+      probeOutput: async (_path, expected) => expected,
       verifyArtifact: async () => undefined,
     });
     const args = (executeFfmpeg.mock.calls[0] as unknown as [string[]])[0].join(" ");
@@ -63,6 +64,7 @@ describe("Creator render worker", () => {
       readOutput: async () => output,
       executeFfmpeg,
       putArtifact,
+      probeOutput: async (_path, expected) => expected,
       verifyArtifact: async () => undefined,
     });
 
@@ -110,9 +112,26 @@ describe("Creator render worker", () => {
       readOutput: async () => Buffer.from("synthetic-render"),
       executeFfmpeg: async () => ({ exitCode: 0, stderr: "" }),
       putArtifact, verifyArtifact,
+      probeOutput: async (_path, expected) => expected,
     })).rejects.toThrow("CREATOR_STORAGE_READBACK_CHECKSUM_MISMATCH");
     expect(putArtifact).toHaveBeenCalledTimes(1);
     expect(verifyArtifact).toHaveBeenCalledTimes(1);
     expect(cleanupTempDir).toHaveBeenCalledTimes(1);
   });
+  it("refuses to upload an output that FFprobe rejects and cleans temporary files", async () => {
+    const putArtifact = vi.fn();
+    const cleanupTempDir = vi.fn(async () => undefined);
+    await expect(runCreatorRenderWorker(renderInput, {
+      createTempDir: async () => "/tmp/creator-probe-fail",
+      cleanupTempDir,
+      writeSubtitle: async () => undefined,
+      executeFfmpeg: async () => ({ exitCode: 0, stderr: "" }),
+      probeOutput: async () => { throw new Error("CREATOR_RENDER_OUTPUT_NONCONFORMANT:audio"); },
+      readOutput: async () => Buffer.from("invalid"),
+      putArtifact,
+    })).rejects.toThrow("CREATOR_RENDER_OUTPUT_NONCONFORMANT:audio");
+    expect(putArtifact).not.toHaveBeenCalled();
+    expect(cleanupTempDir).toHaveBeenCalledTimes(1);
+  });
+
 });

@@ -39,6 +39,7 @@ describe.skipIf(skipMysqlSuite())("9:16 delivery derivative and export manifest 
     writeSubtitle: async () => undefined,
     readOutput: async () => Buffer.from("fake-mp4-output"),
     executeFfmpeg: async (args: string[]) => { ffmpegArgs.push(args); return { exitCode: 0, stderr: "" }; },
+    probeOutput: async (_path: string, expected: { width: number; height: number; fps: number; durationSeconds: number; hasAudio: boolean }) => expected,
     putArtifact: async (key: string) => ({ key, url: `/api/storage/${key}` }),
     verifyArtifact: async (_key: string, expectedSize: number, expectedSha256: string) => {
       const stored = Buffer.from("fake-mp4-output");

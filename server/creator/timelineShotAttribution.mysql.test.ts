@@ -141,6 +141,7 @@ describe.skipIf(skipMysqlSuite())("Creator shot attribution: real MySQL tenant b
         writeSubtitle: async () => undefined,
         readOutput: async () => Buffer.from("synthetic-render"),
         executeFfmpeg: async () => ({ exitCode: 0, stderr: "" }),
+        probeOutput: async (_path, expected) => expected,
         putArtifact: async key => ({ key, url: "/api/storage/synthetic" }),
         verifyArtifact: async (_key, expectedSize, expectedSha256) => {
           const stored = Buffer.from("synthetic-render");

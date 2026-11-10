@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { buildDeterministicRenderPlan, captionsNeedTamilFont, type CaptionFonts, type DeterministicRenderPlanInput } from "./renderPlan";
 import { storagePut, storageVerifySha256 } from "../storage";
+import { probeCreatorRenderedOutput } from "./outputProbe";
 
 export type FfmpegExecution = {
   exitCode: number;
@@ -19,6 +20,7 @@ export type RenderWorkerDependencies = {
   createTempDir?: () => Promise<string>;
   cleanupTempDir?: (path: string) => Promise<void>;
   readOutput?: (path: string) => Promise<Buffer>;
+  probeOutput?: typeof probeCreatorRenderedOutput;
   writeSubtitle?: (path: string, content: string) => Promise<void>;
   captionFonts?: CaptionFonts;
 };
@@ -87,6 +89,7 @@ export async function runCreatorRenderWorker(input: Omit<DeterministicRenderPlan
   const cleanupTempDir = deps.cleanupTempDir ?? ((path) => rm(path, { recursive: true, force: true }));
   const writeSubtitle = deps.writeSubtitle ?? ((path, content) => writeFile(path, content, { encoding: "utf8", flag: "wx" }));
   const readOutput = deps.readOutput ?? readFile;
+  const probeOutput = deps.probeOutput ?? probeCreatorRenderedOutput;
   const execute = deps.executeFfmpeg ?? executeFfmpegBounded;
   const putArtifact = deps.putArtifact ?? storagePut;
   const verifyArtifact = deps.verifyArtifact ?? storageVerifySha256;
@@ -107,6 +110,11 @@ export async function runCreatorRenderWorker(input: Omit<DeterministicRenderPlan
       throw new Error(`CREATOR_FFMPEG_FAILED:${execution.exitCode}${detail ? `:${detail}` : ""}`);
     }
 
+    // Reject wrong resolution/FPS/duration or missing audio before any upload.
+    const outputEvidence = await probeOutput(outputPath, {
+      width: input.width, height: input.height, fps: input.fps,
+      durationSeconds: input.audioDurationMs / 1000, hasAudio: true,
+    });
     const output = await readOutput(outputPath);
     if (!output.length) throw new Error("CREATOR_RENDER_EMPTY_OUTPUT");
     if (output.byteLength > MAX_RENDER_BYTES) throw new Error("CREATOR_RENDER_OUTPUT_TOO_LARGE");
@@ -125,6 +133,7 @@ export async function runCreatorRenderWorker(input: Omit<DeterministicRenderPlan
       frameCount: plan.frameCount,
       visualAssetIds: plan.visualAssetIds,
       renderer: "ffmpeg" as const,
+      outputEvidence,
       width: input.width,
       height: input.height,
       fps: input.fps,

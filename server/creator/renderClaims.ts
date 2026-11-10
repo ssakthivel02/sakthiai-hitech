@@ -303,6 +303,7 @@ export class MysqlCreatorRenderClaims {
       storageKey: string; checksumSha256: string; byteSize: number;
       width: number; height: number; fps: number; durationMs: number;
       frameCount: number; visualAssetIds: number[]; renderer: "ffmpeg";
+      outputEvidence?: { width: number; height: number; fps: number; durationSeconds: number; hasAudio: boolean };
     },
     sourceInput: CreatorDbRenderIntentInput,
     trustedConfig: TrustedCreatorRendererConfig,
@@ -329,6 +330,13 @@ export class MysqlCreatorRenderClaims {
         !output.visualAssetIds.every(n => Number.isSafeInteger(n) && n > 0)) {
       throw new Error("CREATOR_RENDER_OUTPUT_METADATA_INVALID");
     }
+
+    if (output.outputEvidence && (
+      output.outputEvidence.width !== output.width || output.outputEvidence.height !== output.height ||
+      Math.abs(output.outputEvidence.fps - output.fps) > 0.01 ||
+      Math.abs(output.outputEvidence.durationSeconds * 1000 - output.durationMs) > 100 ||
+      output.outputEvidence.hasAudio !== true
+    )) throw new Error("CREATOR_RENDER_OUTPUT_PROBE_DRIFT");
 
     // A successful upload is NOT evidence of durable bytes. Do not insert
     // the asset or complete the claim until the stored bytes are verified.
@@ -388,6 +396,7 @@ export class MysqlCreatorRenderClaims {
         visualAssetIds: output.visualAssetIds, durationMs: output.durationMs,
         frameCount: output.frameCount, width: output.width, height: output.height,
         fps: output.fps, checksumSha256: output.checksumSha256.toLowerCase(),
+        outputEvidence: output.outputEvidence ?? null,
         derivativeOfRenderAssetId: snapshot.derivativeOfRenderAssetId ?? null,
         renderedAt: new Date().toISOString(),
       };
