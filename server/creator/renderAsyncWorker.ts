@@ -152,6 +152,7 @@ export type CreatorQueueBatchResult = {
   dispatched: number;
   skipped: number;
   failed: number;
+  interrupted: boolean;
   results: Array<{
     claimId: number;
     outcome: "DISPATCHED" | "LOST_ACQUISITION" | "FAILED";
@@ -161,6 +162,8 @@ export type CreatorQueueBatchResult = {
 
 export type CreatorQueueBatchDependencies = {
   env?: Record<string, string | undefined>;
+  /** Supervisor cancellation: stop scanning; active default dispatch aborts FFmpeg. */
+  abortSignal?: AbortSignal;
   load?: (limit: number) => Promise<QueuedCreatorRenderRow[]>;
   dispatch?: (
     input: CreatorDbRenderIntentInput,
@@ -180,6 +183,7 @@ export async function runCreatorRenderQueueBatch(
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 8) {
     throw new Error("CREATOR_RENDER_QUEUE_BATCH_LIMIT_INVALID");
   }
+  if (deps.abortSignal?.aborted) throw new Error("CREATOR_RENDER_WORKER_STOP_REQUESTED");
   const rows = await (deps.load ?? listQueuedCreatorRenders)(limit);
   if (rows.length > limit) throw new Error("CREATOR_RENDER_QUEUE_SCAN_OVERSIZED");
   const seen = new Set<number>();
@@ -187,14 +191,21 @@ export async function runCreatorRenderQueueBatch(
   let dispatched = 0;
   let skipped = 0;
   let failed = 0;
+  let interrupted = false;
   for (const row of rows) {
+    if (deps.abortSignal?.aborted) { interrupted = true; break; }
     if (seen.has(row.claimId)) continue;
     seen.add(row.claimId);
     try {
       const request = trustedQueuedRequest(row);
-      await (deps.dispatch ?? dispatchQueuedCreatorRender)(
-        request.input, request.config, request.reservation,
-      );
+      if (deps.dispatch) {
+        await deps.dispatch(request.input, request.config, request.reservation);
+      } else {
+        await dispatchQueuedCreatorRender(
+          request.input, request.config, request.reservation,
+          { abortSignal: deps.abortSignal },
+        );
+      }
       dispatched++;
       results.push({ claimId: row.claimId, outcome: "DISPATCHED" });
     } catch (error) {
@@ -209,7 +220,8 @@ export async function runCreatorRenderQueueBatch(
           ? message : "CREATOR_RENDER_QUEUE_EXECUTION_FAILED";
         results.push({ claimId: row.claimId, outcome: "FAILED", code });
       }
+      if (deps.abortSignal?.aborted) { interrupted = true; break; }
     }
   }
-  return { attempted: results.length, dispatched, skipped, failed, results };
+  return { attempted: results.length, dispatched, skipped, failed, interrupted, results };
 }
