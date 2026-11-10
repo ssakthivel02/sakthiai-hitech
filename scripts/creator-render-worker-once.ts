@@ -35,7 +35,7 @@ try {
     ? message : "CREATOR_RENDER_WORKER_FATAL";
   console.error(code);
   process.exitCode = 1;
- finally {
+} finally {
   process.off("SIGINT", requestShutdown);
   process.off("SIGTERM", requestShutdown);
 }
