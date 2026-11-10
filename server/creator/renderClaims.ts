@@ -3,6 +3,7 @@ import { sql, type SQL } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/mysql2";
 import { getDb } from "../db";
 import { storageVerifySha256 } from "../storage";
+import { assertCreatorRenderStorageKey } from "./renderStorageKey";
 import type { CreatorDbRenderIntentInput, TrustedCreatorRendererConfig } from "./renderIntentDb";
 import { creatorRenderIntentFingerprint, type CreatorRenderIntentInput } from "./renderIntent";
 
@@ -548,8 +549,8 @@ export class MysqlCreatorRenderClaims {
       throw new Error("CREATOR_RENDER_FINALIZE_SOURCE_SCOPE_INVALID");
     }
     if (!/^[0-9a-f-]{36}$/i.test(leaseToken)) throw new Error("CREATOR_RENDER_CLAIM_TOKEN_INVALID");
-    const expectedKey = `creator/${scope.workspaceId}/${scope.creatorProjectId}/renders/timeline-${scope.timelineId}/export-${exportId}.mp4`;
-    if (output.storageKey !== expectedKey || output.renderer !== "ffmpeg") throw new Error("CREATOR_RENDER_OUTPUT_IDENTITY_INVALID");
+    assertCreatorRenderStorageKey(output.storageKey, { ...scope, exportId });
+    if (output.renderer !== "ffmpeg") throw new Error("CREATOR_RENDER_OUTPUT_IDENTITY_INVALID");
     if (!/^[a-f0-9]{64}$/i.test(output.checksumSha256)) throw new Error("CREATOR_RENDER_OUTPUT_CHECKSUM_INVALID");
     if (!Number.isSafeInteger(output.byteSize) || output.byteSize <= 0 || output.byteSize > 1024 * 1024 * 1024 ||
         ![output.width, output.height, output.fps, output.durationMs, output.frameCount].every(
