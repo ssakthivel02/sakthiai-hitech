@@ -14,13 +14,15 @@ import type { RenderVisualItem } from "./renderPlan";
 import { CREATOR_CAPTION_FONT_FAMILY, runCreatorRenderWorker, type RenderWorkerDependencies } from "./renderWorker";
 
 /**
- * Explicitly invoked, single-claim worker entry point. Not attached to an API
- * route or cron: activation still requires a source-lock-at-finalize gate.
- * Never retries or launches a duplicate claim.
+ * Owner-gated synchronous candidate dispatch. The same single-use MySQL
+ * acquisition fence MUST be used by any future background worker. A reservation
+ * alone never authorizes FFmpeg, and a losing dispatcher cannot launch media.
+ * No automatic retry or publish approval.
  */
 type TrustedMedia = { audioSourceUrl: string; visualItems: RenderVisualItem[] };
 type Worker = typeof runCreatorRenderWorker;
-type Claims = Pick<MysqlCreatorRenderClaims, "heartbeat" | "finalizeVerifiedExport" | "markUnknown">;
+type Claims = Pick<MysqlCreatorRenderClaims,
+  "acquireQueuedExport" | "heartbeat" | "finalizeVerifiedExport" | "markUnknown">;
 export type CreatorRenderDispatchDependencies = {
   reserve?: typeof reserveCreatorRenderIntentFromDatabase;
   read?: typeof readCreatorRenderIntentFromDatabase;
@@ -101,13 +103,37 @@ export async function dispatchReservedCreatorRender(
   const reservation = await reserve(input, trustedConfig, getDb, leaseSeconds);
   if (!reservation.created) return { ...reservation, dispatched: false as const };
 
-  const scope: CreatorRenderClaimScope = {
+  // A newly reserved QUEUED export is NOT permission to run FFmpeg. Rotate
+  // the reservation token and atomically claim the export first. This is the
+  // exact same acquisition primitive required of any later async worker.
+  const acquired = await claims.acquireQueuedExport({
+    workspaceId: input.workspaceId,
+    creatorProjectId: input.creatorProjectId,
+    timelineId: input.timelineId,
+    claimId: reservation.claimId,
+  }, leaseSeconds);
+  if (!acquired) {
+    // Another worker may own the lease, or the reservation may have expired.
+    // We do not possess its worker token and must not quarantine or retry it.
+    throw new Error("CREATOR_RENDER_DISPATCH_WORKER_NOT_ACQUIRED");
+  }
+  const expectedScope: CreatorRenderClaimScope = {
     workspaceId: input.workspaceId,
     creatorProjectId: input.creatorProjectId,
     timelineId: input.timelineId,
     mode: input.verticalDerivativeOf === undefined ? "MASTER_CANDIDATE" : "VERTICAL_DERIVATIVE",
     fingerprint: reservation.fingerprint,
   };
+  if (acquired.claimId !== reservation.claimId ||
+      acquired.exportId !== reservation.exportId ||
+      JSON.stringify(acquired.scope) !== JSON.stringify(expectedScope)) {
+    // Fail closed. Never use a token whose DB claim/export/scope differs
+    // from the source-derived reservation.
+    await claims.markUnknown(acquired.scope, acquired.leaseToken);
+    throw new Error("CREATOR_RENDER_DISPATCH_ACQUISITION_SCOPE_DRIFT");
+  }
+  const scope = acquired.scope;
+  const workerLeaseToken = acquired.leaseToken;
   let lostLease = false;
   let heartbeatInFlight: Promise<void> | undefined;
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -115,7 +141,7 @@ export async function dispatchReservedCreatorRender(
     if (heartbeatInFlight) return heartbeatInFlight;
     heartbeatInFlight = (async () => {
       try {
-        if (!await claims.heartbeat(scope, reservation.leaseToken, leaseSeconds)) lostLease = true;
+        if (!await claims.heartbeat(scope, workerLeaseToken, leaseSeconds)) lostLease = true;
       } catch { lostLease = true; }
     })();
     try { await heartbeatInFlight; }
@@ -169,13 +195,13 @@ export async function dispatchReservedCreatorRender(
     await heartbeat();
     assertLease();
     const finalized = await claims.finalizeVerifiedExport(
-      scope, reservation.leaseToken, reservation.exportId, rendered,
+      scope, workerLeaseToken, acquired.exportId, rendered,
       input, trustedConfig, deps.workerDependencies?.verifyArtifact,
     );
     return { ...finalized, claimId: reservation.claimId, dispatched: true as const };
   } catch (error) {
     // An uploaded artifact or timed-out process is ambiguous. Never requeue.
-    try { await claims.markUnknown(scope, reservation.leaseToken); }
+    try { await claims.markUnknown(scope, workerLeaseToken); }
     catch { throw new Error("CREATOR_RENDER_DISPATCH_QUARANTINE_FAILED", { cause: error }); }
     throw error;
   } finally {
