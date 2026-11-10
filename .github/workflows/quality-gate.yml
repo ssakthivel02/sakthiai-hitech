@@ -288,10 +288,11 @@ jobs:
           if-no-files-found: warn
 
   e2e:
+    # Pin a supported Playwright 1.56 Chromium OS: ubuntu-latest currently resolves to unsupported ubuntu26.04.
     # Browser-level production-shaped qualification: the real BUILT server + client against a disposable MySQL 8 service
     # container, with in-process fakes for OIDC, the local LLM, an "external" LLM (must never be contacted), S3 and clamd.
     # No paid API, hosted database or deployment is ever contacted.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
       mysql:
