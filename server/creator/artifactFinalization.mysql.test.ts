@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   objects: new Map<string, Uint8Array>(),
   sequence: 0,
   afterPut: null as null | (() => Promise<void>),
+  failPut: false,
 }));
 vi.mock("../db", async importOriginal => ({
   ...(await importOriginal<typeof import("../db")>()),
@@ -17,6 +18,7 @@ vi.mock("../storage", async () => {
   const { createHash } = await import("node:crypto");
   return {
     storagePut: async (name: string, data: Uint8Array, _mimeType: string) => {
+      if (state.failPut) throw new Error("INJECTED_STORAGE_UNAVAILABLE");
       const key = `${name}-${++state.sequence}`;
       state.objects.set(key, new Uint8Array(data));
       if (state.afterPut) {
@@ -77,25 +79,82 @@ describe.skipIf(skipMysqlSuite())("Creator artifact finalization ownership (disp
   beforeAll(async () => { d = await createTestDatabase(); state.db = d.db; });
   afterAll(async () => { await d?.close(); });
   beforeEach(async () => {
+    await d.pool.promise().query("DELETE FROM creatorArtifactLeases");
     await d.pool.promise().query("DELETE FROM creatorAssets");
     await d.pool.promise().query("DELETE FROM creatorProviderJobs");
     await d.pool.promise().query("DELETE FROM creatorGenerations");
     state.objects.clear();
     state.sequence = 0;
     state.afterPut = null;
+    state.failPut = false;
   });
 
   it("serializes competing finalizers to one committed asset and reuses the winner", async () => {
     const generationId = await seed("same-job");
-    const results = await Promise.all(Array.from({ length: 6 }, () => persist(generationId, "same-job")));
-    expect(new Set(results.map(result => result.assetId)).size).toBe(1);
-    expect(results.filter(result => !result.reused)).toHaveLength(1);
-    expect(results.filter(result => result.reused)).toHaveLength(5);
+    const outcomes = await Promise.allSettled(Array.from({ length: 6 }, () => persist(generationId, "same-job")));
+    const successes = outcomes.filter(result => result.status === "fulfilled").map(result => result.value);
+    const errors = outcomes.filter(result => result.status === "rejected").map(result => String(result.reason));
+    expect(successes.length).toBeGreaterThanOrEqual(1);
+    expect(successes.filter(result => !result.reused)).toHaveLength(1);
+    expect(new Set(successes.map(result => result.assetId)).size).toBe(1);
+    for (const error of errors) expect(error).toMatch(/CREATOR_ARTIFACT_LEASE_BUSY|CREATOR_ARTIFACT_ALREADY_FINALIZED/);
     expect(await assetCount(generationId)).toBe(1);
+    expect(state.sequence).toBe(1); // exclusive upload: no competing orphan objects
     const [generation] = await query("SELECT status, outputAssetId FROM creatorGenerations WHERE id = ?", [generationId]);
     expect(generation.status).toBe("SUCCEEDED");
-    expect(generation.outputAssetId).toBe(results[0].assetId);
-    // Parallel storagePut may leave unreferenced objects: reconciliation owns their quarantine.
+    expect(generation.outputAssetId).toBe(successes[0].assetId);
+    expect(await query("SELECT * FROM creatorArtifactLeases WHERE generationId = ?", [generationId])).toHaveLength(0);
+  });
+
+  it("refuses an active claim before provider retrieval or storage upload", async () => {
+    const generationId = await seed("busy-job");
+    await insert(
+      "INSERT INTO creatorArtifactLeases (generationId, workspaceId, creatorProjectId, providerJobId, leaseToken, leaseUntil) VALUES (?, ?, ?, 'busy-job', 'existing-token', DATE_ADD(NOW(3), INTERVAL 5 MINUTE))",
+      [generationId, WORKSPACE, PROJECT],
+    );
+    await expect(persist(generationId, "busy-job")).rejects.toThrow("CREATOR_ARTIFACT_LEASE_BUSY");
+    expect(state.sequence).toBe(0);
+    expect(await assetCount(generationId)).toBe(0);
+  });
+
+  it("takes over an expired claim and finalizes without another provider submission", async () => {
+    const generationId = await seed("expired-job");
+    await insert(
+      "INSERT INTO creatorArtifactLeases (generationId, workspaceId, creatorProjectId, providerJobId, leaseToken, leaseUntil) VALUES (?, ?, ?, 'expired-job', 'old-token', DATE_SUB(NOW(3), INTERVAL 1 SECOND))",
+      [generationId, WORKSPACE, PROJECT],
+    );
+    const result = await persist(generationId, "expired-job");
+    expect(result.reused).toBe(false);
+    expect(state.sequence).toBe(1);
+    expect(await query("SELECT * FROM creatorArtifactLeases WHERE generationId = ?", [generationId])).toHaveLength(0);
+    expect(await query("SELECT * FROM creatorProviderJobs WHERE generationId = ?", [generationId])).toHaveLength(1);
+  });
+
+  it("releases its own lease on storage failure and retries artifact-only", async () => {
+    const generationId = await seed("storage-retry-job");
+    state.failPut = true;
+    await expect(persist(generationId, "storage-retry-job")).rejects.toThrow("INJECTED_STORAGE_UNAVAILABLE");
+    expect(await query("SELECT * FROM creatorArtifactLeases WHERE generationId = ?", [generationId])).toHaveLength(0);
+    expect(await assetCount(generationId)).toBe(0);
+    state.failPut = false;
+    const recovered = await persist(generationId, "storage-retry-job");
+    expect(recovered.reused).toBe(false);
+    expect(state.sequence).toBe(1);
+    expect(await query("SELECT * FROM creatorProviderJobs WHERE generationId = ?", [generationId])).toHaveLength(1);
+  });
+
+  it("rejects a stolen lease at finalization and never releases the replacement token", async () => {
+    const generationId = await seed("stolen-job");
+    state.afterPut = async () => {
+      await d.pool.promise().query(
+        "UPDATE creatorArtifactLeases SET leaseToken = 'replacement-token', leaseUntil = DATE_ADD(NOW(3), INTERVAL 5 MINUTE) WHERE generationId = ?",
+        [generationId],
+      );
+    };
+    await expect(persist(generationId, "stolen-job")).rejects.toThrow("CREATOR_ARTIFACT_LEASE_LOST");
+    expect(await assetCount(generationId)).toBe(0);
+    const leases = await query("SELECT leaseToken FROM creatorArtifactLeases WHERE generationId = ?", [generationId]);
+    expect(leases[0].leaseToken).toBe("replacement-token");
   });
 
   it("rejects a provider job superseded between storage upload and transaction", async () => {
