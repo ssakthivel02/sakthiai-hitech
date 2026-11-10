@@ -18,6 +18,8 @@ const storageEnv = vi.hoisted(() => ({
 vi.mock("./_core/env", () => ({ ENV: storageEnv }));
 
 import { storageListCreatorRenderObjects, storagePut, storageVerifySha256 } from "./storage";
+import { inspectQuarantinedCreatorRender } from "./creator/renderReconciliation";
+import type { getDb } from "./db";
 
 type ResponseMode = "correct" | "ignore-range" | "corrupt" | "wrong-range";
 const objects = new Map<string, Buffer>();
@@ -174,6 +176,86 @@ describe("Creator render inventory via real S3 SDK against loopback endpoint", (
     objects.set(valid, Buffer.from(payload));
     listTruncated = true;
     await expect(storageListCreatorRenderObjects(scope)).rejects.toThrow("CREATOR_RENDER_INVENTORY_TRUNCATED");
+    expect(requests.map(request => request.method)).toEqual(["LIST"]);
+  });
+});
+
+
+describe("Creator reconciler with actual S3 SDK loopback", () => {
+  const scope = { workspaceId: 7, creatorProjectId: 11, timelineId: 13, exportId: 17, claimId: 19 };
+  const key = "creator/7/11/renders/timeline-13/export-17_a0b1c2d3.mp4";
+  const row = {
+    claimId: scope.claimId, exportId: scope.exportId,
+    fingerprint: digest, exportStatus: "RUNNING",
+    exportAssetId: 23, exportChecksum: digest,
+    claimAssetId: 23, claimChecksum: digest,
+    assetId: 23, assetType: "RENDER", assetImmutable: 1,
+    assetKey: key, assetSize: payload.length, assetChecksum: digest,
+  };
+  // MySQL row behavior is separately covered by renderReconciliation.mysql.test.ts.
+  // Here the database is a fixed snapshot while the REAL AWS SDK performs
+  // ListObjectsV2 and HTTP 206 GET against the loopback S3 protocol endpoint.
+  const dbProvider = (snapshot: Record<string, unknown>) =>
+    async () => ({ execute: async () => [[snapshot]] }) as unknown as NonNullable<Awaited<ReturnType<typeof getDb>>>;
+
+  it("verifies a persisted quarantined artifact through real ListObjectsV2 and ranged GET", async () => {
+    objects.set(key, Buffer.from(payload));
+    const result = await inspectQuarantinedCreatorRender(scope, { dbProvider: dbProvider(row) });
+    expect(result).toEqual({
+      claimId: 19, exportId: 17, outcome: "VERIFIED_BUT_QUARANTINED",
+      observedObjects: 1, verifiedAssetId: 23,
+      autoRetry: false, finalMaster: false, publishApproved: false,
+    });
+    expect(requests.map(request => request.method)).toEqual(["LIST", "GET"]);
+    expect(requests[1]).toMatchObject({ key, range: `bytes=0-${payload.length - 1}` });
+  });
+
+  it("does not certify a persisted artifact whose stored bytes are corrupted", async () => {
+    objects.set(key, Buffer.from(payload));
+    mode = "corrupt";
+    const result = await inspectQuarantinedCreatorRender(scope, { dbProvider: dbProvider(row) });
+    expect(result.outcome).toBe("STORED_BYTES_UNVERIFIED");
+    expect(result.verifiedAssetId).toBeNull();
+    expect(result.autoRetry).toBe(false);
+    expect(requests.map(request => request.method)).toEqual(["LIST", "GET"]);
+  });
+
+  it("reports metadata drift rather than innocent absence when persisted bytes are missing", async () => {
+    const result = await inspectQuarantinedCreatorRender(scope, { dbProvider: dbProvider(row) });
+    expect(result.outcome).toBe("METADATA_DRIFT");
+    expect(result.observedObjects).toBe(0);
+    expect(result.verifiedAssetId).toBeNull();
+    expect(requests.map(request => request.method)).toEqual(["LIST"]);
+  });
+
+  it("treats a non-finalized orphan as unverified without attempting checksum readback", async () => {
+    objects.set(key, Buffer.from(payload));
+    const orphan = {
+      ...row, exportAssetId: null, exportChecksum: null,
+      claimAssetId: null, claimChecksum: null,
+      assetId: null, assetType: null, assetImmutable: null,
+      assetKey: null, assetSize: null, assetChecksum: null,
+    };
+    const result = await inspectQuarantinedCreatorRender(scope, { dbProvider: dbProvider(orphan) });
+    expect(result.outcome).toBe("UNVERIFIED_ORPHAN");
+    expect(result.autoRetry).toBe(false);
+    expect(requests.map(request => request.method)).toEqual(["LIST"]);
+  });
+
+  it("fails closed on truncated S3 inventory and never assumes missing media", async () => {
+    objects.set(key, Buffer.from(payload));
+    listTruncated = true;
+    const result = await inspectQuarantinedCreatorRender(scope, { dbProvider: dbProvider(row) });
+    expect(result.outcome).toBe("STORAGE_UNAVAILABLE");
+    expect(result.observedObjects).toBe(0);
+    expect(requests.map(request => request.method)).toEqual(["LIST"]);
+  });
+
+  it("never mistakes another tenant's render for the scoped persisted artifact", async () => {
+    objects.set("creator/8/11/renders/timeline-13/export-17_a0b1c2d3.mp4", Buffer.from(payload));
+    const result = await inspectQuarantinedCreatorRender(scope, { dbProvider: dbProvider(row) });
+    expect(result.outcome).toBe("METADATA_DRIFT");
+    expect(result.verifiedAssetId).toBeNull();
     expect(requests.map(request => request.method)).toEqual(["LIST"]);
   });
 });
