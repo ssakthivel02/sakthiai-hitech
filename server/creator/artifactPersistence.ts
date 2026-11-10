@@ -154,19 +154,52 @@ export async function persistCreatorGenerationArtifact(input: {
     checksumSha256,
   };
 
-  let assetId = 0;
-  await db.transaction(async tx => {
+  // Serialize finalization with submission and polling on the generation row.
+  const finalized = await db.transaction(async tx => {
+    const [currentGeneration] = await tx.select().from(creatorGenerations)
+      .where(and(
+        eq(creatorGenerations.id, generation.id),
+        eq(creatorGenerations.workspaceId, input.workspaceId),
+        eq(creatorGenerations.creatorProjectId, generation.creatorProjectId),
+      )).limit(1).for("update");
+    if (!currentGeneration) throw new Error("CREATOR_GENERATION_NOT_FOUND");
+    if (currentGeneration.provider !== expectedJob.provider) {
+      throw new Error("CREATOR_ARTIFACT_PROVIDER_MISMATCH");
+    }
+
     const [currentJob] = await tx.select().from(creatorProviderJobs)
-      .where(and(eq(creatorProviderJobs.workspaceId, expectedJob.workspaceId), eq(creatorProviderJobs.generationId, expectedJob.generationId)))
-      .orderBy(desc(creatorProviderJobs.id)).limit(1);
+      .where(and(
+        eq(creatorProviderJobs.workspaceId, expectedJob.workspaceId),
+        eq(creatorProviderJobs.creatorProjectId, expectedJob.creatorProjectId),
+        eq(creatorProviderJobs.generationId, expectedJob.generationId),
+      )).orderBy(desc(creatorProviderJobs.id)).limit(1).for("update");
     assertCreatorArtifactJobOwnership({ ...expectedJob, job: currentJob ?? null });
 
+    // A competing poller can finalize while provider bytes are being fetched.
+    // Reuse its committed asset rather than creating another database asset.
+    if (currentGeneration.outputAssetId !== null) {
+      if (currentGeneration.status !== "SUCCEEDED") throw new Error("CREATOR_GENERATION_OUTPUT_STATE_INVALID");
+      const [existing] = await tx.select().from(creatorAssets)
+        .where(and(
+          eq(creatorAssets.id, currentGeneration.outputAssetId),
+          eq(creatorAssets.workspaceId, input.workspaceId),
+          eq(creatorAssets.creatorProjectId, generation.creatorProjectId),
+        )).limit(1);
+      if (!existing) throw new Error("CREATOR_GENERATION_OUTPUT_ASSET_MISSING");
+      if (typeof existing.byteSize !== "number" || !Number.isSafeInteger(existing.byteSize) || existing.byteSize < 1) {
+        throw new Error("CREATOR_GENERATION_OUTPUT_SIZE_INVALID");
+      }
+      return { assetId: existing.id, storageKey: existing.storageKey, checksumSha256: existing.checksumSha256,
+        byteSize: existing.byteSize, reused: true as const };
+    }
+
+    assertCreatorJobTransition(currentGeneration.status as CreatorJobState, "SUCCEEDED");
     const assetResult = await tx.insert(creatorAssets).values({
       workspaceId: input.workspaceId,
-      creatorProjectId: generation.creatorProjectId,
-      sceneId: generation.sceneId,
-      shotId: generation.shotId,
-      assetType: assetTypeForGeneration(generation.kind),
+      creatorProjectId: currentGeneration.creatorProjectId,
+      sceneId: currentGeneration.sceneId,
+      shotId: currentGeneration.shotId,
+      assetType: assetTypeForGeneration(currentGeneration.kind),
       mimeType,
       storageKey: storage.key,
       checksumSha256,
@@ -175,43 +208,41 @@ export async function persistCreatorGenerationArtifact(input: {
       provenanceJson: JSON.stringify(provenance),
       reviewDecision: "PENDING",
     });
-    assetId = Number(assetResult[0].insertId);
+    const assetId = Number(assetResult[0].insertId);
     if (!assetId) throw new Error("CREATOR_ASSET_CREATE_FAILED");
 
-    const updateResult = await tx
-      .update(creatorGenerations)
-      .set({
-        outputAssetId: assetId,
-        status: "SUCCEEDED",
-        failureClass: null,
-        errorMessage: null,
-        completedAt: persistedAt,
-      })
-      .where(
-        and(
-          eq(creatorGenerations.id, generation.id),
-          eq(creatorGenerations.workspaceId, input.workspaceId),
-          eq(creatorGenerations.status, generation.status),
-          isNull(creatorGenerations.outputAssetId),
-        ),
-      );
+    const updateResult = await tx.update(creatorGenerations).set({
+      outputAssetId: assetId,
+      status: "SUCCEEDED",
+      failureClass: null,
+      errorMessage: null,
+      completedAt: persistedAt,
+    }).where(and(
+      eq(creatorGenerations.id, currentGeneration.id),
+      eq(creatorGenerations.workspaceId, input.workspaceId),
+      eq(creatorGenerations.creatorProjectId, currentGeneration.creatorProjectId),
+      eq(creatorGenerations.status, currentGeneration.status),
+      isNull(creatorGenerations.outputAssetId),
+    ));
     if (Number(updateResult[0].affectedRows) !== 1) throw new Error("CREATOR_GENERATION_ARTIFACT_RACE");
 
-    if (generation.shotId) {
-      await tx
-        .update(creatorShots)
-        .set({ status: "READY" })
-        .where(
-          and(
-            eq(creatorShots.id, generation.shotId),
-            eq(creatorShots.workspaceId, input.workspaceId),
-            eq(creatorShots.creatorProjectId, generation.creatorProjectId),
-          ),
-        );
+    if (currentGeneration.shotId) {
+      await tx.update(creatorShots).set({ status: "READY" }).where(and(
+        eq(creatorShots.id, currentGeneration.shotId),
+        eq(creatorShots.workspaceId, input.workspaceId),
+        eq(creatorShots.creatorProjectId, currentGeneration.creatorProjectId),
+      ));
     }
+    return { assetId, storageKey: storage.key, checksumSha256, byteSize: data.byteLength, reused: false as const };
   });
 
-  return { assetId, storageKey: storage.key, checksumSha256, reused: false };
+  // Never report replay success for missing or corrupted persisted bytes.
+  // Storage readback occurs after releasing the InnoDB generation-row lock.
+  if (finalized.reused) {
+    await storageVerifySha256(finalized.storageKey, finalized.byteSize, finalized.checksumSha256);
+  }
+  return { assetId: finalized.assetId, storageKey: finalized.storageKey,
+    checksumSha256: finalized.checksumSha256, reused: finalized.reused };
 }
 
 export async function markCreatorArtifactRetryable(input: {
