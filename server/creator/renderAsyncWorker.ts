@@ -223,5 +223,8 @@ export async function runCreatorRenderQueueBatch(
       if (deps.abortSignal?.aborted) { interrupted = true; break; }
     }
   }
-  return { attempted: results.length, dispatched, skipped, failed, interrupted, results };
+  return {
+    attempted: results.length, dispatched, skipped, failed,
+    interrupted: interrupted || Boolean(deps.abortSignal?.aborted), results,
+  };
 }
