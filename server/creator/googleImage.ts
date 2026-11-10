@@ -37,15 +37,37 @@ function runtimeConfig() {
   };
 }
 
-function normalizeBase64(value: string): string {
-  return value.replace(/^data:[^;]+;base64,/, "").trim();
-}
+const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const MAX_IMAGE_BASE64_LENGTH = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
 
-function validateInlineImage(dataBase64: string): string {
-  const data = normalizeBase64(dataBase64);
-  if (!data || !/^[A-Za-z0-9+/=\r\n]+$/.test(data)) throw new Error("CREATOR_IMAGE_INVALID_BASE64");
-  const byteLength = Buffer.from(data, "base64").byteLength;
-  if (!byteLength || byteLength > MAX_IMAGE_BYTES) throw new Error("CREATOR_IMAGE_SIZE_INVALID");
+/**
+ * Validate the encoded length BEFORE allocating decoded bytes. Node's base64
+ * decoder is permissive, so require canonical padding and reject data-URI
+ * MIME mismatches rather than accepting a different media type under an
+ * image/png label.
+ */
+function validateInlineImage(dataBase64: string, expectedMimeType?: string): string {
+  if (expectedMimeType && !ALLOWED_IMAGE_MIME_TYPES.has(expectedMimeType)) {
+    throw new Error("CREATOR_IMAGE_MIME_UNSUPPORTED");
+  }
+  if (typeof dataBase64 !== "string" || dataBase64.length > MAX_IMAGE_BASE64_LENGTH + 64) {
+    throw new Error("CREATOR_IMAGE_SIZE_INVALID");
+  }
+  const trimmed = dataBase64.trim();
+  const uriMatch = /^data:([^;,]+);base64,/i.exec(trimmed);
+  if (trimmed.startsWith("data:") && !uriMatch) throw new Error("CREATOR_IMAGE_INVALID_BASE64");
+  if (uriMatch && (!ALLOWED_IMAGE_MIME_TYPES.has(uriMatch[1].toLowerCase()) ||
+    (expectedMimeType && uriMatch[1].toLowerCase() !== expectedMimeType))) {
+    throw new Error("CREATOR_IMAGE_MIME_MISMATCH");
+  }
+  const data = (uriMatch ? trimmed.slice(uriMatch[0].length) : trimmed).replace(/\r?\n/g, "");
+  if (!data || data.length > MAX_IMAGE_BASE64_LENGTH) throw new Error("CREATOR_IMAGE_SIZE_INVALID");
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data)) {
+    throw new Error("CREATOR_IMAGE_INVALID_BASE64");
+  }
+  const bytes = Buffer.from(data, "base64");
+  if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_BYTES) throw new Error("CREATOR_IMAGE_SIZE_INVALID");
+  if (bytes.toString("base64") !== data) throw new Error("CREATOR_IMAGE_INVALID_BASE64");
   return data;
 }
 
@@ -64,7 +86,7 @@ export function buildGoogleImagePayload(request: CreatorImageRequest) {
 
   const input: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
   for (const reference of references) {
-    input.push({ type: "image", mime_type: reference.mimeType, data: validateInlineImage(reference.dataBase64) });
+    input.push({ type: "image", mime_type: reference.mimeType, data: validateInlineImage(reference.dataBase64, reference.mimeType) });
   }
 
   return {
@@ -98,8 +120,9 @@ export function extractGoogleImageArtifacts(payload: unknown): CreatorProviderAr
 
 export function decodeGoogleImageArtifact(artifact: CreatorProviderArtifact) {
   if (!artifact.dataBase64) throw new Error("CREATOR_IMAGE_ARTIFACT_DATA_MISSING");
-  const data = validateInlineImage(artifact.dataBase64);
-  return { mimeType: artifact.mimeType || "image/png", data: new Uint8Array(Buffer.from(data, "base64")) };
+  const mimeType = artifact.mimeType || "image/png";
+  const data = validateInlineImage(artifact.dataBase64, mimeType);
+  return { mimeType, data: new Uint8Array(Buffer.from(data, "base64")) };
 }
 
 function mapInteraction(payload: Interaction, providerJobId: string): CreatorProviderPoll {
