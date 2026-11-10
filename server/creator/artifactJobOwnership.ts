@@ -36,5 +36,9 @@ export function assertCreatorArtifactJobOwnership(input: {
 export function isCreatorArtifactJobOwnershipError(error: unknown): boolean {
   return error instanceof Error &&
     (error.message === "CREATOR_ARTIFACT_PROVIDER_JOB_MISMATCH" ||
-      error.message === "CREATOR_ARTIFACT_PROVIDER_JOB_NOT_SUCCEEDED");
+      error.message === "CREATOR_ARTIFACT_PROVIDER_JOB_NOT_SUCCEEDED" ||
+      error.message === "CREATOR_PROVIDER_JOB_SUPERSEDED" ||
+      error.message === "CREATOR_PROVIDER_POLL_JOB_MISMATCH" ||
+      error.message === "CREATOR_PROVIDER_JOB_AMBIGUOUS" ||
+      error.message === "CREATOR_PROVIDER_POLL_ALREADY_FINALIZED");
 }
