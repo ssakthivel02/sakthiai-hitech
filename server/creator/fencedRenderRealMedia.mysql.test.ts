@@ -223,5 +223,37 @@ describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
       expect(outputs.size).toBe(1);
       expect(JSON.stringify(duplicate)).not.toContain("leaseToken");
     }, 120_000);
+
+    it("fences concurrent API dispatches to one real FFmpeg execution for a new Tamil caption snapshot", async () => {
+      // A new locked caption changes the source fingerprint and creates one
+      // additional candidate; the first successful render remains immutable.
+      await exec(sql`UPDATE creatorCaptionCues SET text = 'வேல் முருகா அரோகரா'
+        WHERE timelineId = ${ids.timeline}`);
+      vi.stubEnv("CREATOR_FENCED_RENDER_ENABLED", "true");
+      const input = {
+        workspaceId: 7, creatorProjectId: ids.project,
+        timelineId: ids.timeline, confirmCandidateOnly: true as const,
+      };
+      const results = await Promise.all([
+        caller().renderFencedCandidate(input),
+        caller().renderFencedCandidate(input),
+      ]);
+      const winners = results.filter(result => result.dispatched);
+      const duplicates = results.filter(result => !result.dispatched);
+      expect(winners).toHaveLength(1);
+      expect(duplicates).toHaveLength(1);
+      const winner = winners[0];
+      const duplicate = duplicates[0];
+      expect(duplicate.claimId).toBe(winner.claimId);
+      expect(duplicate.exportId).toBe(winner.exportId);
+      expect(JSON.stringify(results)).not.toContain("leaseToken");
+      expect(outputs.size).toBe(2); // Run36 baseline + exactly one new render.
+      const [exports] = await exec(sql`SELECT status FROM creatorExports
+        WHERE id = ${winner.exportId}`) as unknown as [[{ status: string }]];
+      expect(exports[0].status).toBe("SUCCEEDED");
+      const [claims] = await exec(sql`SELECT state FROM creatorRenderClaims
+        WHERE id = ${winner.claimId}`) as unknown as [[{ state: string }]];
+      expect(claims[0].state).toBe("SUCCEEDED");
+    }, 120_000);
   },
 );
