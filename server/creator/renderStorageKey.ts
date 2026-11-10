@@ -19,7 +19,12 @@ export function assertCreatorRenderStorageKey(
   key: string,
   identity: CreatorRenderStorageIdentity,
 ): void {
-  if (!Object.values(identity).every(value => Number.isSafeInteger(value) && value > 0) ||
+  // Callers may pass a wider render-claim scope (mode/fingerprint) via
+  // object spread. Validate ONLY the four numeric storage identity fields;
+  // rejecting extra nonnumeric metadata previously broke all real MySQL
+  // finalizations before checksum verification or source-drift fencing.
+  const ids = [identity.workspaceId, identity.creatorProjectId, identity.timelineId, identity.exportId];
+  if (!ids.every(value => Number.isSafeInteger(value) && value > 0) ||
       typeof key !== "string") {
     throw new Error("CREATOR_RENDER_OUTPUT_IDENTITY_INVALID");
   }
