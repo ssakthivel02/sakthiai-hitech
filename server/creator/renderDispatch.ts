@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { creatorAssets } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { storageGetSignedUrl, storageVerifySha256 } from "../storage";
-import { MysqlCreatorRenderClaims, type CreatorRenderClaimScope } from "./renderClaims";
+import { MysqlCreatorRenderClaims, type CreatorRenderClaimScope, type CreatorRenderQueuedResult } from "./renderClaims";
 import {
   readCreatorRenderIntentFromDatabase,
   reserveCreatorRenderIntentFromDatabase,
@@ -83,6 +83,12 @@ export async function resolveTrustedCreatorRenderMedia(intent: CreatorRenderInte
   return { audioSourceUrl, visualItems };
 }
 
+/** A queued claim ID is sufficient to attempt atomic acquisition; no reservation token is needed. */
+export type CreatorQueuedRenderReservation = Pick<
+  Extract<CreatorRenderQueuedResult, { created: true }>,
+  "claimId" | "exportId" | "fingerprint"
+>;
+
 export async function dispatchReservedCreatorRender(
   input: CreatorDbRenderIntentInput,
   trustedConfig: TrustedCreatorRendererConfig,
@@ -91,18 +97,39 @@ export async function dispatchReservedCreatorRender(
   if (trustedConfig.fontFamily !== CREATOR_CAPTION_FONT_FAMILY) {
     throw new Error("CREATOR_RENDER_DISPATCH_FONT_IDENTITY_INVALID");
   }
+  const reserve = deps.reserve ?? reserveCreatorRenderIntentFromDatabase;
+  const reservation = await reserve(input, trustedConfig, getDb, deps.leaseSeconds ?? 1800);
+  if (!reservation.created) return { ...reservation, dispatched: false as const };
+  return dispatchQueuedCreatorRender(input, trustedConfig, reservation, deps);
+}
+
+/**
+ * Shared execution path for the synchronous acceptance route and a bounded
+ * background worker. The database acquisition fence, not the caller, grants
+ * permission to run FFmpeg. A stale or cancelled queued claim cannot run.
+ */
+export async function dispatchQueuedCreatorRender(
+  input: CreatorDbRenderIntentInput,
+  trustedConfig: TrustedCreatorRendererConfig,
+  reservation: CreatorQueuedRenderReservation,
+  deps: CreatorRenderDispatchDependencies = {},
+) {
+  if (trustedConfig.fontFamily !== CREATOR_CAPTION_FONT_FAMILY) {
+    throw new Error("CREATOR_RENDER_DISPATCH_FONT_IDENTITY_INVALID");
+  }
+  if (!Number.isSafeInteger(reservation.claimId) || reservation.claimId <= 0 ||
+      !Number.isSafeInteger(reservation.exportId) || reservation.exportId <= 0 ||
+      !/^[a-f0-9]{64}$/.test(reservation.fingerprint)) {
+    throw new Error("CREATOR_RENDER_DISPATCH_QUEUED_IDENTITY_INVALID");
+  }
   const leaseSeconds = deps.leaseSeconds ?? 1800;
   const intervalMs = deps.heartbeatIntervalMs ?? 30_000;
   if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds < 1 || leaseSeconds > 1800 ||
       !Number.isSafeInteger(intervalMs) || intervalMs < 100 || intervalMs >= leaseSeconds * 1000) {
     throw new Error("CREATOR_RENDER_DISPATCH_HEARTBEAT_CONFIG_INVALID");
   }
-  const reserve = deps.reserve ?? reserveCreatorRenderIntentFromDatabase;
   const read = deps.read ?? readCreatorRenderIntentFromDatabase;
   const claims = deps.claims ?? new MysqlCreatorRenderClaims();
-  const reservation = await reserve(input, trustedConfig, getDb, leaseSeconds);
-  if (!reservation.created) return { ...reservation, dispatched: false as const };
-
   // A newly reserved QUEUED export is NOT permission to run FFmpeg. Rotate
   // the reservation token and atomically claim the export first. This is the
   // exact same acquisition primitive required of any later async worker.
