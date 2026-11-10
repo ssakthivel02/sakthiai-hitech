@@ -1,4 +1,5 @@
 import { markCreatorArtifactRetryable, persistCreatorGenerationArtifact } from "./artifactPersistence";
+import { isCreatorArtifactJobOwnershipError } from "./artifactJobOwnership";
 import { requireCreatorRemoteCancel, resolveCreatorRetryMode } from "./jobControl";
 import {
   beginProviderSubmission,
@@ -305,6 +306,7 @@ export async function pollCreatorGeneration(input: { workspaceId: number; genera
         productionApproved: false,
       };
     } catch (artifactError) {
+      if (isCreatorArtifactJobOwnershipError(artifactError)) throw artifactError;
       await markCreatorArtifactRetryable({
         workspaceId: input.workspaceId,
         generationId: generation.id,
@@ -322,6 +324,7 @@ export async function pollCreatorGeneration(input: { workspaceId: number; genera
       };
     }
   } catch (error) {
+    if (isCreatorArtifactJobOwnershipError(error)) throw error;
     const failureClass = provider.classifyFailure(error);
     if (providerJob.status === "SUCCEEDED") {
       await markCreatorArtifactRetryable({ workspaceId: input.workspaceId, generationId: generation.id, error }).catch(() => undefined);

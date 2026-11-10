@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
-import { creatorAssets, creatorGenerations, creatorShots } from "../../drizzle/schema";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import { creatorAssets, creatorGenerations, creatorProviderJobs, creatorShots } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { storagePut, storageVerifySha256 } from "../storage";
 import { CREATOR_STORED_MEDIA_MAX_BYTES } from "./storageIntegrity";
+import { assertCreatorArtifactJobOwnership } from "./artifactJobOwnership";
 import {
   assertCreatorJobTransition,
   canTransitionCreatorJob,
@@ -55,6 +56,24 @@ async function requireDb() {
   return db;
 }
 
+type ExpectedArtifactJob = {
+  workspaceId: number;
+  creatorProjectId: number;
+  generationId: number;
+  provider: string;
+  providerJobId: string;
+};
+
+async function assertLatestCreatorArtifactJob(
+  db: Awaited<ReturnType<typeof requireDb>>,
+  expected: ExpectedArtifactJob,
+): Promise<void> {
+  const [job] = await db.select().from(creatorProviderJobs)
+    .where(and(eq(creatorProviderJobs.workspaceId, expected.workspaceId), eq(creatorProviderJobs.generationId, expected.generationId)))
+    .orderBy(desc(creatorProviderJobs.id)).limit(1);
+  assertCreatorArtifactJobOwnership({ ...expected, job: job ?? null });
+}
+
 export async function persistCreatorGenerationArtifact(input: {
   workspaceId: number;
   generationId: number;
@@ -71,6 +90,16 @@ export async function persistCreatorGenerationArtifact(input: {
   if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
 
   if (generation.provider !== input.provider.id) throw new Error("CREATOR_ARTIFACT_PROVIDER_MISMATCH");
+
+  const expectedJob = {
+    workspaceId: input.workspaceId,
+    creatorProjectId: generation.creatorProjectId,
+    generationId: generation.id,
+    provider: generation.provider,
+    providerJobId: input.providerJobId,
+  };
+  // Check the latest provider job before replay, retrieval, or storage mutation.
+  await assertLatestCreatorArtifactJob(db, expectedJob);
 
   if (generation.outputAssetId) {
     const [existing] = await db
@@ -98,6 +127,8 @@ export async function persistCreatorGenerationArtifact(input: {
   const mimeType = fetched.mimeType.split(";", 1)[0].trim().toLowerCase();
   const extension = extensionForCreatorMimeType(mimeType);
   const checksumSha256 = createHash("sha256").update(data).digest("hex");
+  // Provider retrieval is asynchronous; reject jobs superseded during fetch.
+  await assertLatestCreatorArtifactJob(db, expectedJob);
   const persistedAt = new Date();
   const storage = await storagePut(
     `creator/${generation.creatorProjectId}/shots/${generation.shotId ?? "unbound"}/generation-${generation.id}.${extension}`,
@@ -125,6 +156,11 @@ export async function persistCreatorGenerationArtifact(input: {
 
   let assetId = 0;
   await db.transaction(async tx => {
+    const [currentJob] = await tx.select().from(creatorProviderJobs)
+      .where(and(eq(creatorProviderJobs.workspaceId, expectedJob.workspaceId), eq(creatorProviderJobs.generationId, expectedJob.generationId)))
+      .orderBy(desc(creatorProviderJobs.id)).limit(1);
+    assertCreatorArtifactJobOwnership({ ...expectedJob, job: currentJob ?? null });
+
     const assetResult = await tx.insert(creatorAssets).values({
       workspaceId: input.workspaceId,
       creatorProjectId: generation.creatorProjectId,
@@ -156,6 +192,7 @@ export async function persistCreatorGenerationArtifact(input: {
           eq(creatorGenerations.id, generation.id),
           eq(creatorGenerations.workspaceId, input.workspaceId),
           eq(creatorGenerations.status, generation.status),
+          isNull(creatorGenerations.outputAssetId),
         ),
       );
     if (Number(updateResult[0].affectedRows) !== 1) throw new Error("CREATOR_GENERATION_ARTIFACT_RACE");
