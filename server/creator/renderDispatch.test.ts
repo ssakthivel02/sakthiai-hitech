@@ -46,6 +46,14 @@ function setup() {
     }],
   }));
   const render = vi.fn(async () => rendered);
+  const workerLeaseToken = "00000000-0000-4000-8000-000000000002";
+  const acquired = {
+    claimId: reservation.claimId,
+    exportId: reservation.exportId,
+    scope: { ...input, mode: "MASTER_CANDIDATE" as const, fingerprint },
+    leaseToken: workerLeaseToken,
+  };
+  const acquireQueuedExport = vi.fn(async () => acquired);
   const heartbeat = vi.fn(async () => true);
   const markUnknown = vi.fn(async () => true);
   const finalizeVerifiedExport = vi.fn(async () => ({
@@ -53,10 +61,11 @@ function setup() {
   }));
   const deps: CreatorRenderDispatchDependencies = {
     reserve, read, resolveMedia, render,
-    claims: { heartbeat, markUnknown, finalizeVerifiedExport },
+    claims: { acquireQueuedExport, heartbeat, markUnknown, finalizeVerifiedExport },
     leaseSeconds: 10, heartbeatIntervalMs: 100,
   };
-  return { deps, reserve, read, resolveMedia, render, heartbeat, markUnknown, finalizeVerifiedExport };
+  return { deps, reserve, read, resolveMedia, render, acquireQueuedExport,
+    workerLeaseToken, heartbeat, markUnknown, finalizeVerifiedExport };
 }
 
 describe("Creator render dispatch staging", () => {
@@ -69,6 +78,7 @@ describe("Creator render dispatch staging", () => {
     });
     const result = await dispatchReservedCreatorRender(input, config, x.deps);
     expect(result.dispatched).toBe(false);
+    expect(x.acquireQueuedExport).not.toHaveBeenCalled();
     expect(x.read).not.toHaveBeenCalled();
     expect(x.render).not.toHaveBeenCalled();
     expect(x.heartbeat).not.toHaveBeenCalled();
@@ -80,15 +90,72 @@ describe("Creator render dispatch staging", () => {
     expect(result).toMatchObject({
       claimId: 21, exportId: 22, assetId: 44, dispatched: true, reviewDecision: "PENDING",
     });
+    expect(x.acquireQueuedExport).toHaveBeenCalledExactlyOnceWith({
+      ...input, claimId: reservation.claimId,
+    }, 10);
     expect(x.read).toHaveBeenCalledTimes(2);
     expect(x.resolveMedia).toHaveBeenCalledTimes(1);
     expect(x.render).toHaveBeenCalledTimes(1);
     expect(x.heartbeat).toHaveBeenCalledTimes(2);
+    expect(x.heartbeat).toHaveBeenCalledWith(
+      expect.objectContaining({ fingerprint }), x.workerLeaseToken, 10,
+    );
+    expect(x.heartbeat).not.toHaveBeenCalledWith(
+      expect.anything(), reservation.leaseToken, 10,
+    );
     expect(x.finalizeVerifiedExport).toHaveBeenCalledTimes(1);
     expect(x.finalizeVerifiedExport).toHaveBeenCalledWith(
-      expect.objectContaining({ fingerprint }), reservation.leaseToken, 22,
+      expect.objectContaining({ fingerprint }), x.workerLeaseToken, 22,
       rendered, input, config, undefined,
     );
+    expect(x.markUnknown).not.toHaveBeenCalled();
+  });
+
+  it("does not start FFmpeg or quarantine another worker when acquisition is denied", async () => {
+    const x = setup();
+    x.acquireQueuedExport.mockResolvedValueOnce(null as never);
+    await expect(dispatchReservedCreatorRender(input, config, x.deps))
+      .rejects.toThrow("CREATOR_RENDER_DISPATCH_WORKER_NOT_ACQUIRED");
+    expect(x.read).not.toHaveBeenCalled();
+    expect(x.resolveMedia).not.toHaveBeenCalled();
+    expect(x.render).not.toHaveBeenCalled();
+    expect(x.heartbeat).not.toHaveBeenCalled();
+    expect(x.markUnknown).not.toHaveBeenCalled();
+  });
+
+  it("fails closed and quarantines a mismatched acquired export before media access", async () => {
+    const x = setup();
+    x.acquireQueuedExport.mockResolvedValueOnce({
+      claimId: reservation.claimId, exportId: 999,
+      scope: { ...input, mode: "MASTER_CANDIDATE", fingerprint },
+      leaseToken: x.workerLeaseToken,
+    });
+    await expect(dispatchReservedCreatorRender(input, config, x.deps))
+      .rejects.toThrow("CREATOR_RENDER_DISPATCH_ACQUISITION_SCOPE_DRIFT");
+    expect(x.read).not.toHaveBeenCalled();
+    expect(x.render).not.toHaveBeenCalled();
+    expect(x.markUnknown).toHaveBeenCalledWith(
+      expect.objectContaining({ fingerprint }), x.workerLeaseToken,
+    );
+  });
+
+  it("permits only one competing dispatcher to launch FFmpeg", async () => {
+    const x = setup();
+    // Even if a reservation service incorrectly reports created:true twice,
+    // the atomic worker acquisition remains the final execution fence.
+    x.acquireQueuedExport.mockResolvedValueOnce({
+      claimId: reservation.claimId, exportId: reservation.exportId,
+      scope: { ...input, mode: "MASTER_CANDIDATE", fingerprint },
+      leaseToken: x.workerLeaseToken,
+    }).mockResolvedValueOnce(null as never);
+    const results = await Promise.allSettled([
+      dispatchReservedCreatorRender(input, config, x.deps),
+      dispatchReservedCreatorRender(input, config, x.deps),
+    ]);
+    expect(results.filter(x => x.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(x => x.status === "rejected")).toHaveLength(1);
+    expect(x.render).toHaveBeenCalledTimes(1);
+    expect(x.finalizeVerifiedExport).toHaveBeenCalledTimes(1);
     expect(x.markUnknown).not.toHaveBeenCalled();
   });
 
