@@ -130,8 +130,7 @@ export async function runCreatorRenderQueueBatch(
   limit = 4,
   deps: CreatorQueueBatchDependencies = {},
 ): Promise<CreatorQueueBatchResult> {
-  if (deps.env?.CREATOR_ASYNC_RENDER_WORKER_ENABLED !== "true" &&
-      (deps.env ?? process.env).CREATOR_ASYNC_RENDER_WORKER_ENABLED !== "true") {
+  if ((deps.env ?? process.env).CREATOR_ASYNC_RENDER_WORKER_ENABLED !== "true") {
     throw new Error("CREATOR_RENDER_ASYNC_WORKER_DISABLED");
   }
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 8) {
