@@ -154,7 +154,7 @@ describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
             // Production storagePut appends eight lowercase hex characters.
             // Exercise the REAL returned object identity through the fenced
             // MySQL finalizer rather than the old unsuffixed test-only key.
-            const storedKey = key.replace(/\\.mp4$/, "_a0b1c2d3.mp4");
+            const storedKey = key.replace(/\.mp4$/, "_a0b1c2d3.mp4");
             if (outputs.has(storedKey)) throw new Error("CREATOR_DUPLICATE_STORAGE_WRITE");
             outputs.set(storedKey, Buffer.from(bytes));
             return { key: storedKey, url: `memory://${storedKey}` };
@@ -189,7 +189,7 @@ describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
       }>(sql`SELECT reviewDecision, checksumSha256, byteSize, provenanceJson, storageKey
              FROM creatorAssets WHERE id = ${result.assetId}`);
       const bytes = outputs.get(asset.storageKey);
-      expect(asset.storageKey).toMatch(/export-[1-9][0-9]*_a0b1c2d3\\.mp4$/);
+      expect(asset.storageKey).toMatch(/export-[1-9][0-9]*_a0b1c2d3\.mp4$/);
       expect(bytes).toBeDefined();
       expect(asset.reviewDecision).toBe("PENDING");
       expect(asset.byteSize).toBe(bytes!.byteLength);
