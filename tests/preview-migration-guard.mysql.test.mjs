@@ -17,7 +17,7 @@ const BASELINE = "0004_creator_spend_control";
 describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { timeout: 60_000 }, () => {
   const base = mysqlTestUrl();
   const cleanup = [];
-  afterAll(async () => { for (const fn of cleanup.reverse()) await fn(); });
+  afterAll(async () => { for (const fn of cleanup.reverse()) await fn(); }, 60_000); // many disposable DB drops after migration 0022
 
   const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8"));
   /** A migrations folder holding the journal up to `tag` (inclusive), for drizzle's own migrator. */
