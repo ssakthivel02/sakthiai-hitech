@@ -238,6 +238,59 @@ export class MysqlCreatorRenderClaims {
     };
   }
 
+  /**
+   * Owner-facing durable status polling for a previously reserved render.
+   * Never exposes the worker lease token, signed media URL or internal keys.
+   * An expired lease is quarantined, not reacquired or automatically retried.
+   */
+  async pollClaim(input: {
+    workspaceId: number; creatorProjectId: number; timelineId: number; claimId: number;
+  }): Promise<{
+    claimId: number; state: CreatorRenderClaimState; exportId: number | null;
+    exportStatus: string | null; outputAssetId: number | null;
+    requiresReconciliation: boolean; reviewRequired: boolean;
+    finalMaster: false; publishApproved: false;
+  }> {
+    for (const key of ["workspaceId", "creatorProjectId", "timelineId", "claimId"] as const) {
+      positiveInt(input[key]);
+    }
+    const db = await this.db();
+    // State transition is scoped by owner, project, timeline and exact claim.
+    // It fences a crashed worker without issuing another paid/render job.
+    await db.execute(sql`
+      UPDATE creatorRenderClaims SET state = 'NEEDS_RECONCILIATION'
+      WHERE id = ${input.claimId} AND workspaceId = ${input.workspaceId}
+        AND creatorProjectId = ${input.creatorProjectId} AND timelineId = ${input.timelineId}
+        AND state = 'RUNNING' AND leaseUntil <= UTC_TIMESTAMP(3)
+    `);
+    const [row] = rowsOf<{
+      id: number; state: CreatorRenderClaimState; exportId: number | null;
+      outputAssetId: number | null; exportStatus: string | null;
+    }>(await db.execute(sql`
+      SELECT c.id, c.state, c.exportId, c.outputAssetId, e.status AS exportStatus
+      FROM creatorRenderClaims c
+      LEFT JOIN creatorExports e ON e.id = c.exportId
+        AND e.workspaceId = c.workspaceId
+        AND e.creatorProjectId = c.creatorProjectId
+        AND e.timelineId = c.timelineId
+      WHERE c.id = ${input.claimId} AND c.workspaceId = ${input.workspaceId}
+        AND c.creatorProjectId = ${input.creatorProjectId}
+        AND c.timelineId = ${input.timelineId} LIMIT 1
+    `));
+    if (!row) throw new Error("CREATOR_RENDER_CLAIM_NOT_FOUND");
+    return {
+      claimId: Number(row.id),
+      state: row.state,
+      exportId: row.exportId === null ? null : Number(row.exportId),
+      exportStatus: row.exportStatus ?? null,
+      outputAssetId: row.outputAssetId === null ? null : Number(row.outputAssetId),
+      requiresReconciliation: row.state === "NEEDS_RECONCILIATION",
+      reviewRequired: row.state === "SUCCEEDED",
+      finalMaster: false,
+      publishApproved: false,
+    };
+  }
+
   async heartbeat(input: CreatorRenderClaimScope, leaseToken: string, leaseSeconds = 1800): Promise<boolean> {
     const scope = validateScope(input);
     validLeaseSeconds(leaseSeconds);
