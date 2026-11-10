@@ -90,7 +90,8 @@ describe("Creator render dispatch staging", () => {
     expect(result).toMatchObject({
       claimId: 21, exportId: 22, assetId: 44, dispatched: true, reviewDecision: "PENDING",
     });
-    expect(x.acquireQueuedExport).toHaveBeenCalledExactlyOnceWith({
+    expect(x.acquireQueuedExport).toHaveBeenCalledTimes(1);
+    expect(x.acquireQueuedExport).toHaveBeenCalledWith({
       ...input, claimId: reservation.claimId,
     }, 10);
     expect(x.read).toHaveBeenCalledTimes(2);
