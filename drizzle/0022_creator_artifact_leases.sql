@@ -7,6 +7,7 @@ CREATE TABLE `creatorArtifactLeases` (
   `leaseUntil` datetime(3) NOT NULL,
   `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`generationId`),
-  KEY `creatorArtifactLeases_workspace_until_idx` (`workspaceId`, `leaseUntil`)
-) ENGINE=InnoDB;
+  CONSTRAINT `creatorArtifactLeases_generationId_pk` PRIMARY KEY (`generationId`)
+);
+--> statement-breakpoint
+CREATE INDEX `creatorArtifactLeases_workspace_until_idx` ON `creatorArtifactLeases` (`workspaceId`, `leaseUntil`);
