@@ -196,11 +196,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run --rm -d --name sakthiai-creator-minio \
+          # Registry throttling is external to the Creator code. Try the exact
+          # pinned image from two registries with bounded backoff; never use
+          # :latest or skip the real MinIO acceptance when pulls fail.
+          minio_image=""
+          for candidate in \
+            public.ecr.aws/y9w4h2u9/minio:RELEASE.2025-09-07T16-13-09Z \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z; do
+            for attempt in 1 2 3; do
+              if docker pull "$candidate"; then
+                minio_image="$candidate"
+                break
+              fi
+              echo "MinIO registry pull failed (attempt $attempt); retrying with bounded delay"
+              sleep "$((attempt * 3))"
+            done
+            if [ -n "$minio_image" ]; then break; fi
+          done
+          if [ -z "$minio_image" ]; then
+            echo "MinIO pinned image unavailable from both registries; failing closed"
+            exit 1
+          fi
+          docker run --pull=never --rm -d --name sakthiai-creator-minio \
             -p 127.0.0.1:9000:9000 \
             -e MINIO_ROOT_USER=ci-minio-user \
             -e MINIO_ROOT_PASSWORD=ci-minio-secret-only \
-            public.ecr.aws/y9w4h2u9/minio:RELEASE.2025-09-07T16-13-09Z server /data
+            "$minio_image" server /data
           for attempt in $(seq 1 40); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null; then
               echo "Disposable MinIO is ready"

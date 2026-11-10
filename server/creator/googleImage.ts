@@ -68,7 +68,113 @@ function validateInlineImage(dataBase64: string, expectedMimeType?: string): str
   const bytes = Buffer.from(data, "base64");
   if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_BYTES) throw new Error("CREATOR_IMAGE_SIZE_INVALID");
   if (bytes.toString("base64") !== data) throw new Error("CREATOR_IMAGE_INVALID_BASE64");
+  assertGoogleImageSignature(bytes, expectedMimeType ?? uriMatch?.[1].toLowerCase() ?? "image/png");
   return data;
+}
+
+
+/** Reject mislabeled or obviously truncated image bytes before persistence. */
+export function assertGoogleImageSignature(data: Uint8Array, mimeType: string): void {
+  const isPng = data.length >= 45 &&
+    [137, 80, 78, 71, 13, 10, 26, 10].every((n, i) => data[i] === n) &&
+    [73, 72, 68, 82].every((n, i) => data[12 + i] === n) &&
+    [0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130].every((n, i) => data[data.length - 12 + i] === n);
+  const isJpeg = data.length >= 4 && data[0] === 255 && data[1] === 216 &&
+    data[2] === 255 && data[data.length - 2] === 255 && data[data.length - 1] === 217;
+  const isWebp = data.length >= 12 &&
+    [82, 73, 70, 70].every((n, i) => data[i] === n) &&
+    [87, 69, 66, 80].every((n, i) => data[8 + i] === n) &&
+    ((data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24)) >>> 0) === data.length - 8;
+  if (!((mimeType === "image/png" && isPng) ||
+    (mimeType === "image/jpeg" && isJpeg) ||
+    (mimeType === "image/webp" && isWebp))) {
+    throw new Error("CREATOR_IMAGE_SIGNATURE_MISMATCH");
+  }
+}
+
+/** Only the first-party Gemini API host may receive x-goog-api-key. */
+export function validateGoogleImageArtifactUri(uri: string): URL {
+  let parsed: URL;
+  try { parsed = new URL(uri); }
+  catch { throw new Error("CREATOR_IMAGE_ARTIFACT_URI_INVALID"); }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "generativelanguage.googleapis.com" ||
+      parsed.port || parsed.username || parsed.password) {
+    throw new Error("CREATOR_IMAGE_ARTIFACT_URI_INVALID");
+  }
+  return parsed;
+}
+
+/** Enforce the image byte budget even when Content-Length is absent or dishonest. */
+export async function readBoundedGoogleImageBody(response: Response, maxBytes = MAX_IMAGE_BYTES): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_IMAGE_BYTES) {
+    throw new Error("CREATOR_IMAGE_ARTIFACT_LIMIT_INVALID");
+  }
+  const rawLength = response.headers.get("content-length");
+  if (rawLength !== null && !/^(0|[1-9][0-9]*)$/.test(rawLength)) {
+    try { await response.body?.cancel(); } catch { /* preserve validation error */ }
+    throw new Error("CREATOR_IMAGE_ARTIFACT_LENGTH_INVALID");
+  }
+  const declaredLength = rawLength === null ? undefined : Number(rawLength);
+  if (declaredLength !== undefined && (!Number.isSafeInteger(declaredLength) || declaredLength > maxBytes)) {
+    try { await response.body?.cancel(); } catch { /* preserve validation error */ }
+    throw new Error("CREATOR_IMAGE_ARTIFACT_TOO_LARGE");
+  }
+  if (!response.body) throw new Error("CREATOR_IMAGE_ARTIFACT_EMPTY");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw new Error("CREATOR_IMAGE_ARTIFACT_CHUNK_INVALID");
+      if (value.byteLength > maxBytes - received) throw new Error("CREATOR_IMAGE_ARTIFACT_TOO_LARGE");
+      chunks.push(value);
+      received += value.byteLength;
+    }
+    if (!received) throw new Error("CREATOR_IMAGE_ARTIFACT_EMPTY");
+    if (declaredLength !== undefined && received !== declaredLength) {
+      throw new Error("CREATOR_IMAGE_ARTIFACT_LENGTH_MISMATCH");
+    }
+    const data = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      data.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return data;
+  } finally {
+    try { await reader.cancel(); } catch { /* preserve original error */ }
+    reader.releaseLock();
+  }
+}
+
+export async function fetchGoogleImageArtifact(artifact: CreatorProviderArtifact) {
+  if (artifact.dataBase64) return decodeGoogleImageArtifact(artifact);
+  if (!artifact.uri) throw new Error("CREATOR_IMAGE_ARTIFACT_DATA_MISSING");
+  const apiKey = runtimeConfig().apiKey;
+  if (!apiKey) throw new Error("GOOGLE_IMAGE_NOT_CONFIGURED");
+  const uri = validateGoogleImageArtifactUri(artifact.uri);
+  const response = await fetch(uri, {
+    headers: { "x-goog-api-key": apiKey },
+    redirect: "error",
+  });
+  if (!response.ok) throw new Error("GOOGLE_IMAGE_ARTIFACT_DOWNLOAD_FAILED_" + response.status);
+  const rawMimeType = response.headers.get("content-type");
+  const responseMimeType = rawMimeType?.split(";")[0].trim().toLowerCase();
+  const declaredMimeType = artifact.mimeType?.trim().toLowerCase();
+  if ((responseMimeType && !ALLOWED_IMAGE_MIME_TYPES.has(responseMimeType)) ||
+      (declaredMimeType && !ALLOWED_IMAGE_MIME_TYPES.has(declaredMimeType))) {
+    throw new Error("CREATOR_IMAGE_MIME_UNSUPPORTED");
+  }
+  if (responseMimeType && declaredMimeType && responseMimeType !== declaredMimeType) {
+    throw new Error("CREATOR_IMAGE_MIME_MISMATCH");
+  }
+  const mimeType = responseMimeType || declaredMimeType;
+  if (!mimeType) throw new Error("CREATOR_IMAGE_MIME_UNSUPPORTED");
+  const data = await readBoundedGoogleImageBody(response);
+  assertGoogleImageSignature(data, mimeType);
+  return { mimeType, data };
 }
 
 export function buildGoogleImagePayload(request: CreatorImageRequest) {
@@ -111,7 +217,7 @@ export function extractGoogleImageArtifacts(payload: unknown): CreatorProviderAr
     if (step.type !== "model_output") continue;
     for (const content of step.content ?? []) {
       if (content.type === "image" && (content.data || content.uri)) {
-        artifacts.push({ mimeType: content.mime_type || "image/png", dataBase64: content.data, uri: content.uri });
+        artifacts.push({ mimeType: content.mime_type || (content.data ? "image/png" : ""), dataBase64: content.data, uri: content.uri });
       }
     }
   }
@@ -225,7 +331,7 @@ export const googleImageProvider: CreatorMediaProvider = {
   },
 
   async fetchArtifact(artifact) {
-    return decodeGoogleImageArtifact(artifact);
+    return fetchGoogleImageArtifact(artifact);
   },
 
   classifyFailure: classifyGoogleImageFailure,
