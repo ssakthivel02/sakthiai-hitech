@@ -157,6 +157,63 @@ jobs:
             reports/evals/golden-benchmark.json
           if-no-files-found: warn
 
+
+  minio-storage-acceptance:
+    # Real S3-compatible storage, isolated from all hosted credentials.
+    # Does not deploy, delete production data, or enable any paid generation.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start disposable loopback MinIO
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -d --name sakthiai-creator-minio \
+            -p 127.0.0.1:9000:9000 \
+            -e MINIO_ROOT_USER=ci-minio-user \
+            -e MINIO_ROOT_PASSWORD=ci-minio-secret-only \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null; then
+              echo "Disposable MinIO is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs sakthiai-creator-minio
+          exit 1
+
+      - name: Real MinIO render storage and reconciliation acceptance
+        env:
+          CREATOR_MINIO_TEST_ACK: disposable-local-only
+          STORAGE_ENDPOINT: http://127.0.0.1:9000
+          STORAGE_REGION: us-east-1
+          STORAGE_BUCKET: creator-minio-ci
+          STORAGE_ACCESS_KEY_ID: ci-minio-user
+          STORAGE_SECRET_ACCESS_KEY: ci-minio-secret-only
+          STORAGE_FORCE_PATH_STYLE: "true"
+        run: pnpm exec vitest run server/storage.minio.test.ts --reporter=verbose
+
+      - name: Stop disposable MinIO
+        if: always()
+        run: docker rm -f sakthiai-creator-minio || true
+
   mysql-integration:
     # Real MySQL 8 qualification: migrations vs schema, session revocation, tenancy, upload/scanner protocol,
     # storage ownership, retrieval, provider policy/budget/breaker persistence, readiness. Disposable service
