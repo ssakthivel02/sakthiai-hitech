@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readExactRangedObject, CREATOR_CHECKSUM_MAX_BYTES } from "./creator/boundedObjectRead";
 import { assertCreatorStoredObjectIntegrity, CREATOR_STORED_MEDIA_MAX_BYTES } from "./creator/storageIntegrity";
+import { assertCreatorRenderStorageKey, type CreatorRenderStorageIdentity } from "./creator/renderStorageKey";
 import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ENV } from "./_core/env";
@@ -218,4 +219,40 @@ export async function storageListPage(prefix: string, maxKeys = 100, continuatio
     isTruncated: Boolean(result.IsTruncated),
     nextContinuationToken: result.NextContinuationToken,
   };
+}
+
+
+/**
+ * Read-only, bounded inventory of ONE fenced render's storage objects.
+ * The exact prefix is derived from numeric DB scope, never from a user key.
+ * Reject truncated results rather than reporting an incomplete inventory as
+ * evidence that an orphan does not exist. No deletion or state mutation.
+ */
+export async function storageListCreatorRenderObjects(
+  identity: CreatorRenderStorageIdentity,
+  maxKeys = 50,
+): Promise<Array<{ key: string; sizeBytes: number }>> {
+  if (!Number.isSafeInteger(maxKeys) || maxKeys < 1 || maxKeys > 100) {
+    throw new Error("CREATOR_RENDER_INVENTORY_LIMIT_INVALID");
+  }
+  const prefix = `creator/${identity.workspaceId}/${identity.creatorProjectId}/renders/timeline-${identity.timelineId}/export-${identity.exportId}`;
+  assertCreatorRenderStorageKey(`${prefix}.mp4`, identity);
+  const { client: s3, bucket } = getStorageConfig();
+  const result = await s3.send(new ListObjectsV2Command({
+    Bucket: bucket, Prefix: prefix, MaxKeys: maxKeys,
+  }), { abortSignal: AbortSignal.timeout(30_000) });
+  if (result.IsTruncated) throw new Error("CREATOR_RENDER_INVENTORY_TRUNCATED");
+  const objects: Array<{ key: string; sizeBytes: number }> = [];
+  for (const item of result.Contents ?? []) {
+    if (!item.Key || !item.Key.startsWith(prefix) ||
+        !Number.isSafeInteger(item.Size) || item.Size! < 0) {
+      throw new Error("CREATOR_RENDER_INVENTORY_INVALID_OBJECT");
+    }
+    // S3 prefix matching includes export-17* (e.g. export-170). Only the
+    // canonical key or the exact storagePut suffix belongs to this export.
+    try { assertCreatorRenderStorageKey(item.Key, identity); }
+    catch { continue; }
+    objects.push({ key: item.Key, sizeBytes: item.Size! });
+  }
+  return objects;
 }
