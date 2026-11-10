@@ -99,12 +99,10 @@ describe.skipIf(skipMysqlSuite())("Creator provider poll ownership (disposable M
     expect(await snapshot(g, j)).toMatchObject({ generation: { status: "SUCCEEDED", outputAssetId: 991 }, job: { status: "SUCCEEDED" } });
   });
 
-  it("rejects ambiguous IDs in one workspace, not across workspaces", async () => {
+  it("rejects duplicate provider job IDs within one workspace, but permits tenant reuse", async () => {
     const a = await generation(), b = await generation();
     await job(a, "reused");
-    await job(b, "reused");
-    await expect(recordProviderPoll({ workspaceId: WORKSPACE, providerJobId: "reused", poll: poll("reused") }))
-      .rejects.toThrow("CREATOR_PROVIDER_JOB_AMBIGUOUS");
+    await expect(job(b, "reused")).rejects.toMatchObject({ code: "ER_DUP_ENTRY" });
     const c = await generation();
     const cJob = await job(c, "tenant-job");
     await job(c, "tenant-job", "SUBMITTED", WORKSPACE + 1);

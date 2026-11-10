@@ -276,7 +276,10 @@ export const creatorProviderJobs = mysqlTable("creatorProviderJobs", {
   submittedAt: timestamp("submittedAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   completedAt: timestamp("completedAt"),
-});
+}, table => [
+  // Polling is keyed by workspace + opaque provider job ID; duplicate IDs are unsafe.
+  uniqueIndex("creatorProviderJobs_workspace_job_uq").on(table.workspaceId, table.providerJobId),
+]);
 
 export const creatorTimelines = mysqlTable("creatorTimelines", {
   id: int("id").autoincrement().primaryKey(),

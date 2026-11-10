@@ -176,6 +176,13 @@ export async function recordProviderSubmission(input: {
   generationId: number;
   submission: CreatorProviderSubmission;
 }) {
+  // An opaque provider job ID is a durable, tenant-scoped identity. Never
+  // truncate, normalize, or silently accept an ambiguous identifier.
+  if (!input.submission.providerJobId ||
+      input.submission.providerJobId.trim() !== input.submission.providerJobId ||
+      input.submission.providerJobId.length > 512) {
+    throw new Error("CREATOR_PROVIDER_JOB_ID_INVALID");
+  }
   const db = await requireDb();
   await db.transaction(async tx => {
     const [generation] = await tx
@@ -191,6 +198,9 @@ export async function recordProviderSubmission(input: {
       .limit(1)
       .for("update");
     if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
+    if (generation.provider !== input.submission.provider) {
+      throw new Error("CREATOR_PROVIDER_SUBMISSION_MISMATCH");
+    }
 
     // Shared serialization point: no new provider job can be recorded while
     // a poll for this generation is being finalized.
@@ -233,7 +243,7 @@ export async function recordProviderPoll(input: {
 
   const db = await requireDb();
   return db.transaction(async tx => {
-    // Provider IDs are not yet unique in the schema; ambiguity is unsafe.
+    // The unique workspace/job constraint prevents new ambiguity; retain the fail-closed read guard for legacy or unmigrated data.
     const jobs = await tx.select().from(creatorProviderJobs)
       .where(and(
         eq(creatorProviderJobs.workspaceId, input.workspaceId),
