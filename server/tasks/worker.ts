@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { GatewayOutcome, GatewayRequest } from "../gateway/types";
+import { modelCallMeta } from "../gateway/provenance";
+import type { ModelCallMeta } from "../gateway/provenance";
 import { MysqlTaskStore } from "./store";
 import { TaskCancelledError, TaskFatalError, TaskLeaseLostError, TaskRetryableError, type TaskFailureClass, type TaskRecord } from "./types";
 
@@ -25,6 +27,8 @@ export type TaskContext<I = unknown, C = unknown> = {
   /** At-least-once side effect with durable dedupe: a completed effect is replayed from its recorded result on resume/retry. */
   effect<T>(key: string, run: () => Promise<T>): Promise<T>;
   invokeModel(request: Omit<GatewayRequest, "workspaceId" | "requestId"> & { requestId?: string }): Promise<string>;
+  /** Same governed call as invokeModel, additionally returning the gateway's credential-free description of which provider/model answered. */
+  invokeModelDetailed(request: Omit<GatewayRequest, "workspaceId" | "requestId"> & { requestId?: string }): Promise<{ content: string; meta: ModelCallMeta | null }>;
 };
 export type TaskHandler<I = unknown, C = unknown> = (ctx: TaskContext<I, C>) => Promise<unknown>;
 
@@ -97,19 +101,25 @@ export class TaskWorker {
         await store.recordEffect(task.id, key, value);
         return value;
       },
-      invokeModel: async request => {
+      invokeModelDetailed: async request => {
         stopIfNeeded();
         if (!this.options.gateway) throw new TaskFatalError("no provider gateway configured", "POLICY_DENIED");
         let outcome: GatewayOutcome;
+        const requestId = request.requestId ?? `${task.id}:${attempt}`;
+        const invokedAt = Date.now();
         try {
           // workspaceId is pinned to the task's tenant; the gateway applies policy + budget + breaker on EVERY attempt.
-          outcome = await this.options.gateway.invoke({ ...request, workspaceId: task.workspaceId, requestId: request.requestId ?? `${task.id}:${attempt}` });
+          outcome = await this.options.gateway.invoke({ ...request, workspaceId: task.workspaceId, requestId });
         } catch {
           throw new TaskRetryableError("provider gateway error", "INTERNAL");
         }
         if (outcome.status === "failed") throw failureFromGateway(outcome);
-        return outcome.content;
+        // Identity is best-effort metadata: building it can never fail or alter the governed call itself.
+        let meta: ModelCallMeta | null = null;
+        try { meta = modelCallMeta(outcome, { requestId, invokedAt }); } catch { meta = null; }
+        return { content: outcome.content, meta };
       },
+      invokeModel: async request => (await ctx.invokeModelDetailed(request)).content,
     };
 
     try {

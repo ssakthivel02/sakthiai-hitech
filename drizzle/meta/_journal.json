@@ -120,6 +120,41 @@
       "when": 1790985600000,
       "tag": "0016_creator_speech_avatar_consent",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1794100000000,
+      "tag": "0017_creator_render_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1794186400000,
+      "tag": "0018_creator_murugan_bible_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1794272800000,
+      "tag": "0019_creator_murugan_shot_plans",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "5",
+      "when": 1794359200000,
+      "tag": "0020_creator_murugan_shot_locks",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1794445600000,
+      "tag": "0021_sentinel_investigations",
+      "breakpoints": true
     }
   ]
 }

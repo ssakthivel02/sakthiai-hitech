@@ -1,4 +1,4 @@
-import { bigint, boolean, char, customType, date, datetime, decimal, index, int, mediumtext, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { bigint, boolean, char, customType, date, datetime, decimal, double, index, int, mediumtext, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -421,6 +421,70 @@ export const rateLimitWindows = mysqlTable("rateLimitWindows", {
 }, table => [index("rateLimitWindows_expiresAt_idx").on(table.expiresAt)]);
 
 /**
+ * SakthiAI Sentinel (read-only incident investigation; default OFF behind SENTINEL_ENABLED). Raw-SQL store: server/sentinel/store.mysql.ts.
+ * sentinelEvents is the append-only, hash-chained source of truth (prev/hash per investigation); the row summary is derived from it.
+ * workspaceId is repeated on every event row and every store query filters by it (tenant isolation). sentinelAudit has no FK on purpose:
+ * audit rows outlive a deleted investigation. Writers are serialised per investigation with SELECT ... FOR UPDATE (InnoDB required).
+ */
+const mediumText = customType<{ data: string }>({ dataType: () => "mediumtext" });
+
+export const sentinelInvestigations = mysqlTable("sentinelInvestigations", {
+  id: char("id", { length: 36 }).primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  createdByUserId: int("createdByUserId").notNull(),
+  taskId: char("taskId", { length: 36 }),
+  title: varchar("title", { length: 200 }).notNull(),
+  severity: mysqlEnum("severity", ["low", "medium", "high", "critical"]).notNull(),
+  service: varchar("service", { length: 120 }).notNull(),
+  firedAt: varchar("firedAt", { length: 40 }).notNull(),
+  description: text("description").notNull(),
+  objective: text("objective").notNull(),
+  specJson: mediumText("specJson").notNull(),
+  status: mysqlEnum("status", ["QUEUED", "RUNNING", "COMPLETED", "ABSTAINED", "FAILED", "CANCELLED"]).default("QUEUED").notNull(),
+  stopReason: varchar("stopReason", { length: 64 }),
+  outcome: mysqlEnum("outcome", ["DIAGNOSIS", "ABSTAIN"]),
+  label: varchar("label", { length: 64 }),
+  confidence: double("confidence"),
+  verified: boolean("verified"),
+  traceHead: char("traceHead", { length: 64 }),
+  eventCount: int("eventCount").default(0).notNull(),
+  errorMessage: varchar("errorMessage", { length: 500 }),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+  updatedAt: datetime("updatedAt", { fsp: 3 }).notNull(),
+  startedAt: datetime("startedAt", { fsp: 3 }),
+  finishedAt: datetime("finishedAt", { fsp: 3 }),
+}, table => [
+  index("sentinelInvestigations_workspace_created_idx").on(table.workspaceId, table.createdAt),
+  index("sentinelInvestigations_workspace_status_idx").on(table.workspaceId, table.status, table.createdAt),
+  index("sentinelInvestigations_task_idx").on(table.taskId),
+]);
+
+export const sentinelEvents = mysqlTable("sentinelEvents", {
+  investigationId: char("investigationId", { length: 36 }).notNull(),
+  workspaceId: int("workspaceId").notNull(),
+  seq: int("seq").notNull(),
+  type: varchar("type", { length: 48 }).notNull(),
+  vt: double("vt").notNull(),
+  payloadJson: mediumText("payloadJson").notNull(),
+  prev: char("prev", { length: 64 }).notNull(),
+  hash: char("hash", { length: 64 }).notNull(),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+}, table => [
+  primaryKey({ name: "sentinelEvents_investigationId_seq_pk", columns: [table.investigationId, table.seq] }),
+  index("sentinelEvents_workspace_idx").on(table.workspaceId, table.investigationId, table.seq),
+]);
+
+export const sentinelAudit = mysqlTable("sentinelAudit", {
+  id: bigint("id", { mode: "number" }).autoincrement().primaryKey(),
+  investigationId: char("investigationId", { length: 36 }).notNull(),
+  workspaceId: int("workspaceId").notNull(),
+  actorUserId: int("actorUserId").notNull(),
+  action: mysqlEnum("action", ["CREATE", "CANCEL_REQUESTED", "EXPORT_REPORT", "DELETE"]).notNull(),
+  detail: varchar("detail", { length: 500 }),
+  createdAt: datetime("createdAt", { fsp: 3 }).notNull(),
+}, table => [index("sentinelAudit_investigation_idx").on(table.workspaceId, table.investigationId, table.id)]);
+
+/**
  * Server-issued OAuth login transactions shared by every application instance. Only SHA-256 digests are stored
  * (never the usable nonce or PKCE challenge). Consumption is one conditional UPDATE, so exactly one callback wins.
  */
@@ -565,4 +629,85 @@ export const creatorSpendHolds = mysqlTable("creatorSpendHolds", {
 }, table => [
   index("creatorSpendHolds_state_createdAt_idx").on(table.state, table.createdAt),
   index("creatorSpendHolds_workspaceId_createdAt_idx").on(table.workspaceId, table.createdAt),
+]);
+
+/** Optional Creator render claim ledger. It does not activate render dispatch by itself.
+ * A row is unique per scoped canonical input and cannot be automatically reclaimed
+ * after expiry: stale or unknown outcomes require explicit reconciliation.
+ */
+export const creatorRenderClaims = mysqlTable("creatorRenderClaims", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  timelineId: int("timelineId").notNull(),
+  mode: mysqlEnum("mode", ["MASTER_CANDIDATE", "VERTICAL_DERIVATIVE"]).notNull(),
+  fingerprint: char("fingerprint", { length: 64 }).notNull(),
+  leaseToken: char("leaseToken", { length: 36 }).notNull(),
+  leaseUntil: datetime("leaseUntil", { fsp: 3 }).notNull(),
+  state: mysqlEnum("state", ["RUNNING", "SUCCEEDED", "NEEDS_RECONCILIATION"]).default("RUNNING").notNull(),
+  exportId: int("exportId"),
+  outputAssetId: int("outputAssetId"),
+  outputChecksumSha256: char("outputChecksumSha256", { length: 64 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  completedAt: timestamp("completedAt"),
+}, table => [
+  uniqueIndex("creatorRenderClaims_scope_fingerprint_uq").on(table.workspaceId, table.creatorProjectId, table.timelineId, table.mode, table.fingerprint),
+  index("creatorRenderClaims_state_lease_idx").on(table.state, table.leaseUntil),
+]);
+
+/** Murugan: owner-approved character bible. Unmerged, additive 0018 migration.
+ * Revocation is explicit. No external generation is activated by schema presence. */
+export const creatorMuruganBibleApprovals = mysqlTable("creatorMuruganBibleApprovals", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  bibleId: varchar("bibleId", { length: 120 }).notNull(),
+  contentSha256: varchar("contentSha256", { length: 64 }).notNull(),
+  contentJson: text("contentJson").notNull(),
+  approvedByUserId: int("approvedByUserId").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+}, table => [
+  uniqueIndex("creatorMuruganBibleApprovals_identity_uq").on(table.workspaceId, table.creatorProjectId, table.bibleId),
+]);
+
+/** Murugan: immutable approved shot-plan snapshot. Additive 0019 migration. */
+export const creatorMuruganShotPlans = mysqlTable("creatorMuruganShotPlans", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  planId: varchar("planId", { length: 64 }).notNull(),
+  contentSha256: varchar("contentSha256", { length: 64 }).notNull(),
+  snapshotJson: text("snapshotJson").notNull(),
+  approvedByUserId: int("approvedByUserId").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+}, table => [
+  uniqueIndex("creatorMuruganShotPlans_identity_uq").on(table.workspaceId, table.creatorProjectId, table.contentSha256),
+]);
+
+/** Murugan: per-shot immutable reference binding; revoked locks are not reused.
+ * Additive 0020 migration, without enabling paid generation. */
+export const creatorMuruganShotLocks = mysqlTable("creatorMuruganShotLocks", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  snapshotId: int("snapshotId").notNull(),
+  snapshotSha256: varchar("snapshotSha256", { length: 64 }).notNull(),
+  creatorShotId: int("creatorShotId").notNull(),
+  shotId: varchar("shotId", { length: 80 }).notNull(),
+  bindingId: varchar("bindingId", { length: 64 }).notNull(),
+  selectionJson: text("selectionJson").notNull(),
+  firstFrameAssetId: int("firstFrameAssetId").notNull(),
+  lastFrameAssetId: int("lastFrameAssetId"),
+  contentSha256: varchar("contentSha256", { length: 64 }).notNull(),
+  approvedByUserId: int("approvedByUserId").notNull(),
+  approvedAt: timestamp("approvedAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+  revokedByUserId: int("revokedByUserId"),
+}, table => [
+  uniqueIndex("creatorMuruganShotLocks_unique_shot_uq").on(table.workspaceId, table.creatorProjectId, table.snapshotId, table.creatorShotId),
 ]);

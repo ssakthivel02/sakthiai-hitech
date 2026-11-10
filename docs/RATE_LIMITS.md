@@ -9,6 +9,7 @@ Every authenticated tRPC procedure passes `enforceAuthenticatedRateLimit` (`serv
 | `file-upload` | 12/min | `deny` |
 | `creator-submit` | 3/min | `deny` |
 | `creator-provider-job` | 30/min | `deny` |
+| `sentinel-create` (`sentinel.create`; each queues a task that can make dozens of model calls) | 6/min | `deny` |
 
 Pre-authentication sign-in starts use a separate per-process limiter (`server/_core/oauth.ts`), which is unchanged.
 

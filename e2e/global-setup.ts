@@ -16,6 +16,9 @@ export default async function globalSetup() {
   mkdirSync("reports/e2e", { recursive: true });
 
   const database: TestDatabase = await createTestDatabase();
+  // Opt-in Sentinel stack (E2E_SENTINEL=1): enables the default-OFF flags. The 0014 tables come from the migration journal like every other table;
+  // unset (the default), the flags stay off and the Sentinel tables sit unused.
+  const sentinelStack = process.env.E2E_SENTINEL === "1";
   const fakes: Closeable[] = [];
   fakes.push(await startFakeOidc(PORTS.oidc), await startFakeLlm(PORTS.local, "local"), await startFakeLlm(PORTS.external, "external"), await startFakeS3(PORTS.s3), await startFakeClamd(PORTS.clamd));
 
@@ -31,6 +34,7 @@ export default async function globalSetup() {
       LOCAL_LLM_API_URL: `${urls.local}/v1`, LOCAL_LLM_MODEL: "fake-local-model",
       // An external provider IS configured so that "blocked by default" is a real assertion; GATEWAY_ALLOW_EXTERNAL is intentionally unset.
       LLM_API_URL: `${urls.external}/v1`, LLM_MODEL: "fake-external-model", LLM_API_KEY: "e2e-not-a-real-key",
+      ...(sentinelStack ? { SENTINEL_ENABLED: "true", TASK_WORKER_ENABLED: "true" } : {}),
       GATEWAY_MAX_ATTEMPTS: "1", GATEWAY_TIMEOUT_MS: "5000", GATEWAY_BACKOFF_BASE_MS: "10",
       STORAGE_ENDPOINT: urls.s3, STORAGE_BUCKET: "e2e", STORAGE_REGION: "us-east-1", STORAGE_FORCE_PATH_STYLE: "true", STORAGE_ACCESS_KEY_ID: "e2e", STORAGE_SECRET_ACCESS_KEY: "e2e",
       MALWARE_SCANNER_HOST: "127.0.0.1", MALWARE_SCANNER_PORT: String(PORTS.clamd), MALWARE_SCANNER_TIMEOUT_MS: "3000",

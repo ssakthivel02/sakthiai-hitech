@@ -79,6 +79,8 @@ export function checkBetaProfile(env: EnvLike, options: ProfileOptions = {}): { 
   }
   if (set(env.LOCAL_LLM_API_URL) && /sarvam|openai|anthropic|googleapis/i.test(env.LOCAL_LLM_API_URL ?? "")) fail("LOCAL_LLM_API_URL", "a hosted provider must use LLM_*, never the local slot");
 
+  // Sentinel (incident investigation) is not part of the chat-and-projects beta. It stays off until a separate, approved activation.
+  if (on(env.SENTINEL_ENABLED)) fail("SENTINEL_ENABLED", "Sentinel is outside the private-beta scope; keep it off until an approved activation");
   if (on(env.TASK_WORKER_ENABLED)) warn("TASK_WORKER_ENABLED", "background tasks are outside the chat-and-projects beta scope");
   return { ok: !f.some(x => x.level === "fail"), findings: f };
 }

@@ -13,6 +13,9 @@ describe("selectAuthenticatedRatePolicy", () => {
     expect(selectAuthenticatedRatePolicy("files.upload")).toEqual(
       AUTHENTICATED_RATE_POLICIES.fileUpload,
     );
+    expect(selectAuthenticatedRatePolicy("sentinel.create")).toEqual(AUTHENTICATED_RATE_POLICIES.sentinelCreate);
+    expect(AUTHENTICATED_RATE_POLICIES.sentinelCreate).toMatchObject({ maxRequests: 6, onSharedFailure: "deny" }); // costly route: refuse when the shared store cannot count
+    expect(selectAuthenticatedRatePolicy("sentinel.list")).toEqual(AUTHENTICATED_RATE_POLICIES.default);
     expect(selectAuthenticatedRatePolicy("workspace.list")).toEqual(
       AUTHENTICATED_RATE_POLICIES.default,
     );
