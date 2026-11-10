@@ -164,7 +164,7 @@ export async function persistCreatorGenerationArtifact(input: {
       )).limit(1).for("update");
     if (!currentGeneration) throw new Error("CREATOR_GENERATION_NOT_FOUND");
     if (currentGeneration.provider !== expectedJob.provider) {
-      throw new Error("CREATOR_ARTIFACT_PROVIDER_MISMATCH");
+      throw new Error("CREATOR_ARTIFACT_PROVIDER_JOB_MISMATCH");
     }
 
     const [currentJob] = await tx.select().from(creatorProviderJobs)
