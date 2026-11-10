@@ -13,6 +13,18 @@ describe("Creator fenced render object identity", () => {
     expect(() => assertCreatorRenderStorageKey(`${prefix}_a0b1c2d3.mp4`, identity)).not.toThrow();
   });
 
+  it("accepts a wider claim scope without treating mode or fingerprint as numeric IDs", () => {
+    // finalizeVerifiedExport passes { ...scope, exportId }, where scope also
+    // carries mode and the immutable source fingerprint.
+    const claimScope = { ...identity, mode: "MASTER_CANDIDATE", fingerprint: "a".repeat(64) };
+    expect(() => assertCreatorRenderStorageKey(`${prefix}.mp4`, claimScope)).not.toThrow();
+    expect(() => assertCreatorRenderStorageKey(`${prefix}_a0b1c2d3.mp4`, claimScope)).not.toThrow();
+    expect(() => assertCreatorRenderStorageKey(`${prefix}.mp4`, { ...claimScope, exportId: 0 }))
+      .toThrow("CREATOR_RENDER_OUTPUT_IDENTITY_INVALID");
+    expect(() => assertCreatorRenderStorageKey(`${prefix}.mp4`, { ...claimScope, workspaceId: -1 }))
+      .toThrow("CREATOR_RENDER_OUTPUT_IDENTITY_INVALID");
+  });
+
   it.each([
     "creator/8/11/renders/timeline-13/export-17_a0b1c2d3.mp4",
     "creator/7/12/renders/timeline-13/export-17_a0b1c2d3.mp4",
