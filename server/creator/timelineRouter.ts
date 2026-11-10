@@ -4,6 +4,7 @@ import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
 import { executeCreatorTimelineExport } from "./renderService";
 import { dispatchReservedCreatorRender } from "./renderDispatch";
+import { MysqlCreatorRenderClaims } from "./renderClaims";
 import { CREATOR_CAPTION_FONT_FAMILY } from "./renderWorker";
 import { getCreatorExportManifest } from "./exportManifest";
 import { reviewVerticalDerivative } from "./derivativeReview";
@@ -98,6 +99,26 @@ export const creatorTimelineRouter = router({
           publishApproved: false as const,
           nextGate: "VIDEO_QUALITY_AND_HUMAN_REVIEW" as const,
         };
+      } catch (error) {
+        mapTimelineError(error);
+      }
+    }),
+
+  /**
+   * Poll an existing fenced render claim. Owner-only and read-only with respect
+   * to media: expired leases are quarantined, never retried or redispatched.
+   * This endpoint does not expose lease tokens or approve a master.
+   */
+  fencedRenderStatus: protectedProcedure
+    .input(workspaceInput.extend({
+      creatorProjectId: z.number().int().positive(),
+      timelineId: z.number().int().positive(),
+      claimId: z.number().int().positive(),
+    }))
+    .query(async ({ ctx, input }) => {
+      await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
+      try {
+        return await new MysqlCreatorRenderClaims().pollClaim(input);
       } catch (error) {
         mapTimelineError(error);
       }
