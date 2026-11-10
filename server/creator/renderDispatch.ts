@@ -32,6 +32,8 @@ export type CreatorRenderDispatchDependencies = {
   workerDependencies?: RenderWorkerDependencies;
   heartbeatIntervalMs?: number;
   leaseSeconds?: number;
+  /** Process-supervisor shutdown; never interpreted as permission to retry. */
+  abortSignal?: AbortSignal;
 };
 
 function renderScope(intent: CreatorRenderIntentInput, fingerprint: string): CreatorRenderClaimScope {
@@ -94,6 +96,7 @@ export async function dispatchReservedCreatorRender(
   trustedConfig: TrustedCreatorRendererConfig,
   deps: CreatorRenderDispatchDependencies = {},
 ) {
+  if (deps.abortSignal?.aborted) throw new Error("CREATOR_RENDER_DISPATCH_SHUTDOWN_REQUESTED");
   if (trustedConfig.fontFamily !== CREATOR_CAPTION_FONT_FAMILY) {
     throw new Error("CREATOR_RENDER_DISPATCH_FONT_IDENTITY_INVALID");
   }
@@ -122,6 +125,7 @@ export async function dispatchQueuedCreatorRender(
       !/^[a-f0-9]{64}$/.test(reservation.fingerprint)) {
     throw new Error("CREATOR_RENDER_DISPATCH_QUEUED_IDENTITY_INVALID");
   }
+  if (deps.abortSignal?.aborted) throw new Error("CREATOR_RENDER_DISPATCH_SHUTDOWN_REQUESTED");
   const leaseSeconds = deps.leaseSeconds ?? 1800;
   const intervalMs = deps.heartbeatIntervalMs ?? 30_000;
   if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds < 1 || leaseSeconds > 1800 ||
@@ -163,6 +167,9 @@ export async function dispatchQueuedCreatorRender(
   const workerLeaseToken = acquired.leaseToken;
   let lostLease = false;
   const renderAbort = new AbortController();
+  const onShutdown = () => renderAbort.abort();
+  deps.abortSignal?.addEventListener("abort", onShutdown, { once: true });
+  if (deps.abortSignal?.aborted) onShutdown();
   let heartbeatInFlight: Promise<void> | undefined;
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   const heartbeat = async () => {
@@ -188,6 +195,7 @@ export async function dispatchQueuedCreatorRender(
   };
   const assertLease = () => {
     if (lostLease) throw new Error("CREATOR_RENDER_DISPATCH_LEASE_LOST");
+    if (renderAbort.signal.aborted) throw new Error("CREATOR_RENDER_DISPATCH_SHUTDOWN_REQUESTED");
   };
 
   try {
@@ -239,6 +247,7 @@ export async function dispatchQueuedCreatorRender(
     catch { throw new Error("CREATOR_RENDER_DISPATCH_QUARANTINE_FAILED", { cause: error }); }
     throw error;
   } finally {
+    deps.abortSignal?.removeEventListener("abort", onShutdown);
     renderAbort.abort();
     await stopHeartbeat();
   }
