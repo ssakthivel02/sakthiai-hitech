@@ -155,6 +155,13 @@
       "when": 1794445600000,
       "tag": "0021_creator_provider_job_uniqueness",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1794532000000,
+      "tag": "0022_creator_artifact_leases",
+      "breakpoints": true
     }
   ]
 }
