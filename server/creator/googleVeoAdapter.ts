@@ -57,6 +57,58 @@ export function validateGoogleVeoDownloadUri(uri: string): URL {
   return parsed;
 }
 
+/**
+ * Read a Veo result without trusting Content-Length or allocating an unbounded
+ * response.arrayBuffer(). Unknown-length/chunked responses are also capped.
+ * This is an in-memory provider handoff; persisted artifacts are verified
+ * separately by Creator storage integrity checks.
+ */
+export async function readBoundedGoogleVeoBody(response: Response, maxBytes = MAX_VIDEO_BYTES): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_VIDEO_BYTES) {
+    throw new Error("CREATOR_VEO_ARTIFACT_LIMIT_INVALID");
+  }
+  const rawLength = response.headers.get("content-length");
+  if (rawLength !== null && !/^(0|[1-9][0-9]*)$/.test(rawLength)) {
+    try { await response.body?.cancel(); } catch { /* preserve validation error */ }
+    throw new Error("CREATOR_VEO_ARTIFACT_LENGTH_INVALID");
+  }
+  const declaredLength = rawLength === null ? undefined : Number(rawLength);
+  if (declaredLength !== undefined && (!Number.isSafeInteger(declaredLength) || declaredLength > maxBytes)) {
+    try { await response.body?.cancel(); } catch { /* preserve validation error */ }
+    throw new Error(Number.isSafeInteger(declaredLength)
+      ? "CREATOR_VEO_ARTIFACT_TOO_LARGE" : "CREATOR_VEO_ARTIFACT_LENGTH_INVALID");
+  }
+  if (!response.body) throw new Error("CREATOR_VEO_ARTIFACT_EMPTY");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw new Error("CREATOR_VEO_ARTIFACT_CHUNK_INVALID");
+      if (value.byteLength > maxBytes - received) throw new Error("CREATOR_VEO_ARTIFACT_TOO_LARGE");
+      chunks.push(value);
+      received += value.byteLength;
+    }
+    if (!received) throw new Error("CREATOR_VEO_ARTIFACT_EMPTY");
+    if (declaredLength !== undefined && received !== declaredLength) {
+      throw new Error("CREATOR_VEO_ARTIFACT_LENGTH_MISMATCH");
+    }
+    const data = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      data.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return data;
+  } finally {
+    // Stop a malicious or stalled stream on every failure path.
+    try { await reader.cancel(); } catch { /* preserve original failure */ }
+    reader.releaseLock();
+  }
+}
+
 export async function fetchGoogleVeoArtifact(artifact: CreatorProviderArtifact) {
   if (!artifact.uri) throw new Error("CREATOR_VEO_ARTIFACT_URI_MISSING");
   const apiKey = process.env.GEMINI_API_KEY ?? "";
@@ -71,11 +123,7 @@ export async function fetchGoogleVeoArtifact(artifact: CreatorProviderArtifact) 
     redirect: "error",
   });
   if (!response.ok) throw new Error(`GOOGLE_VEO_ARTIFACT_DOWNLOAD_FAILED_${response.status}`);
-  const contentLength = Number(response.headers.get("content-length") || 0);
-  if (contentLength > MAX_VIDEO_BYTES) throw new Error("CREATOR_VEO_ARTIFACT_TOO_LARGE");
-  const data = new Uint8Array(await response.arrayBuffer());
-  if (!data.byteLength) throw new Error("CREATOR_VEO_ARTIFACT_EMPTY");
-  if (data.byteLength > MAX_VIDEO_BYTES) throw new Error("CREATOR_VEO_ARTIFACT_TOO_LARGE");
+  const data = await readBoundedGoogleVeoBody(response);
   return {
     mimeType: response.headers.get("content-type") || artifact.mimeType || "video/mp4",
     data,
