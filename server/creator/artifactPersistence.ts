@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
-import { creatorAssets, creatorGenerations, creatorProviderJobs, creatorShots } from "../../drizzle/schema";
+import { creatorArtifactLeases, creatorAssets, creatorGenerations, creatorProviderJobs, creatorShots } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { storagePut, storageVerifySha256 } from "../storage";
 import { CREATOR_STORED_MEDIA_MAX_BYTES } from "./storageIntegrity";
 import { assertCreatorArtifactJobOwnership } from "./artifactJobOwnership";
+import { acquireCreatorArtifactLease, assertCreatorArtifactLeaseActive, releaseCreatorArtifactLease } from "./artifactLease";
 import {
   assertCreatorJobTransition,
   canTransitionCreatorJob,
@@ -120,6 +121,8 @@ export async function persistCreatorGenerationArtifact(input: {
   if (!input.provider.fetchArtifact) throw new Error("CREATOR_PROVIDER_ARTIFACT_FETCH_UNSUPPORTED");
   assertCreatorJobTransition(generation.status as CreatorJobState, "SUCCEEDED");
 
+  const leaseToken = await acquireCreatorArtifactLease(expectedJob);
+  try {
   const fetched = await input.provider.fetchArtifact(input.artifact);
   const data = Buffer.from(fetched.data);
   if (!data.byteLength) throw new Error("CREATOR_ARTIFACT_EMPTY");
@@ -130,6 +133,7 @@ export async function persistCreatorGenerationArtifact(input: {
   // Provider retrieval is asynchronous; reject jobs superseded during fetch.
   await assertLatestCreatorArtifactJob(db, expectedJob);
   const persistedAt = new Date();
+  await assertCreatorArtifactLeaseActive(expectedJob, leaseToken);
   const storage = await storagePut(
     `creator/${generation.creatorProjectId}/shots/${generation.shotId ?? "unbound"}/generation-${generation.id}.${extension}`,
     data,
@@ -174,6 +178,19 @@ export async function persistCreatorGenerationArtifact(input: {
         eq(creatorProviderJobs.generationId, expectedJob.generationId),
       )).orderBy(desc(creatorProviderJobs.id)).limit(1).for("update");
     assertCreatorArtifactJobOwnership({ ...expectedJob, job: currentJob ?? null });
+
+    // The same generation-row lock serializes claim takeover and finalization.
+    const [activeLease] = await tx.select().from(creatorArtifactLeases)
+      .where(and(
+        eq(creatorArtifactLeases.generationId, generation.id),
+        eq(creatorArtifactLeases.workspaceId, input.workspaceId),
+        eq(creatorArtifactLeases.creatorProjectId, generation.creatorProjectId),
+      )).limit(1).for("update");
+    if (!activeLease || activeLease.leaseToken !== leaseToken ||
+        activeLease.providerJobId !== input.providerJobId ||
+        new Date(activeLease.leaseUntil).getTime() <= Date.now()) {
+      throw new Error("CREATOR_ARTIFACT_LEASE_LOST");
+    }
 
     // A competing poller can finalize while provider bytes are being fetched.
     // Reuse its committed asset rather than creating another database asset.
@@ -233,6 +250,11 @@ export async function persistCreatorGenerationArtifact(input: {
         eq(creatorShots.creatorProjectId, currentGeneration.creatorProjectId),
       ));
     }
+    // Claim release commits atomically with the generation output pointer.
+    await tx.delete(creatorArtifactLeases).where(and(
+      eq(creatorArtifactLeases.generationId, generation.id),
+      eq(creatorArtifactLeases.leaseToken, leaseToken),
+    ));
     return { assetId, storageKey: storage.key, checksumSha256, byteSize: data.byteLength, reused: false as const };
   });
 
@@ -243,6 +265,11 @@ export async function persistCreatorGenerationArtifact(input: {
   }
   return { assetId: finalized.assetId, storageKey: finalized.storageKey,
     checksumSha256: finalized.checksumSha256, reused: finalized.reused };
+  } finally {
+    // On storage/provider failure release only our own token. A crashed worker
+    // leaves an expiring claim for reconciliation, never a paid re-submission.
+    await releaseCreatorArtifactLease(expectedJob, leaseToken).catch(() => undefined);
+  }
 }
 
 export async function markCreatorArtifactRetryable(input: {
