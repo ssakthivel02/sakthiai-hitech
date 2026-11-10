@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
 import { MysqlCreatorRenderClaims } from "./renderClaims";
-import { listQueuedCreatorRenders, runCreatorRenderQueueBatch } from "./renderAsyncWorker";
+import { listQueuedCreatorRenders, quarantineExpiredCreatorRenderClaims, runCreatorRenderQueueBatch } from "./renderAsyncWorker";
 
 describe.skipIf(skipMysqlSuite())("Creator bounded asynchronous queue MySQL", { timeout: 60_000 }, () => {
   let d: TestDatabase;
@@ -84,4 +84,41 @@ describe.skipIf(skipMysqlSuite())("Creator bounded asynchronous queue MySQL", { 
     `) as unknown as [[{ status: string }]];
     expect(result[0].status).toBe("RUNNING");
   });
+  it("quarantines expired queued and running claims without requeueing", async () => {
+    const expiredQueued = await seed(-10);
+    const expiredRunning = await seed(-10);
+    const active = await seed(600);
+    await d.db.execute(sql`
+      UPDATE creatorExports SET status = 'RUNNING' WHERE id = ${expiredRunning.exportId}
+    `);
+    const changed = await quarantineExpiredCreatorRenderClaims(8, async () => d.db);
+    expect(changed).toEqual(expect.arrayContaining([expiredQueued.claimId, expiredRunning.claimId]));
+    expect(changed).not.toContain(active.claimId);
+    const [states] = await d.db.execute(sql`
+      SELECT id, state FROM creatorRenderClaims
+      WHERE id IN (${expiredQueued.claimId}, ${expiredRunning.claimId}, ${active.claimId})
+    `) as unknown as [Array<{ id: number; state: string }>];
+    expect(states.find(row => row.id === expiredQueued.claimId)?.state).toBe("NEEDS_RECONCILIATION");
+    expect(states.find(row => row.id === expiredRunning.claimId)?.state).toBe("NEEDS_RECONCILIATION");
+    expect(states.find(row => row.id === active.claimId)?.state).toBe("RUNNING");
+    const again = await quarantineExpiredCreatorRenderClaims(8, async () => d.db);
+    expect(again).not.toContain(expiredQueued.claimId);
+    expect(again).not.toContain(expiredRunning.claimId);
+  });
+
+  it("does not quarantine a claim whose lease has been renewed", async () => {
+    const renewed = await seed(-1);
+    await d.db.execute(sql`
+      UPDATE creatorRenderClaims
+      SET leaseUntil = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL 600 SECOND)
+      WHERE id = ${renewed.claimId}
+    `);
+    const changed = await quarantineExpiredCreatorRenderClaims(8, async () => d.db);
+    expect(changed).not.toContain(renewed.claimId);
+    const [rows] = await d.db.execute(sql`
+      SELECT state FROM creatorRenderClaims WHERE id = ${renewed.claimId}
+    `) as unknown as [[{ state: string }]];
+    expect(rows[0].state).toBe("RUNNING");
+  });
+
 });

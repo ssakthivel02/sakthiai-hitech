@@ -59,6 +59,50 @@ export async function listQueuedCreatorRenders(
     : [];
 }
 
+/**
+ * Crash/lease-expiry reconciliation on the EXISTING claim table. A timed-out
+ * RUNNING export may have written bytes already, so quarantine it; NEVER
+ * requeue or regenerate it automatically. A renewed lease is protected by the
+ * conditional UPDATE even when renewal races the initial discovery query.
+ */
+export async function quarantineExpiredCreatorRenderClaims(
+  limit = 4,
+  dbProvider: typeof getDb = getDb,
+): Promise<number[]> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 8) {
+    throw new Error("CREATOR_RENDER_QUEUE_BATCH_LIMIT_INVALID");
+  }
+  const db = await dbProvider();
+  if (!db) throw new Error("CREATOR_RENDER_QUEUE_DATABASE_UNAVAILABLE");
+  const result = await db.execute(sql`
+    SELECT c.id AS claimId
+    FROM creatorRenderClaims c
+    INNER JOIN creatorExports e ON e.id = c.exportId
+      AND e.workspaceId = c.workspaceId
+      AND e.creatorProjectId = c.creatorProjectId
+      AND e.timelineId = c.timelineId
+    WHERE c.state = 'RUNNING' AND c.leaseUntil <= UTC_TIMESTAMP(3)
+      AND e.status IN ('QUEUED', 'RUNNING')
+    ORDER BY c.id ASC
+    LIMIT ${limit}
+  `);
+  const rows = Array.isArray(result) && Array.isArray(result[0])
+    ? result[0] as Array<{ claimId: number }> : [];
+  const quarantined: number[] = [];
+  for (const row of rows) {
+    if (!positive(row.claimId)) throw new Error("CREATOR_RENDER_QUEUE_ROW_INVALID");
+    const updated = await db.execute(sql`
+      UPDATE creatorRenderClaims SET state = 'NEEDS_RECONCILIATION'
+      WHERE id = ${row.claimId} AND state = 'RUNNING'
+        AND leaseUntil <= UTC_TIMESTAMP(3)
+    `);
+    const header = Array.isArray(updated)
+      ? updated[0] as { affectedRows?: number } : undefined;
+    if (header?.affectedRows === 1) quarantined.push(row.claimId);
+  }
+  return quarantined;
+}
+
 function trustedQueuedRequest(row: QueuedCreatorRenderRow): {
   input: CreatorDbRenderIntentInput;
   config: TrustedCreatorRendererConfig;
