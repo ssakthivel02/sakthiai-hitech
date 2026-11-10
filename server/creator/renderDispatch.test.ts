@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { CreatorRenderIntentInput } from "./renderIntent";
 import type { CreatorRenderDispatchDependencies } from "./renderDispatch";
 import { dispatchReservedCreatorRender } from "./renderDispatch";
+import type { RenderWorkerDependencies } from "./renderWorker";
 
 const fingerprint = "a".repeat(64);
 const input = { workspaceId: 1, creatorProjectId: 2, timelineId: 3 };
@@ -45,7 +46,7 @@ function setup() {
       endMs: 1000, track: 1, sortOrder: 0, approved: true,
     }],
   }));
-  const render = vi.fn(async () => rendered);
+  const render = vi.fn(async (_renderInput?: unknown, _workerDeps?: RenderWorkerDependencies) => rendered);
   const workerLeaseToken = "00000000-0000-4000-8000-000000000002";
   const acquired = {
     claimId: reservation.claimId,
@@ -207,4 +208,29 @@ describe("Creator render dispatch staging", () => {
       .rejects.toThrow("CREATOR_RENDER_DISPATCH_FONT_IDENTITY_INVALID");
     expect(x.reserve).not.toHaveBeenCalled();
   });
+});
+
+describe("Creator lease-loss process cancellation", () => {
+  it("aborts active media when a heartbeat loses ownership, without finalization", async () => {
+    const x = setup();
+    x.heartbeat.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    x.render.mockImplementationOnce(async (_renderInput, workerDeps) => {
+      const signal = workerDeps?.abortSignal;
+      if (!signal) throw new Error("CREATOR_RENDER_ABORT_SIGNAL_MISSING");
+      await new Promise<void>((_resolve, reject) => {
+        if (signal.aborted) {
+          reject(new Error("CREATOR_FFMPEG_ABORTED"));
+          return;
+        }
+        signal.addEventListener("abort", () => reject(new Error("CREATOR_FFMPEG_ABORTED")), { once: true });
+      });
+      return rendered;
+    });
+    await expect(dispatchReservedCreatorRender(input, config, x.deps))
+      .rejects.toThrow("CREATOR_FFMPEG_ABORTED");
+    expect(x.render).toHaveBeenCalledTimes(1);
+    expect(x.heartbeat).toHaveBeenCalledTimes(2);
+    expect(x.finalizeVerifiedExport).not.toHaveBeenCalled();
+    expect(x.markUnknown).toHaveBeenCalledTimes(1);
+  }, 5_000);
 });

@@ -162,14 +162,21 @@ export async function dispatchQueuedCreatorRender(
   const scope = acquired.scope;
   const workerLeaseToken = acquired.leaseToken;
   let lostLease = false;
+  const renderAbort = new AbortController();
   let heartbeatInFlight: Promise<void> | undefined;
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   const heartbeat = async () => {
     if (heartbeatInFlight) return heartbeatInFlight;
     heartbeatInFlight = (async () => {
       try {
-        if (!await claims.heartbeat(scope, workerLeaseToken, leaseSeconds)) lostLease = true;
-      } catch { lostLease = true; }
+        if (!await claims.heartbeat(scope, workerLeaseToken, leaseSeconds)) {
+          lostLease = true;
+          renderAbort.abort();
+        }
+      } catch {
+        lostLease = true;
+        renderAbort.abort();
+      }
     })();
     try { await heartbeatInFlight; }
     finally { heartbeatInFlight = undefined; }
@@ -209,7 +216,7 @@ export async function dispatchQueuedCreatorRender(
       audioSourceUrl: media.audioSourceUrl,
       visualItems: media.visualItems,
       captions: [...intent.captions],
-    }, deps.workerDependencies);
+    }, { ...deps.workerDependencies, abortSignal: renderAbort.signal });
 
     await stopHeartbeat();
     assertLease();
@@ -232,6 +239,7 @@ export async function dispatchQueuedCreatorRender(
     catch { throw new Error("CREATOR_RENDER_DISPATCH_QUARANTINE_FAILED", { cause: error }); }
     throw error;
   } finally {
+    renderAbort.abort();
     await stopHeartbeat();
   }
 }

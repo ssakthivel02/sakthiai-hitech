@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { CREATOR_CAPTION_FONT_FILE, resolveCreatorCaptionFonts, runCreatorRenderWorker } from "./renderWorker";
+import { CREATOR_CAPTION_FONT_FILE, executeFfmpegBounded, resolveCreatorCaptionFonts, runCreatorRenderWorker } from "./renderWorker";
 
 const renderInput = {
   workspaceId: 1,
@@ -134,4 +134,46 @@ describe("Creator render worker", () => {
     expect(cleanupTempDir).toHaveBeenCalledTimes(1);
   });
 
+});
+
+describe("Creator FFmpeg cancellation fencing", () => {
+  it("refuses to spawn a process for an already-aborted lease", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(executeFfmpegBounded(["-version"], controller.signal))
+      .rejects.toThrow("CREATOR_FFMPEG_ABORTED");
+  });
+
+  it("kills a running child process and waits for close on lease loss", async () => {
+    const original = process.env.FFMPEG_PATH;
+    process.env.FFMPEG_PATH = process.execPath;
+    try {
+      const controller = new AbortController();
+      const pending = executeFfmpegBounded(["-e", "setInterval(() => {}, 1000)"], controller.signal);
+      setTimeout(() => controller.abort(), 150);
+      await expect(pending).rejects.toThrow("CREATOR_FFMPEG_ABORTED");
+    } finally {
+      if (original === undefined) delete process.env.FFMPEG_PATH;
+      else process.env.FFMPEG_PATH = original;
+    }
+  }, 10_000);
+
+  it("never uploads a render if its lease was lost during execution", async () => {
+    const controller = new AbortController();
+    const putArtifact = vi.fn();
+    const cleanupTempDir = vi.fn(async () => undefined);
+    await expect(runCreatorRenderWorker(renderInput, {
+      abortSignal: controller.signal,
+      createTempDir: async () => "/tmp/creator-render-abort",
+      cleanupTempDir,
+      writeSubtitle: async () => undefined,
+      executeFfmpeg: async () => {
+        controller.abort();
+        return { exitCode: 0, stderr: "" };
+      },
+      putArtifact,
+    })).rejects.toThrow("CREATOR_FFMPEG_ABORTED");
+    expect(putArtifact).not.toHaveBeenCalled();
+    expect(cleanupTempDir).toHaveBeenCalledTimes(1);
+  });
 });
