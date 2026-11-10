@@ -188,7 +188,7 @@ jobs:
             -p 127.0.0.1:9000:9000 \
             -e MINIO_ROOT_USER=ci-minio-user \
             -e MINIO_ROOT_PASSWORD=ci-minio-secret-only \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+            public.ecr.aws/y9w4h2u9/minio:RELEASE.2025-09-07T16-13-09Z server /data
           for attempt in $(seq 1 40); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null; then
               echo "Disposable MinIO is ready"
