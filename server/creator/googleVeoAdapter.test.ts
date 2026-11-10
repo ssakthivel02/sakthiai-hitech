@@ -5,6 +5,7 @@ import {
   fetchGoogleVeoArtifact,
   googleVeoProvider,
   validateGoogleVeoDownloadUri,
+  readBoundedGoogleVeoBody,
 } from "./googleVeoAdapter";
 
 afterEach(() => {
@@ -52,14 +53,79 @@ describe("Google Veo provider-neutral Creator adapter", () => {
     );
   });
 
+
+  it("assembles chunked Veo output without requiring Content-Length", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+        controller.enqueue(new Uint8Array([3, 4, 5]));
+        controller.close();
+      },
+    });
+    const data = await readBoundedGoogleVeoBody(new Response(stream), 5);
+    expect(Array.from(data)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("cancels unknown-length streams as soon as the byte budget is exceeded", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.enqueue(new Uint8Array([4, 5]));
+      },
+      cancel() { cancelled = true; },
+    });
+    await expect(readBoundedGoogleVeoBody(new Response(stream), 4)).rejects.toThrow(
+      "CREATOR_VEO_ARTIFACT_TOO_LARGE",
+    );
+    expect(cancelled).toBe(true);
+  });
+
+  it("rejects oversized declared lengths before accepting media bytes", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      cancel() { cancelled = true; },
+    });
+    await expect(readBoundedGoogleVeoBody(new Response(stream, {
+      headers: { "content-length": "9" },
+    }), 4)).rejects.toThrow("CREATOR_VEO_ARTIFACT_TOO_LARGE");
+    expect(cancelled).toBe(true);
+  });
+
+  it("rejects malformed, truncated and contradictory Content-Length evidence", async () => {
+    await expect(readBoundedGoogleVeoBody(new Response(new Uint8Array([1]), {
+      headers: { "content-length": "-1" },
+    }), 4)).rejects.toThrow("CREATOR_VEO_ARTIFACT_LENGTH_INVALID");
+    await expect(readBoundedGoogleVeoBody(new Response(new Uint8Array([1, 2]), {
+      headers: { "content-length": "3" },
+    }), 4)).rejects.toThrow("CREATOR_VEO_ARTIFACT_LENGTH_MISMATCH");
+    await expect(readBoundedGoogleVeoBody(new Response(new Uint8Array([1, 2]), {
+      headers: { "content-length": "1" },
+    }), 4)).rejects.toThrow("CREATOR_VEO_ARTIFACT_LENGTH_MISMATCH");
+  });
+
+  it("rejects empty bodies and invalid test limits", async () => {
+    await expect(readBoundedGoogleVeoBody(new Response(new Uint8Array()), 4)).rejects.toThrow(
+      "CREATOR_VEO_ARTIFACT_EMPTY",
+    );
+    await expect(readBoundedGoogleVeoBody(new Response(new Uint8Array([1])), 0)).rejects.toThrow(
+      "CREATOR_VEO_ARTIFACT_LIMIT_INVALID",
+    );
+  });
+
   it("fails closed instead of automatically following artifact redirects", async () => {
     process.env.GEMINI_API_KEY = "test-key";
     const fetchMock = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
       expect(init?.redirect).toBe("error");
-      return new Response(new Uint8Array([1, 2, 3]), {
+      const response = new Response(new Uint8Array([1, 2, 3]), {
         status: 200,
         headers: { "content-type": "video/mp4" },
       });
+      // The provider must use the bounded streaming reader, never arrayBuffer().
+      Object.defineProperty(response, "arrayBuffer", {
+        value: () => { throw new Error("UNBOUNDED_ARRAYBUFFER_FORBIDDEN"); },
+      });
+      return response;
     });
     vi.stubGlobal("fetch", fetchMock);
 
