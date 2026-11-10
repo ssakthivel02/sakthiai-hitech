@@ -100,6 +100,15 @@ describe.skipIf(skipMysqlSuite())("Creator quarantined render storage evidence (
       autoRetry: false, finalMaster: false, publishApproved: false,
     });
     expect(verify).toHaveBeenCalledWith(key, 4, digest);
+    // Persisted asset metadata without any listed object is a storage/DB
+    // inconsistency, not the benign absence of an unfinalized orphan.
+    const missingPersisted = await inspectQuarantinedCreatorRender(item, {
+      ...deps, listObjects: async () => [],
+    });
+    expect(missingPersisted).toMatchObject({
+      outcome: "METADATA_DRIFT", observedObjects: 0,
+      verifiedAssetId: null, autoRetry: false,
+    });
     const [rows] = await d.db.execute(sql`
       SELECT state FROM creatorRenderClaims WHERE id = ${item.claimId}
     `) as unknown as [[{ state: string }]];
