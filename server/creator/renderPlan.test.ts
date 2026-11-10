@@ -125,6 +125,7 @@ describe("Creator deterministic render plan", () => {
 /** Actual render-plan acceptance, not a direct FFprobe fixture or provider output. */
 const canProbe = spawnSync("ffmpeg", ["-version"]).status === 0 &&
   spawnSync("ffprobe", ["-version"]).status === 0;
+if (process.env.CI && !canProbe) throw new Error("CREATOR_REAL_MEDIA_CI_FFMPEG_FFPROBE_REQUIRED");
 describe.skipIf(!canProbe)("Creator real Tamil-captioned FFmpeg CFR acceptance", () => {
   it("burns locked Tamil cues into a measured 24fps H264/AAC candidate", async () => {
     const dir = mkdtempSync(join(tmpdir(), "creator-cfr-"));
