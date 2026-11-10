@@ -234,3 +234,36 @@ describe("Creator lease-loss process cancellation", () => {
     expect(x.markUnknown).toHaveBeenCalledTimes(1);
   }, 5_000);
 });
+
+
+describe("Creator supervisor shutdown fencing", () => {
+  it("does not reserve or acquire when shutdown was requested first", async () => {
+    const x = setup();
+    const controller = new AbortController();
+    controller.abort();
+    x.deps.abortSignal = controller.signal;
+    await expect(dispatchReservedCreatorRender(input, config, x.deps))
+      .rejects.toThrow("CREATOR_RENDER_DISPATCH_SHUTDOWN_REQUESTED");
+    expect(x.reserve).not.toHaveBeenCalled();
+    expect(x.acquireQueuedExport).not.toHaveBeenCalled();
+    expect(x.render).not.toHaveBeenCalled();
+  });
+
+  it("aborts active rendering on shutdown and quarantines instead of finalizing", async () => {
+    const x = setup();
+    const controller = new AbortController();
+    x.deps.abortSignal = controller.signal;
+    x.render.mockImplementationOnce(async (_renderInput, workerDeps) => {
+      const signal = workerDeps?.abortSignal;
+      expect(signal?.aborted).toBe(false);
+      controller.abort();
+      expect(signal?.aborted).toBe(true);
+      throw new Error("CREATOR_FFMPEG_ABORTED");
+    });
+    await expect(dispatchReservedCreatorRender(input, config, x.deps))
+      .rejects.toThrow("CREATOR_FFMPEG_ABORTED");
+    expect(x.render).toHaveBeenCalledTimes(1);
+    expect(x.finalizeVerifiedExport).not.toHaveBeenCalled();
+    expect(x.markUnknown).toHaveBeenCalledTimes(1);
+  });
+});
