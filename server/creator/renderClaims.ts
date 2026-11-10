@@ -239,6 +239,87 @@ export class MysqlCreatorRenderClaims {
   }
 
   /**
+   * Worker-only, single-use acquisition of an existing QUEUED export.
+   *
+   * The atomic claim-token rotation and export QUEUED -> RUNNING transition
+   * make a second worker lose without starting FFmpeg. The original
+   * reservation token becomes invalid immediately. This is a primitive for
+   * the future async worker; do not enable a second dispatcher until the
+   * synchronous fenced route is switched to the same acquisition protocol.
+   *
+   * No provider call, retry, or new render reservation is performed here.
+   */
+  async acquireQueuedExport(
+    input: { workspaceId: number; creatorProjectId: number; timelineId: number; claimId: number },
+    leaseSeconds = 1800,
+  ): Promise<{
+    claimId: number; exportId: number; scope: CreatorRenderClaimScope; leaseToken: string;
+  } | null> {
+    for (const key of ["workspaceId", "creatorProjectId", "timelineId", "claimId"] as const) {
+      positiveInt(input[key]);
+    }
+    validLeaseSeconds(leaseSeconds);
+    const db = await this.db();
+    return db.transaction(async tx => {
+      // Lock BOTH the claim and its export. InnoDB serializes concurrent
+      // acquisitions and the status transition cannot partially commit.
+      const [row] = rowsOf<{
+        id: number; exportId: number; mode: CreatorRenderMode;
+        fingerprint: string; state: CreatorRenderClaimState;
+        exportStatus: string; leaseActive: number;
+      }>(await tx.execute(sql`
+        SELECT c.id, c.exportId, c.mode, c.fingerprint, c.state,
+          e.status AS exportStatus,
+          (c.leaseUntil > UTC_TIMESTAMP(3)) AS leaseActive
+        FROM creatorRenderClaims c
+        INNER JOIN creatorExports e ON e.id = c.exportId
+          AND e.workspaceId = c.workspaceId
+          AND e.creatorProjectId = c.creatorProjectId
+          AND e.timelineId = c.timelineId
+        WHERE c.id = ${input.claimId} AND c.workspaceId = ${input.workspaceId}
+          AND c.creatorProjectId = ${input.creatorProjectId}
+          AND c.timelineId = ${input.timelineId}
+        FOR UPDATE
+      `));
+      if (!row || row.state !== "RUNNING" || row.exportStatus !== "QUEUED") return null;
+      if (Number(row.leaseActive) !== 1) {
+        // An expired reservation is ambiguous, never silently reissued.
+        await tx.execute(sql`
+          UPDATE creatorRenderClaims SET state = 'NEEDS_RECONCILIATION'
+          WHERE id = ${input.claimId} AND workspaceId = ${input.workspaceId}
+            AND creatorProjectId = ${input.creatorProjectId}
+            AND timelineId = ${input.timelineId} AND state = 'RUNNING'
+        `);
+        return null;
+      }
+      const scope = validateScope({
+        workspaceId: input.workspaceId, creatorProjectId: input.creatorProjectId,
+        timelineId: input.timelineId, mode: row.mode, fingerprint: row.fingerprint,
+      });
+      const leaseToken = randomUUID();
+      const claimed = await tx.execute(sql`
+        UPDATE creatorRenderClaims
+        SET leaseToken = ${leaseToken},
+          leaseUntil = DATE_ADD(UTC_TIMESTAMP(3), INTERVAL ${leaseSeconds} SECOND)
+        WHERE id = ${input.claimId} AND workspaceId = ${scope.workspaceId}
+          AND creatorProjectId = ${scope.creatorProjectId}
+          AND timelineId = ${scope.timelineId} AND mode = ${scope.mode}
+          AND fingerprint = ${scope.fingerprint} AND state = 'RUNNING'
+          AND leaseUntil > UTC_TIMESTAMP(3) AND exportId = ${row.exportId}
+      `);
+      if (affected(claimed) !== 1) throw new Error("CREATOR_RENDER_WORKER_ACQUIRE_FENCE_LOST");
+      const started = await tx.execute(sql`
+        UPDATE creatorExports SET status = 'RUNNING'
+        WHERE id = ${row.exportId} AND workspaceId = ${scope.workspaceId}
+          AND creatorProjectId = ${scope.creatorProjectId}
+          AND timelineId = ${scope.timelineId} AND status = 'QUEUED'
+      `);
+      if (affected(started) !== 1) throw new Error("CREATOR_RENDER_WORKER_EXPORT_START_FAILED");
+      return { claimId: input.claimId, exportId: Number(row.exportId), scope, leaseToken };
+    });
+  }
+
+  /**
    * Owner-facing durable status polling for a previously reserved render.
    * Never exposes the worker lease token, signed media URL or internal keys.
    * An expired lease is quarantined, not reacquired or automatically retried.
