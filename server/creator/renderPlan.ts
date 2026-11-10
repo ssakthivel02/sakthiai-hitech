@@ -173,6 +173,10 @@ export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput
     "-filter_complex", filters.join(";"),
     "-map", "[vout]",
     "-map", `${audioIndex}:a:0`,
+    // libass/concat can leave a VFR output time base. Explicit CFR prevents
+    // a 48-frame, 2s video from probing as ~24.51 instead of 24 FPS.
+    "-r", String(input.fps),
+    "-fps_mode", "cfr",
     "-c:v", "libx264",
     "-preset", "medium",
     "-crf", "18",
