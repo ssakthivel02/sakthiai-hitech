@@ -104,6 +104,34 @@ export const creatorTimelineRouter = router({
       }
     }),
 
+
+  /**
+   * Owner-only cancellation fence, independent of the render enablement flag:
+   * owners must be able to stop a previously queued claim even after the
+   * render feature is disabled. Running FFmpeg is fenced from finalization,
+   * not forcibly terminated; reconciliation remains mandatory.
+   */
+  cancelFencedCandidate: protectedProcedure
+    .input(workspaceInput.extend({
+      creatorProjectId: z.number().int().positive(),
+      timelineId: z.number().int().positive(),
+      claimId: z.number().int().positive(),
+      confirmCancellation: z.literal(true),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
+      try {
+        return await new MysqlCreatorRenderClaims().cancelFencedClaim({
+          workspaceId: input.workspaceId,
+          creatorProjectId: input.creatorProjectId,
+          timelineId: input.timelineId,
+          claimId: input.claimId,
+        });
+      } catch (error) {
+        mapTimelineError(error);
+      }
+    }),
+
   /**
    * Poll an existing fenced render claim. Owner-only and read-only with respect
    * to media: expired leases are quarantined, never retried or redispatched.

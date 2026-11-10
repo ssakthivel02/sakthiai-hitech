@@ -16,6 +16,7 @@ vi.mock("./paidGeneration", async importOriginal => ({
 }));
 
 import { creatorTimelineRouter } from "./timelineRouter";
+import { MysqlCreatorRenderClaims } from "./renderClaims";
 
 const input = { workspaceId: 7, creatorProjectId: 12, timelineId: 15, confirmCandidateOnly: true as const };
 function caller(userId = 1) {
@@ -39,7 +40,7 @@ describe("default-off Creator lease-fenced render route", () => {
     mocks.owner.mockReset();
     mocks.owner.mockResolvedValue(undefined);
   });
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
   it("refuses to reserve or run FFmpeg when the feature flag is absent", async () => {
     await expect(caller().renderFencedCandidate(input)).rejects.toMatchObject({
@@ -96,4 +97,44 @@ describe("default-off Creator lease-fenced render route", () => {
     expect(JSON.stringify(result)).not.toContain("leaseToken");
     expect(JSON.stringify(result)).not.toContain("assetId");
   });
+
+  it("requires owner and explicit confirmation before cancellation", async () => {
+    const cancel = vi.spyOn(MysqlCreatorRenderClaims.prototype, "cancelFencedClaim")
+      .mockResolvedValue({
+        claimId: 77, exportId: 88, outcome: "CANCELLED_BEFORE_DISPATCH",
+        requiresReconciliation: false, finalMaster: false, publishApproved: false,
+      });
+    await expect(caller().cancelFencedCandidate({
+      workspaceId: 7, creatorProjectId: 12, timelineId: 15,
+      claimId: 77, confirmCancellation: false as true,
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(cancel).not.toHaveBeenCalled();
+    mocks.owner.mockRejectedValueOnce(new TRPCError({ code: "FORBIDDEN" }));
+    await expect(caller(2).cancelFencedCandidate({
+      workspaceId: 7, creatorProjectId: 12, timelineId: 15,
+      claimId: 77, confirmCancellation: true,
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("fences a queued claim even when render is disabled, without leaking tokens", async () => {
+    const cancel = vi.spyOn(MysqlCreatorRenderClaims.prototype, "cancelFencedClaim")
+      .mockResolvedValue({
+        claimId: 77, exportId: 88, outcome: "CANCELLED_BEFORE_DISPATCH",
+        requiresReconciliation: false, finalMaster: false, publishApproved: false,
+      });
+    const result = await caller().cancelFencedCandidate({
+      workspaceId: 7, creatorProjectId: 12, timelineId: 15,
+      claimId: 77, confirmCancellation: true,
+    });
+    expect(cancel).toHaveBeenCalledWith({
+      workspaceId: 7, creatorProjectId: 12, timelineId: 15, claimId: 77,
+    });
+    expect(result).toMatchObject({
+      outcome: "CANCELLED_BEFORE_DISPATCH", finalMaster: false, publishApproved: false,
+    });
+    expect(JSON.stringify(result)).not.toContain("leaseToken");
+    expect(mocks.dispatch).not.toHaveBeenCalled();
+  });
+
 });

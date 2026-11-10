@@ -319,6 +319,90 @@ export class MysqlCreatorRenderClaims {
     });
   }
 
+
+  /**
+   * Owner-gated cancellation fence for a known render claim. This method does
+   * not kill an already running FFmpeg process: an in-flight render may still
+   * upload orphaned bytes, so RUNNING work requires explicit reconciliation.
+   *
+   * The claim and export are locked in one transaction, serializing cancellation
+   * against worker acquisition and transactional finalization. No new lease or
+   * retry is issued. Existing claim states deliberately remain unchanged at
+   * the schema level: NEEDS_RECONCILIATION fences both cancelled and ambiguous
+   * claims; the export's CANCELLED state distinguishes pre-dispatch cancellation.
+   */
+  async cancelFencedClaim(input: {
+    workspaceId: number; creatorProjectId: number; timelineId: number; claimId: number;
+  }): Promise<{
+    claimId: number; exportId: number | null;
+    outcome: "CANCELLED_BEFORE_DISPATCH" | "RUNNING_FENCED" | "ALREADY_SUCCEEDED" | "ALREADY_QUARANTINED";
+    requiresReconciliation: boolean; finalMaster: false; publishApproved: false;
+  }> {
+    for (const key of ["workspaceId", "creatorProjectId", "timelineId", "claimId"] as const) {
+      positiveInt(input[key]);
+    }
+    const db = await this.db();
+    return db.transaction(async tx => {
+      const [claim] = rowsOf<{
+        id: number; state: CreatorRenderClaimState; exportId: number | null;
+      }>(await tx.execute(sql`
+        SELECT id, state, exportId FROM creatorRenderClaims
+        WHERE id = ${input.claimId} AND workspaceId = ${input.workspaceId}
+          AND creatorProjectId = ${input.creatorProjectId}
+          AND timelineId = ${input.timelineId} FOR UPDATE
+      `));
+      if (!claim) throw new Error("CREATOR_RENDER_CLAIM_NOT_FOUND");
+      const exportId = claim.exportId === null ? null : Number(claim.exportId);
+      if (claim.state === "SUCCEEDED") {
+        return {
+          claimId: input.claimId, exportId, outcome: "ALREADY_SUCCEEDED" as const,
+          requiresReconciliation: false, finalMaster: false as const, publishApproved: false as const,
+        };
+      }
+      if (claim.state === "NEEDS_RECONCILIATION") {
+        return {
+          claimId: input.claimId, exportId, outcome: "ALREADY_QUARANTINED" as const,
+          requiresReconciliation: true, finalMaster: false as const, publishApproved: false as const,
+        };
+      }
+      if (exportId === null) throw new Error("CREATOR_RENDER_CANCEL_EXPORT_INVALID");
+      const [exported] = rowsOf<{ id: number; status: string }>(await tx.execute(sql`
+        SELECT id, status FROM creatorExports
+        WHERE id = ${exportId} AND workspaceId = ${input.workspaceId}
+          AND creatorProjectId = ${input.creatorProjectId}
+          AND timelineId = ${input.timelineId} FOR UPDATE
+      `));
+      if (!exported || (exported.status !== "QUEUED" && exported.status !== "RUNNING")) {
+        throw new Error("CREATOR_RENDER_CANCEL_EXPORT_STATE_INVALID");
+      }
+      const fenced = await tx.execute(sql`
+        UPDATE creatorRenderClaims SET state = 'NEEDS_RECONCILIATION'
+        WHERE id = ${input.claimId} AND workspaceId = ${input.workspaceId}
+          AND creatorProjectId = ${input.creatorProjectId}
+          AND timelineId = ${input.timelineId} AND state = 'RUNNING'
+          AND exportId = ${exportId}
+      `);
+      if (affected(fenced) !== 1) throw new Error("CREATOR_RENDER_CANCEL_FENCE_LOST");
+      if (exported.status === "QUEUED") {
+        const cancelled = await tx.execute(sql`
+          UPDATE creatorExports SET status = 'CANCELLED'
+          WHERE id = ${exportId} AND workspaceId = ${input.workspaceId}
+            AND creatorProjectId = ${input.creatorProjectId}
+            AND timelineId = ${input.timelineId} AND status = 'QUEUED'
+        `);
+        if (affected(cancelled) !== 1) throw new Error("CREATOR_RENDER_CANCEL_EXPORT_UPDATE_FAILED");
+        return {
+          claimId: input.claimId, exportId, outcome: "CANCELLED_BEFORE_DISPATCH" as const,
+          requiresReconciliation: false, finalMaster: false as const, publishApproved: false as const,
+        };
+      }
+      return {
+        claimId: input.claimId, exportId, outcome: "RUNNING_FENCED" as const,
+        requiresReconciliation: true, finalMaster: false as const, publishApproved: false as const,
+      };
+    });
+  }
+
   /**
    * Owner-facing durable status polling for a previously reserved render.
    * Never exposes the worker lease token, signed media URL or internal keys.
