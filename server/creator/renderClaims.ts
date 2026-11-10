@@ -360,9 +360,18 @@ export class MysqlCreatorRenderClaims {
         };
       }
       if (claim.state === "NEEDS_RECONCILIATION") {
+        // A previously cancelled QUEUED export is intentionally terminal and
+        // needs no media reconciliation. Ambiguous RUNNING work still does.
+        const [prior] = exportId === null ? [] : rowsOf<{ status: string }>(await tx.execute(sql`
+          SELECT status FROM creatorExports
+          WHERE id = ${exportId} AND workspaceId = ${input.workspaceId}
+            AND creatorProjectId = ${input.creatorProjectId}
+            AND timelineId = ${input.timelineId} FOR UPDATE
+        `));
         return {
           claimId: input.claimId, exportId, outcome: "ALREADY_QUARANTINED" as const,
-          requiresReconciliation: true, finalMaster: false as const, publishApproved: false as const,
+          requiresReconciliation: prior?.status !== "CANCELLED",
+          finalMaster: false as const, publishApproved: false as const,
         };
       }
       if (exportId === null) throw new Error("CREATOR_RENDER_CANCEL_EXPORT_INVALID");
@@ -413,7 +422,7 @@ export class MysqlCreatorRenderClaims {
   }): Promise<{
     claimId: number; state: CreatorRenderClaimState; exportId: number | null;
     exportStatus: string | null; outputAssetId: number | null;
-    requiresReconciliation: boolean; reviewRequired: boolean;
+    requiresReconciliation: boolean; cancelled: boolean; reviewRequired: boolean;
     finalMaster: false; publishApproved: false;
   }> {
     for (const key of ["workspaceId", "creatorProjectId", "timelineId", "claimId"] as const) {
@@ -449,7 +458,8 @@ export class MysqlCreatorRenderClaims {
       exportId: row.exportId === null ? null : Number(row.exportId),
       exportStatus: row.exportStatus ?? null,
       outputAssetId: row.outputAssetId === null ? null : Number(row.outputAssetId),
-      requiresReconciliation: row.state === "NEEDS_RECONCILIATION",
+      requiresReconciliation: row.state === "NEEDS_RECONCILIATION" && row.exportStatus !== "CANCELLED",
+      cancelled: row.exportStatus === "CANCELLED",
       reviewRequired: row.state === "SUCCEEDED",
       finalMaster: false,
       publishApproved: false,

@@ -61,6 +61,9 @@ describe.skipIf(skipMysqlSuite())("Creator fenced render cancellation", { timeou
       state: "NEEDS_RECONCILIATION", exportStatus: "CANCELLED", outputAssetId: null,
     });
     expect(await claims.acquireQueuedExport(x.input)).toBeNull();
+    expect(await claims.pollClaim(x.input)).toMatchObject({
+      exportStatus: "CANCELLED", cancelled: true, requiresReconciliation: false,
+    });
     expect(await claims.heartbeat({
       ...scope, mode: "MASTER_CANDIDATE", fingerprint: x.fingerprint,
     }, x.leaseToken)).toBe(false);
@@ -83,7 +86,7 @@ describe.skipIf(skipMysqlSuite())("Creator fenced render cancellation", { timeou
     const x = await seed();
     await claims.cancelFencedClaim(x.input);
     const second = await claims.cancelFencedClaim(x.input);
-    expect(second).toMatchObject({ outcome: "ALREADY_QUARANTINED", requiresReconciliation: true });
+    expect(second).toMatchObject({ outcome: "ALREADY_QUARANTINED", requiresReconciliation: false });
     expect((await states(x.input.claimId)).exportStatus).toBe("CANCELLED");
   });
 
