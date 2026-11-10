@@ -127,7 +127,17 @@ export async function inspectQuarantinedCreatorRender(
     return report("STORAGE_UNAVAILABLE", 0);
   }
 
-  if (objects.length === 0) return report("NO_OBJECT_OBSERVED", 0);
+  if (objects.length === 0) {
+    // A missing object with an already persisted asset/checksum is NOT the
+    // same as an unfinalized export with no object. Surface the discrepancy
+    // for manual investigation; never suggest that a previously finalized
+    // render simply did not produce media.
+    const hasPersistedEvidence =
+      row.exportAssetId !== null || row.claimAssetId !== null ||
+      row.assetId !== null || row.exportChecksum !== null ||
+      row.claimChecksum !== null;
+    return report(hasPersistedEvidence ? "METADATA_DRIFT" : "NO_OBJECT_OBSERVED", 0);
+  }
   if (row.exportAssetId === null && row.claimAssetId === null &&
       row.assetId === null && row.exportChecksum === null &&
       row.claimChecksum === null) {
