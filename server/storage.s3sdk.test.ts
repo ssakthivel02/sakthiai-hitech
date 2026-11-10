@@ -17,12 +17,13 @@ const storageEnv = vi.hoisted(() => ({
 }));
 vi.mock("./_core/env", () => ({ ENV: storageEnv }));
 
-import { storagePut, storageVerifySha256 } from "./storage";
+import { storageListCreatorRenderObjects, storagePut, storageVerifySha256 } from "./storage";
 
 type ResponseMode = "correct" | "ignore-range" | "corrupt" | "wrong-range";
 const objects = new Map<string, Buffer>();
 const requests: Array<{ method: string; key: string; range?: string }> = [];
 let mode: ResponseMode = "correct";
+let listTruncated = false;
 let server: Server;
 
 function objectKey(pathname: string): string {
@@ -34,8 +35,26 @@ function objectKey(pathname: string): string {
 beforeAll(async () => {
   server = createServer(async (req, res) => {
     try {
-      const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
-      const key = objectKey(pathname);
+      const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+      // Real ListObjectsV2Command calls the bucket root with list-type=2.
+      if (req.method === "GET" && requestUrl.searchParams.get("list-type") === "2") {
+        const prefix = requestUrl.searchParams.get("prefix") ?? "";
+        const matching = [...objects.entries()].filter(([key]) => key.startsWith(prefix));
+        const xml = [
+          '<?xml version="1.0" encoding="UTF-8"?>',
+          '<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">',
+          '<Name>creator-loopback-test</Name>',
+          '<IsTruncated>' + String(listTruncated) + '</IsTruncated>',
+          ...matching.map(([key, data]) => '<Contents><Key>' + key + '</Key><Size>' + data.length + '</Size></Contents>'),
+          ...(listTruncated ? ['<NextContinuationToken>synthetic-next-page</NextContinuationToken>'] : []),
+          '</ListBucketResult>',
+        ].join("");
+        requests.push({ method: "LIST", key: prefix });
+        res.writeHead(200, { "Content-Type": "application/xml", "Content-Length": String(Buffer.byteLength(xml)) });
+        res.end(xml);
+        return;
+      }
+      const key = objectKey(requestUrl.pathname);
       requests.push({ method: req.method ?? "", key, range: req.headers.range });
       if (req.method === "PUT") {
         const chunks: Buffer[] = [];
@@ -88,6 +107,7 @@ beforeEach(() => {
   objects.clear();
   requests.length = 0;
   mode = "correct";
+  listTruncated = false;
 });
 
 const payload = Buffer.from("SakthiAI Murugan test: வேல் முருகா / source-verified bytes", "utf8");
@@ -131,5 +151,29 @@ describe("Creator S3 SDK upload/readback against disposable HTTP endpoint", () =
     await expect(storageVerifySha256(key, 0, digest)).rejects.toThrow("CREATOR_STORAGE_EVIDENCE_INVALID");
     await expect(storageVerifySha256(key, payload.length, "not-a-checksum")).rejects.toThrow("CREATOR_STORAGE_EVIDENCE_INVALID");
     expect(requests.map(r => r.method)).toEqual(["PUT"]);
+  });
+});
+
+
+describe("Creator render inventory via real S3 SDK against loopback endpoint", () => {
+  const scope = { workspaceId: 7, creatorProjectId: 11, timelineId: 13, exportId: 17 };
+  const valid = "creator/7/11/renders/timeline-13/export-17_a0b1c2d3.mp4";
+
+  it("lists only the exact scoped export and verifies its bytes with the same SDK", async () => {
+    objects.set(valid, Buffer.from(payload));
+    // S3 Prefix=export-17 also returns export-170; filter by exact identity.
+    objects.set("creator/7/11/renders/timeline-13/export-170_a0b1c2d3.mp4", Buffer.from(payload));
+    objects.set("creator/8/11/renders/timeline-13/export-17_a0b1c2d3.mp4", Buffer.from(payload));
+    const inventory = await storageListCreatorRenderObjects(scope);
+    expect(inventory).toEqual([{ key: valid, sizeBytes: payload.length }]);
+    await expect(storageVerifySha256(valid, payload.length, digest)).resolves.toBeUndefined();
+    expect(requests.map(request => request.method)).toEqual(["LIST", "GET"]);
+  });
+
+  it("rejects a truncated inventory rather than declaring an orphan absent", async () => {
+    objects.set(valid, Buffer.from(payload));
+    listTruncated = true;
+    await expect(storageListCreatorRenderObjects(scope)).rejects.toThrow("CREATOR_RENDER_INVENTORY_TRUNCATED");
+    expect(requests.map(request => request.method)).toEqual(["LIST"]);
   });
 });
