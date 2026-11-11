@@ -69,6 +69,38 @@ function renderSource(provenanceJson: string | null | undefined): string | null 
   }
 }
 
+/** Display persisted scorer evidence without trusting malformed or legacy review JSON. */
+function creatorQualityEvidence(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    const raw = JSON.parse(value) as {
+      weightedScore?: unknown;
+      candidateArtifact?: { checksumSha256?: unknown };
+      remediationSummary?: { items?: unknown };
+    };
+    if (!raw || typeof raw !== "object") return null;
+    const entries = raw.remediationSummary?.items;
+    const items = Array.isArray(entries) ? entries.flatMap(item => {
+      if (!item || typeof item !== "object" ||
+          typeof item.id !== "string" || typeof item.problem !== "string") return [];
+      const actions = Array.isArray(item.actions)
+        ? item.actions.filter((action: unknown): action is string => typeof action === "string")
+        : [];
+      return [{ id: item.id as string, priority: typeof item.priority === "string" ? item.priority : "REVIEW",
+        problem: item.problem as string, actions }];
+    }) : [];
+    return {
+      weightedScore: typeof raw.weightedScore === "number" && Number.isFinite(raw.weightedScore)
+        ? raw.weightedScore : null,
+      checksumSha256: typeof raw.candidateArtifact?.checksumSha256 === "string"
+        ? raw.candidateArtifact.checksumSha256 : null,
+      items,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function downloadJson(filename: string, value: unknown) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }));
   const link = document.createElement("a");
@@ -173,6 +205,9 @@ export default function Creator() {
     dimensionIds: qualityDimensionIds,
     reviews: project.data?.reviews ?? [],
   });
+  const latestQualityReview = project.data?.reviews.find(review =>
+    review.assetId === latestRenderAsset?.id && review.reviewType === "QUALITY");
+  const latestQualityEvidence = creatorQualityEvidence(latestQualityReview?.scoresJson);
   const [panelError, setPanelError] = useState<unknown>();
   const [manifestError, setManifestError] = useState<unknown>();
   const utils = trpc.useUtils();
@@ -403,6 +438,20 @@ export default function Creator() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 8 }}>{qualityDimensionIds.map(id => <label key={id} style={{ display: "grid", gap: 4 }}><small>{id}</small><Input type="number" min={0} max={5} step={0.1} value={qualityScores[id]} onChange={e => setQualityScores(current => ({ ...current, [id]: e.target.value }))}/></label>)}</div>
             <Textarea value={criticalDefects} onChange={e => setCriticalDefects(e.target.value)} placeholder="Critical defects, one per line. Leave blank if none."/>
             <Button disabled={!reviewGate.quality || qualityReview.isPending} onClick={() => qualityReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, reviewerType: "HUMAN", sourcePromptOrStoryboard: sourcePrompt, dimensionScores: Object.fromEntries(qualityDimensionIds.map(id => [id, Number(qualityScores[id])])) as Record<(typeof qualityDimensionIds)[number], number>, criticalDefects: criticalDefects.split("\n").map(v => v.trim()).filter(Boolean), notes: reviewNotes })}>Record governed quality review</Button>
+            {latestQualityReview && <div data-testid="creator-quality-remediation" role="status" style={{ display: "grid", gap: 6, padding: 12, border: "1px solid currentColor", borderRadius: 8 }}>
+              <strong>Recorded quality decision: {latestQualityReview.decision}</strong>
+              {latestQualityEvidence ? <>
+                <small>Scored candidate SHA-256: {latestQualityEvidence.checksumSha256 ?? "unavailable"} · weighted score: {latestQualityEvidence.weightedScore ?? "unavailable"}</small>
+                {latestQualityEvidence.items.length > 0
+                  ? latestQualityEvidence.items.map((item, index) => <div key={`${item.id}-${index}`} style={{ display: "grid", gap: 4 }}>
+                      <strong>{item.priority} · {item.id}</strong><span>{item.problem}</span>
+                      {item.actions.map((action, actionIndex) => <small key={actionIndex}>{action}</small>)}
+                    </div>)
+                  : <small>No dimension-specific remediation recorded.</small>}
+              </> : <small>Quality evidence cannot be read. Do not promote this candidate until the persisted review is reconciled.</small>}
+              {(latestQualityReview.decision === "REGENERATE" || latestQualityReview.decision === "REJECT") &&
+                <small>This candidate is blocked from human PASS and final-master promotion. Create a separately attributed replacement; do not overwrite the reviewed artifact.</small>}
+            </div>}
             <Textarea value={reviewNotes} onChange={e => setReviewNotes(e.target.value)} placeholder="Human review evidence notes"/>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button disabled={!reviewGate.tamilPass || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Tamil PASS</Button><Button variant="outline" disabled={!reviewGate.tamilReject || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Tamil REJECT</Button><Button disabled={!reviewGate.visualPass || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Visual PASS</Button><Button variant="outline" disabled={!reviewGate.visualReject || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Visual REJECT</Button></div>
             <Button disabled={!reviewGate.finalize || finalizeMaster.isPending} onClick={() => finalizeMaster.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id })}><ShieldCheck size={16}/> Promote approved 16:9 final master</Button>
