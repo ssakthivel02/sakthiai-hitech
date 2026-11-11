@@ -22,6 +22,7 @@ vi.mock("../db", async original => ({
 }));
 
 import { finalizeCreatorMaster, recordCreatorHumanReview, recordCreatorQualityReview } from "./reviewService";
+import { linkCreatorRemediationReplacement } from "./remediationLineage";
 
 const exec = promisify(execFile);
 const enabled = process.env.CREATOR_MINIO_TEST_ACK === "disposable-local-only";
@@ -226,5 +227,61 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
       .rejects.toThrow("CREATOR_REVIEW_CANDIDATE_STORAGE_UNVERIFIED");
     expect(await countReviews(assetId)).toBe(3);
     expect(await decision(assetId)).toBe("PENDING");
+  });
+
+  it("verifies actual MinIO source and replacement bytes before immutable remediation linkage", async () => {
+    const source = await candidate("lineage-real-source");
+    const replacement = await candidate("lineage-real-replacement");
+    const sourceQuality = await quality(source.assetId, zeroDimensions);
+    expect(sourceQuality.decision).toBe("REGENERATE");
+    const sourceReview = await one<{ id: number }>(sql`SELECT id FROM creatorReviews
+      WHERE assetId = ${source.assetId} AND reviewType = 'QUALITY' ORDER BY id DESC LIMIT 1`);
+
+    // Linkage requires a completed, checksum-bound export for each render.
+    for (const item of [source, replacement]) {
+      await run(sql`INSERT INTO creatorExports
+        (workspaceId, creatorProjectId, timelineId, status, width, height, format, renderer, assetId, checksumSha256)
+        VALUES (7, ${projectId}, ${timelineId}, 'SUCCEEDED', 1920, 1080, 'mp4', 'ffmpeg',
+          ${item.assetId}, ${checksum})`);
+      const exportRow = await one<{ id: number }>(sql`SELECT MAX(id) AS id FROM creatorExports
+        WHERE assetId = ${item.assetId}`);
+      const provenance = JSON.stringify({
+        source: "deterministic-creator-render", exportId: exportRow.id, timelineId,
+        audioMasterAssetId: audioId, audioMasterChecksumSha256: "a".repeat(64),
+        width: 1920, height: 1080, fps: 24, durationMs: 2000,
+      });
+      await run(sql`UPDATE creatorAssets SET provenanceJson = ${provenance} WHERE id = ${item.assetId}`);
+    }
+
+    const args = {
+      workspaceId: 7, creatorProjectId: projectId, reviewerUserId: 501,
+      sourceCandidateAssetId: source.assetId, sourceQualityReviewId: sourceReview.id,
+      replacementCandidateAssetId: replacement.assetId,
+      expectedSourceChecksumSha256: checksum, expectedReplacementChecksumSha256: checksum,
+    };
+    // Deliberately corrupt replacement bytes, leaving DB checksums unchanged.
+    await s3.send(new PutObjectCommand({
+      Bucket: "creator-minio-ci", Key: replacement.storageKey, Body: Buffer.from("changed replacement"),
+    }));
+    await expect(linkCreatorRemediationReplacement(args))
+      .rejects.toThrow("CREATOR_REMEDIATION_STORAGE_UNVERIFIED");
+    const before = await one<{ n: number }>(sql`SELECT COUNT(*) AS n FROM creatorRemediationLineage
+      WHERE sourceQualityReviewId = ${sourceReview.id}`);
+    expect(Number(before.n)).toBe(0);
+
+    // Restore exact bytes: a valid link must not create inherited approvals.
+    await s3.send(new PutObjectCommand({
+      Bucket: "creator-minio-ci", Key: replacement.storageKey,
+      Body: renderedBytes, ContentType: "video/mp4",
+    }));
+    const linked = await linkCreatorRemediationReplacement(args);
+    expect(linked).toMatchObject({
+      replacementRequiresFreshQuality: true,
+      replacementRequiresFreshTamilReview: true,
+      replacementRequiresFreshVisualReview: true,
+    });
+    expect(await countReviews(replacement.assetId)).toBe(0);
+    await expect(finalizeCreatorMaster(scope(replacement.assetId)))
+      .rejects.toThrow("CREATOR_FINAL_MASTER_QUALITY_PASS_REQUIRED");
   });
 });
