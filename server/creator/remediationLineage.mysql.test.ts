@@ -107,4 +107,28 @@ describe.skipIf(skipMysqlSuite())("Creator immutable remediation lineage (real M
     await expect(linkCreatorRemediationReplacement({ ...input(source, replacement), expectedReplacementChecksumSha256: hash("wrong") }))
       .rejects.toThrow("CREATOR_REMEDIATION_CANDIDATE_INVALID");
   });
+
+  it("rejects replacement storage corruption after source verification and rolls back lineage", async () => {
+    const source = await candidate("lineage-second-read-source", "REGENERATE");
+    const replacement = await candidate("lineage-second-read-replacement");
+    holder.verify.mockImplementationOnce(async () => undefined)
+      .mockRejectedValueOnce(new Error("replacement object bytes changed"));
+    await expect(linkCreatorRemediationReplacement(input(source, replacement)))
+      .rejects.toThrow("CREATOR_REMEDIATION_STORAGE_UNVERIFIED");
+    const count = await one<{ n: number }>(sql`SELECT COUNT(*) AS n FROM creatorRemediationLineage
+      WHERE sourceQualityReviewId = ${source.qualityId!}`);
+    expect(Number(count.n)).toBe(0);
+  });
+
+  it("rejects a replacement export whose persisted asset pointer no longer matches", async () => {
+    const source = await candidate("lineage-export-source", "REGENERATE");
+    const replacement = await candidate("lineage-export-replacement");
+    await run(sql`UPDATE creatorExports SET assetId = ${source.assetId}
+      WHERE assetId = ${replacement.assetId} AND creatorProjectId = ${projectId}`);
+    await expect(linkCreatorRemediationReplacement(input(source, replacement)))
+      .rejects.toThrow("CREATOR_REMEDIATION_EXPORT_UNVERIFIED");
+    const count = await one<{ n: number }>(sql`SELECT COUNT(*) AS n FROM creatorRemediationLineage
+      WHERE sourceQualityReviewId = ${source.qualityId!}`);
+    expect(Number(count.n)).toBe(0);
+  });
 });
