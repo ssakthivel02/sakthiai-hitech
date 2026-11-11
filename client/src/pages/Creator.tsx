@@ -11,6 +11,7 @@ import { ArrowLeft, Clapperboard, Film, Image, Plus, RefreshCw, ShieldCheck, Upl
 import CreatorReferenceControls from "./CreatorReferenceControls";
 import CreatorSpendAdminPanel from "./CreatorSpendAdminPanel";
 import CreatorSpeechAvatarPanel from "./CreatorSpeechAvatarPanel";
+import CreatorGeneratedAssetReview from "./CreatorGeneratedAssetReview";
 import { creatorIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
 import { describeCreatorError } from "@shared/creatorErrors";
 import { creatorReviewReadiness } from "@/lib/creatorReviewReadiness";
@@ -332,6 +333,13 @@ export default function Creator() {
             const sourceIds = provenanceIds(job.sourceAssetIdsJson);
             return <div key={job.id} className="list-row"><div><span>#{job.id} · {job.kind} · {job.provider}</span><small>{job.status} · model {job.model}{job.outputAssetId ? ` · asset ${job.outputAssetId}` : ""}</small>{sourceIds.length > 0 && <small>Source/conditioning provenance assets: {sourceIds.join(", ")}</small>}</div><div style={{ display: "flex", gap: 6 }}>{job.status === "RETRYABLE" && <Button size="sm" variant="outline" onClick={() => retryGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><RotateCcw size={14}/> Retry existing</Button>}{job.status === "SUBMISSION_UNKNOWN" && <Badge variant="outline">Reconciliation required</Badge>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" disabled={pollingGenerationId !== undefined} onClick={() => void checkGenerationResult(job.id)}><RefreshCw size={14}/> {pollingGenerationId === job.id ? "Checking…" : "Check result"}</Button>}{["SUBMITTED", "RUNNING"].includes(job.status) && <Button size="sm" variant="outline" onClick={() => cancelGeneration.mutate({ workspaceId: workspaceId!, generationId: job.id })}><Ban size={14}/> Cancel</Button>}</div></div>;
           })}</div></CardContent></Card>
+
+          {workspaceId && projectId && project.data && <CreatorGeneratedAssetReview
+            workspaceId={workspaceId}
+            creatorProjectId={projectId}
+            assets={project.data.assets}
+            onChanged={() => { void project.refetch(); }}
+          />}
 
           {workspaceId && projectId && <CreatorReferenceControls workspaceId={workspaceId} creatorProjectId={projectId} onChanged={() => project.refetch()} />}
 
