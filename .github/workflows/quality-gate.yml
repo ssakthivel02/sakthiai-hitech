@@ -250,7 +250,9 @@ jobs:
           STORAGE_ACCESS_KEY_ID: ci-minio-user
           STORAGE_SECRET_ACCESS_KEY: ci-minio-secret-only
           STORAGE_FORCE_PATH_STYLE: "true"
-        run: pnpm exec vitest run server/storage.minio.test.ts server/creator/creatorMuruganVerticalSlice.minio.test.ts --reporter=verbose
+        run: |
+          pnpm exec vitest run server/storage.minio.test.ts --reporter=verbose
+          pnpm exec vitest run server/creator/creatorMuruganVerticalSlice.minio.test.ts --reporter=verbose
 
       - name: Real MySQL + FFmpeg + MinIO fenced Creator export
         env:
