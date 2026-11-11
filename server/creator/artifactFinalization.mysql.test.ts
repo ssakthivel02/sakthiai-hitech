@@ -200,7 +200,7 @@ describe.skipIf(skipMysqlSuite())("Creator artifact finalization ownership (disp
       await d.pool.promise().query("DROP TRIGGER IF EXISTS creatorArtifactFinalizeAbort");
     }
     const [stage] = await query("SELECT stagedStorageKey FROM creatorArtifactLeases WHERE generationId = ?", [generationId]);
-    expect(stage.stagedStorageKey).toMatch(/^creator\\//);
+    expect(stage.stagedStorageKey.startsWith("creator/")).toBe(true);
     const recovered = await persist(generationId, "rollback-job");
     expect(recovered.storageKey).toBe(stage.stagedStorageKey);
     expect(state.sequence).toBe(1); // no second object PUT after failed DB finalization
