@@ -83,7 +83,7 @@ function creatorQualityEvidence(value: string | null | undefined) {
     const items = Array.isArray(entries) ? entries.flatMap(item => {
       if (!item || typeof item !== "object" ||
           typeof item.id !== "string" || typeof item.problem !== "string") return [];
-      const actions = Array.isArray(item.actions)
+      const actions: string[] = Array.isArray(item.actions)
         ? item.actions.filter((action: unknown): action is string => typeof action === "string")
         : [];
       return [{ id: item.id as string, priority: typeof item.priority === "string" ? item.priority : "REVIEW",
