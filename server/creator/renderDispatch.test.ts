@@ -35,9 +35,21 @@ const reservation = {
   state: "RUNNING" as const, fingerprint,
 };
 
-function setup() {
+const derivativeRequest = { ...input, verticalDerivativeOf: 77 };
+const derivativeIntent: CreatorRenderIntentInput = {
+  ...intent,
+  mode: "VERTICAL_DERIVATIVE",
+  output: { ...intent.output, width: 1080, height: 1920, fit: "cover" },
+  derivativeOf: { assetId: 77, checksumSha256: "e".repeat(64) },
+};
+const derivativeRendered = { ...rendered, width: 1080, height: 1920 };
+
+function setup(mode: CreatorRenderIntentInput["mode"] = "MASTER_CANDIDATE") {
   const reserve = vi.fn(async () => reservation);
-  const read = vi.fn(async () => ({ intent, fingerprint }));
+  const read = vi.fn(async () => ({
+    intent: mode === "VERTICAL_DERIVATIVE" ? derivativeIntent : intent,
+    fingerprint,
+  }));
   const resolveMedia = vi.fn(async () => ({
     audioSourceUrl: "https://storage.invalid/audio",
     visualItems: [{
@@ -46,12 +58,13 @@ function setup() {
       endMs: 1000, track: 1, sortOrder: 0, approved: true,
     }],
   }));
-  const render = vi.fn(async (_renderInput?: unknown, _workerDeps?: RenderWorkerDependencies) => rendered);
+  const render = vi.fn(async (_renderInput?: unknown, _workerDeps?: RenderWorkerDependencies) =>
+    mode === "VERTICAL_DERIVATIVE" ? derivativeRendered : rendered);
   const workerLeaseToken = "00000000-0000-4000-8000-000000000002";
   const acquired = {
     claimId: reservation.claimId,
     exportId: reservation.exportId,
-    scope: { ...input, mode: "MASTER_CANDIDATE" as const, fingerprint },
+    scope: { ...input, mode, fingerprint },
     leaseToken: workerLeaseToken,
   };
   const acquireQueuedExport = vi.fn(async () => acquired);
@@ -262,6 +275,100 @@ describe("Creator supervisor shutdown fencing", () => {
     });
     await expect(dispatchReservedCreatorRender(input, config, x.deps))
       .rejects.toThrow("CREATOR_FFMPEG_ABORTED");
+    expect(x.render).toHaveBeenCalledTimes(1);
+    expect(x.finalizeVerifiedExport).not.toHaveBeenCalled();
+    expect(x.markUnknown).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * P0 vertical derivative uses the same durable claim/worker path as 16:9.
+ * Existing SQL derivative tests exercise the old synchronous service; these
+ * assertions cover the actual claim-fenced dispatcher for 9:16 candidates.
+ * The worker, provider and media are fully mocked: no real FFmpeg or charges.
+ */
+describe("Creator fenced 9:16 derivative dispatch", () => {
+  it("reserves one derivative claim, renders crop-fit 1080×1920, and finalizes only under the worker lease", async () => {
+    const x = setup("VERTICAL_DERIVATIVE");
+    const result = await dispatchReservedCreatorRender(derivativeRequest, config, x.deps);
+    expect(result).toMatchObject({
+      claimId: 21, exportId: 22, assetId: 44, dispatched: true, reviewDecision: "PENDING",
+    });
+    expect(x.reserve).toHaveBeenCalledTimes(1);
+    expect(x.reserve.mock.calls[0][0]).toEqual(derivativeRequest);
+    expect(x.acquireQueuedExport).toHaveBeenCalledOnce();
+    expect(x.acquireQueuedExport).toHaveBeenCalledWith({
+      ...input, claimId: reservation.claimId,
+    }, 10);
+    expect(x.read).toHaveBeenCalledTimes(2);
+    expect(x.read).toHaveBeenCalledWith(derivativeRequest, config);
+    expect(x.resolveMedia).toHaveBeenCalledTimes(1);
+    expect(x.resolveMedia).toHaveBeenCalledWith(derivativeIntent);
+    expect(x.render).toHaveBeenCalledTimes(1);
+    expect(x.render).toHaveBeenCalledWith(
+      expect.objectContaining({
+        width: 1080, height: 1920, fit: "cover", fps: 24,
+        audioDurationMs: 1000, exportId: reservation.exportId,
+      }),
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) }),
+    );
+    expect(x.finalizeVerifiedExport).toHaveBeenCalledTimes(1);
+    expect(x.finalizeVerifiedExport).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "VERTICAL_DERIVATIVE", fingerprint }),
+      x.workerLeaseToken, reservation.exportId, derivativeRendered,
+      derivativeRequest, config, undefined,
+    );
+    expect(x.markUnknown).not.toHaveBeenCalled();
+  });
+
+  it("duplicate derivative fingerprint returns claim state and never starts a second render", async () => {
+    const x = setup("VERTICAL_DERIVATIVE");
+    x.deps.reserve = async () => ({
+      created: false, claimId: 21, exportId: 22, outputAssetId: 44,
+      state: "SUCCEEDED" as const, fingerprint,
+    });
+    const result = await dispatchReservedCreatorRender(derivativeRequest, config, x.deps);
+    expect(result).toMatchObject({
+      created: false, dispatched: false, claimId: 21, outputAssetId: 44,
+    });
+    expect(JSON.stringify(result)).not.toContain("leaseToken");
+    expect(x.acquireQueuedExport).not.toHaveBeenCalled();
+    expect(x.resolveMedia).not.toHaveBeenCalled();
+    expect(x.render).not.toHaveBeenCalled();
+  });
+
+  it("refuses a master-mode worker acquisition for a derivative claim before signing media", async () => {
+    const x = setup("VERTICAL_DERIVATIVE");
+    x.acquireQueuedExport.mockResolvedValueOnce({
+      claimId: reservation.claimId, exportId: reservation.exportId,
+      scope: { ...input, mode: "MASTER_CANDIDATE", fingerprint },
+      leaseToken: x.workerLeaseToken,
+    });
+    await expect(dispatchReservedCreatorRender(derivativeRequest, config, x.deps))
+      .rejects.toThrow("CREATOR_RENDER_DISPATCH_ACQUISITION_SCOPE_DRIFT");
+    expect(x.read).not.toHaveBeenCalled();
+    expect(x.resolveMedia).not.toHaveBeenCalled();
+    expect(x.render).not.toHaveBeenCalled();
+    expect(x.markUnknown).toHaveBeenCalledTimes(1);
+  });
+
+  it("quarantines parent/master source drift before rendering, without ever retrying", async () => {
+    const x = setup("VERTICAL_DERIVATIVE");
+    x.read.mockResolvedValueOnce({ intent: derivativeIntent, fingerprint: "f".repeat(64) });
+    await expect(dispatchReservedCreatorRender(derivativeRequest, config, x.deps))
+      .rejects.toThrow("CREATOR_RENDER_DISPATCH_SOURCE_CHANGED");
+    expect(x.resolveMedia).not.toHaveBeenCalled();
+    expect(x.render).not.toHaveBeenCalled();
+    expect(x.finalizeVerifiedExport).not.toHaveBeenCalled();
+    expect(x.markUnknown).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not finalize a derivative if its underlying master changes while FFmpeg runs", async () => {
+    const x = setup("VERTICAL_DERIVATIVE");
+    x.read.mockResolvedValueOnce({ intent: derivativeIntent, fingerprint })
+      .mockResolvedValueOnce({ intent: derivativeIntent, fingerprint: "f".repeat(64) });
+    await expect(dispatchReservedCreatorRender(derivativeRequest, config, x.deps))
+      .rejects.toThrow("CREATOR_RENDER_DISPATCH_SOURCE_CHANGED");
     expect(x.render).toHaveBeenCalledTimes(1);
     expect(x.finalizeVerifiedExport).not.toHaveBeenCalled();
     expect(x.markUnknown).toHaveBeenCalledTimes(1);
