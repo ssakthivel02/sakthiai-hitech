@@ -372,6 +372,25 @@ export const creatorExports = mysqlTable("creatorExports", {
   completedAt: timestamp("completedAt"),
 });
 
+/** Immutable provenance for one failed-quality render and its distinct replacement. */
+export const creatorRemediationLineage = mysqlTable("creatorRemediationLineage", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  timelineId: int("timelineId").notNull(),
+  sourceCandidateAssetId: int("sourceCandidateAssetId").notNull(),
+  sourceQualityReviewId: int("sourceQualityReviewId").notNull(),
+  sourceChecksumSha256: char("sourceChecksumSha256", { length: 64 }).notNull(),
+  replacementCandidateAssetId: int("replacementCandidateAssetId").notNull(),
+  replacementChecksumSha256: char("replacementChecksumSha256", { length: 64 }).notNull(),
+  createdByUserId: int("createdByUserId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  uniqueIndex("creatorRemediationLineage_source_review_uq").on(table.sourceQualityReviewId),
+  uniqueIndex("creatorRemediationLineage_replacement_uq").on(table.replacementCandidateAssetId),
+  index("creatorRemediationLineage_scope_idx").on(table.workspaceId, table.creatorProjectId, table.timelineId),
+]);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Workspace = typeof workspaces.$inferSelect;
