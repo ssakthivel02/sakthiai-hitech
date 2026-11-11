@@ -231,8 +231,9 @@ describe.skipIf(skipMysqlSuite())("16:9 master review authorization (real SQL)",
 
     const replacementAssetId = await freshMaster("superseded-replacement");
     await run(sql`INSERT INTO creatorExports
-      (workspaceId, creatorProjectId, timelineId, assetId, status, width, height, format, renderer)
-      VALUES (7, ${ids.project}, ${ids.timeline}, ${replacementAssetId}, 'SUCCEEDED', 1920, 1080, 'mp4', 'ffmpeg')`);
+      (workspaceId, creatorProjectId, timelineId, assetId, status, width, height, format, renderer, checksumSha256)
+      VALUES (7, ${ids.project}, ${ids.timeline}, ${replacementAssetId}, 'SUCCEEDED', 1920, 1080, 'mp4', 'ffmpeg',
+        ${createHash("sha256").update("superseded-replacement").digest("hex")})`);
 
     await expect(caller(501).creator.review.humanVisual({
       ...old, decision: "PASS", notes: "stale original visual",
