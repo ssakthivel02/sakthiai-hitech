@@ -92,7 +92,8 @@ describe("Creator legacy render endpoints never bypass the durable claim", () =>
       reviewDecision: "PENDING", finalMaster: false, publishApproved: false,
     });
     expect(JSON.stringify(submitted)).not.toContain("leaseToken");
-    expect(mocks.fencedDispatch).toHaveBeenCalledExactlyOnceWith({
+    expect(mocks.fencedDispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.fencedDispatch).toHaveBeenCalledWith({
       workspaceId: 7, creatorProjectId: 11, timelineId: 13,
     }, {
       rendererVersion: "ffmpeg-v1", fontFamily: expect.any(String),
