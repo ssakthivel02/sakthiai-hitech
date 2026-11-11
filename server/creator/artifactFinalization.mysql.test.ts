@@ -14,9 +14,11 @@ vi.mock("../db", async importOriginal => ({
   ...(await importOriginal<typeof import("../db")>()),
   getDb: async () => state.db,
 }));
-vi.mock("../storage", async () => {
+vi.mock("../storage", async importOriginal => {
+  const original = await importOriginal<typeof import("../storage")>();
   const { createHash } = await import("node:crypto");
   return {
+    ...original,
     storagePutCreatorStagedObject: async (key: string, data: Uint8Array, _mimeType: string) => {
       if (state.failPut) throw new Error("INJECTED_STORAGE_UNAVAILABLE");
       if (state.objects.has(key)) {
