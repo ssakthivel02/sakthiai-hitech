@@ -110,13 +110,45 @@ describe("Creator legacy render endpoints never bypass the durable claim", () =>
     expect(mocks.rawExport).not.toHaveBeenCalled();
   });
 
-  it("vertical derivative always fails closed until a lease-fenced 9:16 dispatcher exists", async () => {
+  it("vertical derivative is separately default-off even when master rendering is enabled", async () => {
     vi.stubEnv("CREATOR_FENCED_RENDER_ENABLED", "true");
+    vi.stubEnv("CREATOR_FENCED_DERIVATIVE_ENABLED", undefined as unknown as string);
     await expect(caller(501).renderVerticalDerivative(derivative)).rejects.toMatchObject({
-      code: "PRECONDITION_FAILED", message: "CREATOR_VERTICAL_DERIVATIVE_FENCED_DISPATCH_REQUIRED",
+      code: "PRECONDITION_FAILED", message: "CREATOR_FENCED_DERIVATIVE_DISABLED",
     });
     expect(mocks.rawExport).not.toHaveBeenCalled();
     expect(mocks.fencedDispatch).not.toHaveBeenCalled();
+  });
+
+  it("owner-only 9:16 dispatch requires both flags and binds the final master through the fenced claim", async () => {
+    vi.stubEnv("CREATOR_FENCED_RENDER_ENABLED", "true");
+    vi.stubEnv("CREATOR_FENCED_DERIVATIVE_ENABLED", "true");
+    const result = await caller(501).renderVerticalDerivative(derivative);
+    expect(result).toMatchObject({
+      dispatched: true, claimId: 61, exportId: 62, assetId: 63,
+      aspectRatio: "9:16", derivative: true, humanCropCheckRequired: true,
+      reviewDecision: "PENDING", finalMaster: false, publishApproved: false,
+    });
+    expect(mocks.fencedDispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.fencedDispatch).toHaveBeenCalledWith({
+      workspaceId: 7, creatorProjectId: 11, timelineId: 13, verticalDerivativeOf: 17,
+    }, { rendererVersion: "ffmpeg-v1", fontFamily: expect.any(String) });
+    expect(JSON.stringify(result)).not.toContain("leaseToken");
+    expect(mocks.rawExport).not.toHaveBeenCalled();
+  });
+
+  it("a duplicate 9:16 render claim reveals only safe read-only status", async () => {
+    vi.stubEnv("CREATOR_FENCED_RENDER_ENABLED", "true");
+    vi.stubEnv("CREATOR_FENCED_DERIVATIVE_ENABLED", "true");
+    mocks.fencedDispatch.mockResolvedValueOnce({ dispatched: false, claimId: 61, exportId: 62, state: "RUNNING" });
+    const result = await caller(501).renderVerticalDerivative(derivative);
+    expect(result).toMatchObject({
+      dispatched: false, claimId: 61, exportId: 62, state: "RUNNING",
+      aspectRatio: "9:16", derivative: true, humanCropCheckRequired: true,
+      nextGate: "EXISTING_RENDER_CLAIM", finalMaster: false, publishApproved: false,
+    });
+    expect(JSON.stringify(result)).not.toContain("leaseToken");
+    expect(mocks.rawExport).not.toHaveBeenCalled();
   });
 
   it("anonymous callers never invoke the dispatcher", async () => {
