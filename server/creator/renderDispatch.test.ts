@@ -295,7 +295,7 @@ describe("Creator fenced 9:16 derivative dispatch", () => {
       claimId: 21, exportId: 22, assetId: 44, dispatched: true, reviewDecision: "PENDING",
     });
     expect(x.reserve).toHaveBeenCalledTimes(1);
-    expect(x.reserve.mock.calls[0][0]).toEqual(derivativeRequest);
+    expect(x.reserve).toHaveBeenCalledWith(derivativeRequest, config, expect.any(Function), 10);
     expect(x.acquireQueuedExport).toHaveBeenCalledOnce();
     expect(x.acquireQueuedExport).toHaveBeenCalledWith({
       ...input, claimId: reservation.claimId,
