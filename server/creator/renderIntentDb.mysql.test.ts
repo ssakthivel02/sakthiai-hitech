@@ -311,4 +311,61 @@ describe.skipIf(skipMysqlSuite())("Creator server-owned render intent", { timeou
     expect(Number(assets[0].n)).toBe(0);
   });
 
+
+  /**
+   * InnoDB locking reads must wait for in-flight approval/ownership changes.
+   * A plain consistent SELECT can return the old APPROVED/owned row while
+   * another transaction holds an uncommitted REJECTED/foreign value.
+   */
+  const expectPendingSourceMutationBlocked = async (
+    updateSql: string, id: number, errorCode: string,
+  ) => {
+    const writer = await d.pool.promise().getConnection();
+    let active = false;
+    let pending: ReturnType<typeof read> | undefined;
+    try {
+      await writer.beginTransaction();
+      active = true;
+      await writer.execute(updateSql, [id]);
+      pending = read();
+      let settled = false;
+      void pending.then(() => { settled = true; }, () => { settled = true; });
+      // Match the existing timeline-lock contention test's bounded wait.
+      await new Promise(resolve => setTimeout(resolve, 80));
+      expect(settled).toBe(false);
+      await writer.commit();
+      active = false;
+      await expect(pending).rejects.toThrow(errorCode);
+    } finally {
+      if (active) await writer.rollback();
+      writer.release();
+      await pending?.catch(() => undefined);
+    }
+  };
+
+  it("does not read stale APPROVED audio while another transaction revokes it", async () => {
+    await expectPendingSourceMutationBlocked(
+      "UPDATE creatorAssets SET reviewDecision='REJECTED' WHERE id=?",
+      ids.audio, "CREATOR_RENDER_INTENT_SOURCE_NOT_IMMUTABLE_APPROVED:audio",
+    );
+  });
+
+  it("does not read stale APPROVED visual media while another transaction revokes it", async () => {
+    await expectPendingSourceMutationBlocked(
+      "UPDATE creatorAssets SET reviewDecision='REJECTED' WHERE id=?",
+      ids.clip, "CREATOR_RENDER_INTENT_SOURCE_NOT_IMMUTABLE_APPROVED:visual",
+    );
+  });
+
+  it("does not accept a shot reassigned to another workspace by a concurrent transaction", async () => {
+    try {
+      await expectPendingSourceMutationBlocked(
+        "UPDATE creatorShots SET workspaceId=8 WHERE id=?",
+        ids.shot2, "CREATOR_RENDER_INTENT_FOREIGN_SHOT",
+      );
+    } finally {
+      await exec(sql`UPDATE creatorShots SET workspaceId=7 WHERE id=${ids.shot2}`);
+    }
+  });
+
 });
