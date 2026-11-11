@@ -164,7 +164,7 @@ test.describe("Creator browser positive synthetic visual approval", () => {
       // This browser stack deliberately has CREATOR_FENCED_RENDER_ENABLED unset.
       // Readiness never authorizes FFmpeg without the independent server gate.
       await render.click();
-      await expect(page.getByTestId("creator-error")).toHaveAttribute("data-error-code", "PRECONDITION_FAILED");
+      await expect(page.getByTestId("creator-error")).toHaveAttribute("data-error-code", "CREATOR_FENCED_RENDER_DISABLED");
       const state = await trpcQuery<{
         assets: Array<{ assetType: string }>; exports: unknown[]; generations: unknown[];
       }>(page.request, "creator.workspace.getProject", { workspaceId, creatorProjectId });
