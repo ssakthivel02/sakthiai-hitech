@@ -128,22 +128,6 @@ function assertQualityCandidateBinding(scoresJson: string | null, asset: typeof 
   }
 }
 
-async function ensureReviewAbsent(input: {
-  workspaceId: number;
-  creatorProjectId: number;
-  assetId: number;
-  reviewType: "QUALITY" | "HUMAN_TAMIL" | "HUMAN_VISUAL";
-}) {
-  const db = await requireDb();
-  const [existing] = await db.select({ id: creatorReviews.id }).from(creatorReviews).where(and(
-    eq(creatorReviews.workspaceId, input.workspaceId),
-    eq(creatorReviews.creatorProjectId, input.creatorProjectId),
-    eq(creatorReviews.assetId, input.assetId),
-    eq(creatorReviews.reviewType, input.reviewType),
-  )).limit(1);
-  if (existing) throw new Error(`CREATOR_${input.reviewType}_REVIEW_ALREADY_RECORDED`);
-}
-
 export async function recordCreatorQualityReview(input: {
   workspaceId: number;
   creatorProjectId: number;
@@ -155,12 +139,29 @@ export async function recordCreatorQualityReview(input: {
   criticalDefects: string[];
   notes?: string;
 }) {
-  const { db, asset, provenance } = await requireRenderAsset(input);
-  if (asset.reviewDecision !== "PENDING") throw new Error("CREATOR_QUALITY_REVIEW_ASSET_ALREADY_FINAL");
-  await ensureReviewAbsent({ ...input, reviewType: "QUALITY" });
+  const { db } = await requireRenderAsset(input);
+  // One asset-row lock serializes quality, Tamil, visual and final promotion.
+  return db.transaction(async tx => {
+    const [asset] = await tx.select().from(creatorAssets).where(and(
+      eq(creatorAssets.id, input.assetId),
+      eq(creatorAssets.workspaceId, input.workspaceId),
+      eq(creatorAssets.creatorProjectId, input.creatorProjectId),
+    )).limit(1).for("update");
+    if (!asset || asset.assetType !== "RENDER" || asset.immutable !== 1) {
+      throw new Error("CREATOR_REVIEW_RENDER_NOT_FOUND");
+    }
+    const provenance = parseRenderProvenance(asset.provenanceJson);
+    if (asset.reviewDecision !== "PENDING") throw new Error("CREATOR_QUALITY_REVIEW_ASSET_ALREADY_FINAL");
+    const [existing] = await tx.select({ id: creatorReviews.id }).from(creatorReviews).where(and(
+      eq(creatorReviews.workspaceId, input.workspaceId),
+      eq(creatorReviews.creatorProjectId, input.creatorProjectId),
+      eq(creatorReviews.assetId, input.assetId),
+      eq(creatorReviews.reviewType, "QUALITY"),
+    )).limit(1);
+    if (existing) throw new Error("CREATOR_QUALITY_REVIEW_ALREADY_RECORDED");
   const candidateArtifact = await verifyCandidateBytes(asset);
 
-  const [timeline] = await db.select().from(creatorTimelines).where(and(
+  const [timeline] = await tx.select().from(creatorTimelines).where(and(
     eq(creatorTimelines.id, Number(provenance.timelineId)),
     eq(creatorTimelines.workspaceId, input.workspaceId),
     eq(creatorTimelines.creatorProjectId, input.creatorProjectId),
@@ -189,7 +190,7 @@ export async function recordCreatorQualityReview(input: {
       ? "ASSISTED_HUMAN_REVIEW"
       : score.decision;
 
-  const inserted = await db.insert(creatorReviews).values({
+  const inserted = await tx.insert(creatorReviews).values({
     workspaceId: input.workspaceId,
     creatorProjectId: input.creatorProjectId,
     assetId: input.assetId,
@@ -208,12 +209,13 @@ export async function recordCreatorQualityReview(input: {
   if (!reviewId) throw new Error("CREATOR_QUALITY_REVIEW_CREATE_FAILED");
 
   if (score.decision === "REJECT") {
-    await db.update(creatorAssets).set({ reviewDecision: "REJECTED" }).where(and(
+    await tx.update(creatorAssets).set({ reviewDecision: "REJECTED" }).where(and(
       eq(creatorAssets.id, input.assetId),
       eq(creatorAssets.workspaceId, input.workspaceId),
     ));
   }
   return { reviewId, assetId: input.assetId, decision, quality: score, finalMaster: false, publishApproved: false };
+  });
 }
 
 export async function recordCreatorHumanReview(input: {
@@ -225,12 +227,27 @@ export async function recordCreatorHumanReview(input: {
   decision: "PASS" | "REJECT";
   notes: string;
 }) {
-  const { db, asset } = await requireRenderAsset(input);
-  if (asset.reviewDecision !== "PENDING") throw new Error("CREATOR_HUMAN_REVIEW_ASSET_ALREADY_FINAL");
-  if (!input.notes.trim()) throw new Error("CREATOR_HUMAN_REVIEW_NOTES_REQUIRED");
-  await ensureReviewAbsent(input);
+  const { db } = await requireRenderAsset(input);
+  return db.transaction(async tx => {
+    const [asset] = await tx.select().from(creatorAssets).where(and(
+      eq(creatorAssets.id, input.assetId),
+      eq(creatorAssets.workspaceId, input.workspaceId),
+      eq(creatorAssets.creatorProjectId, input.creatorProjectId),
+    )).limit(1).for("update");
+    if (!asset || asset.assetType !== "RENDER" || asset.immutable !== 1) {
+      throw new Error("CREATOR_REVIEW_RENDER_NOT_FOUND");
+    }
+    if (asset.reviewDecision !== "PENDING") throw new Error("CREATOR_HUMAN_REVIEW_ASSET_ALREADY_FINAL");
+    if (!input.notes.trim()) throw new Error("CREATOR_HUMAN_REVIEW_NOTES_REQUIRED");
+    const [existing] = await tx.select({ id: creatorReviews.id }).from(creatorReviews).where(and(
+      eq(creatorReviews.workspaceId, input.workspaceId),
+      eq(creatorReviews.creatorProjectId, input.creatorProjectId),
+      eq(creatorReviews.assetId, input.assetId),
+      eq(creatorReviews.reviewType, input.reviewType),
+    )).limit(1);
+    if (existing) throw new Error(`CREATOR_${input.reviewType}_REVIEW_ALREADY_RECORDED`);
 
-  const [quality] = await db.select().from(creatorReviews).where(and(
+  const [quality] = await tx.select().from(creatorReviews).where(and(
     eq(creatorReviews.workspaceId, input.workspaceId),
     eq(creatorReviews.creatorProjectId, input.creatorProjectId),
     eq(creatorReviews.assetId, input.assetId),
@@ -240,7 +257,7 @@ export async function recordCreatorHumanReview(input: {
   assertQualityCandidateBinding(quality.scoresJson, asset);
   if (quality.decision === "REGENERATE" || quality.decision === "REJECT") throw new Error("CREATOR_HUMAN_REVIEW_BLOCKED_BY_QUALITY");
 
-  const inserted = await db.insert(creatorReviews).values({
+  const inserted = await tx.insert(creatorReviews).values({
     workspaceId: input.workspaceId,
     creatorProjectId: input.creatorProjectId,
     assetId: input.assetId,
@@ -253,12 +270,13 @@ export async function recordCreatorHumanReview(input: {
   if (!reviewId) throw new Error("CREATOR_HUMAN_REVIEW_CREATE_FAILED");
 
   if (input.decision === "REJECT") {
-    await db.update(creatorAssets).set({ reviewDecision: "REJECTED" }).where(and(
+    await tx.update(creatorAssets).set({ reviewDecision: "REJECTED" }).where(and(
       eq(creatorAssets.id, input.assetId),
       eq(creatorAssets.workspaceId, input.workspaceId),
     ));
   }
   return { reviewId, assetId: input.assetId, reviewType: input.reviewType, decision: input.decision, finalMaster: false, publishApproved: false };
+  });
 }
 
 export async function finalizeCreatorMaster(input: {
@@ -266,11 +284,20 @@ export async function finalizeCreatorMaster(input: {
   creatorProjectId: number;
   assetId: number;
 }) {
-  const { db, asset } = await requireRenderAsset(input);
-  if (asset.reviewDecision === "REJECTED") throw new Error("CREATOR_FINAL_MASTER_REJECTED");
-  if (asset.reviewDecision === "APPROVED") throw new Error("CREATOR_FINAL_MASTER_ALREADY_APPROVED");
+  const { db } = await requireRenderAsset(input);
+  return db.transaction(async tx => {
+    const [asset] = await tx.select().from(creatorAssets).where(and(
+      eq(creatorAssets.id, input.assetId),
+      eq(creatorAssets.workspaceId, input.workspaceId),
+      eq(creatorAssets.creatorProjectId, input.creatorProjectId),
+    )).limit(1).for("update");
+    if (!asset || asset.assetType !== "RENDER" || asset.immutable !== 1) {
+      throw new Error("CREATOR_REVIEW_RENDER_NOT_FOUND");
+    }
+    if (asset.reviewDecision === "REJECTED") throw new Error("CREATOR_FINAL_MASTER_REJECTED");
+    if (asset.reviewDecision === "APPROVED") throw new Error("CREATOR_FINAL_MASTER_ALREADY_APPROVED");
 
-  const reviews = await db.select().from(creatorReviews).where(and(
+  const reviews = await tx.select().from(creatorReviews).where(and(
     eq(creatorReviews.workspaceId, input.workspaceId),
     eq(creatorReviews.creatorProjectId, input.creatorProjectId),
     eq(creatorReviews.assetId, input.assetId),
@@ -285,7 +312,7 @@ export async function finalizeCreatorMaster(input: {
   assertQualityCandidateBinding(quality.scoresJson, asset);
   await verifyCandidateBytes(asset);
 
-  await db.update(creatorAssets).set({ reviewDecision: "APPROVED" }).where(and(
+  await tx.update(creatorAssets).set({ reviewDecision: "APPROVED" }).where(and(
     eq(creatorAssets.id, input.assetId),
     eq(creatorAssets.workspaceId, input.workspaceId),
     eq(creatorAssets.creatorProjectId, input.creatorProjectId),
@@ -300,4 +327,5 @@ export async function finalizeCreatorMaster(input: {
     publishApproved: false,
     automaticPublish: false,
   };
+  });
 }
