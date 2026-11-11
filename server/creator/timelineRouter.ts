@@ -2,7 +2,6 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getWorkspaceForUser } from "../db";
 import { protectedProcedure, router } from "../_core/trpc";
-import { executeCreatorTimelineExport } from "./renderService";
 import { dispatchReservedCreatorRender } from "./renderDispatch";
 import { MysqlCreatorRenderClaims } from "./renderClaims";
 import { CREATOR_CAPTION_FONT_FAMILY } from "./renderWorker";
@@ -36,6 +35,53 @@ function mapTimelineError(error: unknown): never {
   throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "CREATOR_TIMELINE_RUNTIME_ERROR" });
 }
 
+
+/**
+ * Single owner-only, opt-in fenced master-candidate entrypoint.
+ * Legacy renderCandidate must NOT bypass the durable claim or dispatch a
+ * separate FFmpeg job. Caller authorization is enforced before invocation.
+ */
+async function runFencedMasterCandidate(input: {
+  workspaceId: number; creatorProjectId: number; timelineId: number;
+}) {
+  if (process.env.CREATOR_FENCED_RENDER_ENABLED !== "true") {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "CREATOR_FENCED_RENDER_DISABLED" });
+  }
+  try {
+    const result = await dispatchReservedCreatorRender({
+      workspaceId: input.workspaceId,
+      creatorProjectId: input.creatorProjectId,
+      timelineId: input.timelineId,
+    }, {
+      rendererVersion: "ffmpeg-v1",
+      fontFamily: CREATOR_CAPTION_FONT_FAMILY,
+    });
+    if (!result.dispatched) {
+      return {
+        dispatched: false as const,
+        claimId: result.claimId,
+        exportId: result.exportId,
+        state: result.state,
+        finalMaster: false as const,
+        publishApproved: false as const,
+        nextGate: "EXISTING_RENDER_CLAIM" as const,
+      };
+    }
+    return {
+      dispatched: true as const,
+      claimId: result.claimId,
+      exportId: result.exportId,
+      assetId: result.assetId,
+      reviewDecision: "PENDING" as const,
+      finalMaster: false as const,
+      publishApproved: false as const,
+      nextGate: "VIDEO_QUALITY_AND_HUMAN_REVIEW" as const,
+    };
+  } catch (error) {
+    mapTimelineError(error);
+  }
+}
+
 export const creatorTimelineRouter = router({
   replaceApprovedItems: protectedProcedure
     .input(workspaceInput.extend({
@@ -66,42 +112,7 @@ export const creatorTimelineRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
-      if (process.env.CREATOR_FENCED_RENDER_ENABLED !== "true") {
-        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "CREATOR_FENCED_RENDER_DISABLED" });
-      }
-      try {
-        const result = await dispatchReservedCreatorRender({
-          workspaceId: input.workspaceId,
-          creatorProjectId: input.creatorProjectId,
-          timelineId: input.timelineId,
-        }, {
-          rendererVersion: "ffmpeg-v1",
-          fontFamily: CREATOR_CAPTION_FONT_FAMILY,
-        });
-        if (!result.dispatched) {
-          return {
-            dispatched: false as const,
-            claimId: result.claimId,
-            exportId: result.exportId,
-            state: result.state,
-            finalMaster: false as const,
-            publishApproved: false as const,
-            nextGate: "EXISTING_RENDER_CLAIM" as const,
-          };
-        }
-        return {
-          dispatched: true as const,
-          claimId: result.claimId,
-          exportId: result.exportId,
-          assetId: result.assetId,
-          reviewDecision: "PENDING" as const,
-          finalMaster: false as const,
-          publishApproved: false as const,
-          nextGate: "VIDEO_QUALITY_AND_HUMAN_REVIEW" as const,
-        };
-      } catch (error) {
-        mapTimelineError(error);
-      }
+      return runFencedMasterCandidate(input);
     }),
 
 
@@ -152,6 +163,11 @@ export const creatorTimelineRouter = router({
       }
     }),
 
+  /**
+   * Compatibility alias for the old Creator UI. NEVER use raw, unfenced
+   * executeCreatorTimelineExport. Reuses the same claim and feature switch
+   * as renderFencedCandidate; only a workspace owner may dispatch.
+   */
   renderCandidate: protectedProcedure
     .input(workspaceInput.extend({
       creatorProjectId: z.number().int().positive(),
@@ -159,22 +175,8 @@ export const creatorTimelineRouter = router({
       confirmCandidateOnly: z.literal(true),
     }))
     .mutation(async ({ ctx, input }) => {
-      await requireWorkspace(ctx.user.id, input.workspaceId);
-      try {
-        const result = await executeCreatorTimelineExport({
-          workspaceId: input.workspaceId,
-          creatorProjectId: input.creatorProjectId,
-          timelineId: input.timelineId,
-        });
-        return {
-          ...result,
-          finalMaster: false as const,
-          publishApproved: false as const,
-          nextGate: "VIDEO_QUALITY_AND_HUMAN_REVIEW" as const,
-        };
-      } catch (error) {
-        mapTimelineError(error);
-      }
+      await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
+      return runFencedMasterCandidate(input);
     }),
 
   /** 9:16 (1080×1920, centre-crop) delivery derivative of an APPROVED 16:9 final master; refuses on any source drift. */
@@ -185,18 +187,13 @@ export const creatorTimelineRouter = router({
       finalMasterAssetId: z.number().int().positive(),
     }))
     .mutation(async ({ ctx, input }) => {
-      await requireWorkspace(ctx.user.id, input.workspaceId);
-      try {
-        const result = await executeCreatorTimelineExport({
-          workspaceId: input.workspaceId,
-          creatorProjectId: input.creatorProjectId,
-          timelineId: input.timelineId,
-          verticalDerivativeOf: input.finalMasterAssetId,
-        });
-        return { ...result, aspectRatio: "9:16" as const, derivative: true as const, finalMaster: false as const, publishApproved: false as const, humanCropCheckRequired: true as const };
-      } catch (error) {
-        mapTimelineError(error);
-      }
+      await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
+      // There is no approved claim-fenced 9:16 dispatch entrypoint yet.
+      // Fail closed rather than call the old idempotency-bypassing service.
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: "CREATOR_VERTICAL_DERIVATIVE_FENCED_DISPATCH_REQUIRED",
+      });
     }),
 
   /**
