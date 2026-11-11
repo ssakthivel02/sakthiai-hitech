@@ -109,25 +109,6 @@ export default function Creator() {
     () => Object.fromEntries(qualityDimensionIds.map(id => [id, ""])) as Record<(typeof qualityDimensionIds)[number], string>,
   );
   const generationIntents = useRef<Record<string, CreatorRequestIntent>>({});
-  // New render means a new review. Never carry over an earlier candidate's
-  // playback, pre-filled verdict, notes or quality scores.
-  useEffect(() => {
-    setWatchedRenderAssetId(undefined);
-    setReviewNotes("");
-    setSourcePrompt("");
-    setCriticalDefects("");
-    setQualityScores(Object.fromEntries(qualityDimensionIds.map(id => [id, ""])) as Record<(typeof qualityDimensionIds)[number], string>);
-  }, [latestRenderAsset?.id]);
-  const reviewGate = creatorReviewReadiness({
-    candidateId: latestRenderAsset?.id,
-    candidateDecision: latestRenderAsset?.reviewDecision,
-    watchedAssetId: watchedRenderAssetId,
-    notes: reviewNotes,
-    source: sourcePrompt,
-    qualityScores,
-    dimensionIds: qualityDimensionIds,
-    reviews: project.data?.reviews ?? [],
-  });
 
   function idempotencyKeyFor(scope: string, payload: unknown) {
     return creatorIntentKey(generationIntents.current, scope, payload, () => crypto.randomUUID());
@@ -158,6 +139,25 @@ export default function Creator() {
   const latestRenderAsset = [...renderAssets].sort((a, b) => b.id - a.id)[0];
   const finalMaster = [...renderAssets].filter(asset => asset.reviewDecision === "APPROVED").sort((a, b) => b.id - a.id)[0];
   const [watchedRenderAssetId, setWatchedRenderAssetId] = useState<number>();
+  // New render means a new review. Never carry over an earlier candidate's
+  // playback, pre-filled verdict, notes or quality scores.
+  useEffect(() => {
+    setWatchedRenderAssetId(undefined);
+    setReviewNotes("");
+    setSourcePrompt("");
+    setCriticalDefects("");
+    setQualityScores(Object.fromEntries(qualityDimensionIds.map(id => [id, ""])) as Record<(typeof qualityDimensionIds)[number], string>);
+  }, [latestRenderAsset?.id]);
+  const reviewGate = creatorReviewReadiness({
+    candidateId: latestRenderAsset?.id,
+    candidateDecision: latestRenderAsset?.reviewDecision,
+    watchedAssetId: watchedRenderAssetId,
+    notes: reviewNotes,
+    source: sourcePrompt,
+    qualityScores,
+    dimensionIds: qualityDimensionIds,
+    reviews: project.data?.reviews ?? [],
+  });
   const [panelError, setPanelError] = useState<unknown>();
   const [manifestError, setManifestError] = useState<unknown>();
   const utils = trpc.useUtils();
