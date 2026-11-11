@@ -99,7 +99,7 @@ export function startFakeS3(port: number) {
       // A full-object 200 response must never masquerade as checksum readback.
       const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
       if (range && req.method === "GET") {
-        const match = /^bytes=(\\d+)-(\\d+)$/.exec(range);
+        const match = /^bytes=(\d+)-(\d+)$/.exec(range);
         const start = match ? Number(match[1]) : NaN;
         const requestedEnd = match ? Number(match[2]) : NaN;
         if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) ||
