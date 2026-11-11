@@ -1,5 +1,5 @@
-import { and, eq } from "drizzle-orm";
-import { creatorAssets, creatorReviews, creatorTimelines } from "../../drizzle/schema";
+import { and, eq, gt, ne } from "drizzle-orm";
+import { creatorAssets, creatorExports, creatorReviews, creatorTimelines } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { storageVerifySha256 } from "../storage";
 import { scoreCreatorRenderQuality, type CreatorOutputEvidence, type CreatorQualityReviewerType } from "./qualityGate";
@@ -128,6 +128,39 @@ function assertQualityCandidateBinding(scoresJson: string | null, asset: typeof 
   }
 }
 
+/**
+ * Lock the timeline shared with fenced render finalization before testing
+ * whether a newer completed 16:9 render supersedes this candidate. The
+ * lock prevents a new successful export from committing mid-review.
+ * Only a completed, immutable, non-rejected render in the same project,
+ * timeline and output profile can supersede the candidate.
+ */
+async function assertCurrentCandidate(tx: Parameters<Parameters<NonNullable<Awaited<ReturnType<typeof getDb>>>["transaction"]>[0]>[0],
+  asset: typeof creatorAssets.$inferSelect, input: { workspaceId: number; creatorProjectId: number }) {
+  const provenance = parseRenderProvenance(asset.provenanceJson);
+  const [timeline] = await tx.select({ id: creatorTimelines.id }).from(creatorTimelines).where(and(
+    eq(creatorTimelines.id, Number(provenance.timelineId)),
+    eq(creatorTimelines.workspaceId, input.workspaceId),
+    eq(creatorTimelines.creatorProjectId, input.creatorProjectId),
+  )).limit(1).for("update");
+  if (!timeline) throw new Error("CREATOR_REVIEW_TIMELINE_NOT_FOUND");
+  const [newer] = await tx.select({ assetId: creatorAssets.id }).from(creatorExports)
+    .innerJoin(creatorAssets, eq(creatorExports.assetId, creatorAssets.id))
+    .where(and(
+      eq(creatorExports.workspaceId, input.workspaceId),
+      eq(creatorExports.creatorProjectId, input.creatorProjectId),
+      eq(creatorExports.timelineId, timeline.id),
+      eq(creatorExports.status, "SUCCEEDED"),
+      eq(creatorExports.width, Number(provenance.width)),
+      eq(creatorExports.height, Number(provenance.height)),
+      eq(creatorAssets.assetType, "RENDER"),
+      eq(creatorAssets.immutable, 1),
+      ne(creatorAssets.reviewDecision, "REJECTED"),
+      gt(creatorAssets.id, asset.id),
+    )).limit(1);
+  if (newer) throw new Error("CREATOR_REVIEW_CANDIDATE_SUPERSEDED");
+}
+
 export async function recordCreatorQualityReview(input: {
   workspaceId: number;
   creatorProjectId: number;
@@ -151,6 +184,7 @@ export async function recordCreatorQualityReview(input: {
       throw new Error("CREATOR_REVIEW_RENDER_NOT_FOUND");
     }
     const provenance = parseRenderProvenance(asset.provenanceJson);
+    await assertCurrentCandidate(tx, asset, input);
     if (asset.reviewDecision !== "PENDING") throw new Error("CREATOR_QUALITY_REVIEW_ASSET_ALREADY_FINAL");
     const [existing] = await tx.select({ id: creatorReviews.id }).from(creatorReviews).where(and(
       eq(creatorReviews.workspaceId, input.workspaceId),
@@ -238,6 +272,7 @@ export async function recordCreatorHumanReview(input: {
       throw new Error("CREATOR_REVIEW_RENDER_NOT_FOUND");
     }
     if (asset.reviewDecision !== "PENDING") throw new Error("CREATOR_HUMAN_REVIEW_ASSET_ALREADY_FINAL");
+    await assertCurrentCandidate(tx, asset, input);
     if (!input.notes.trim()) throw new Error("CREATOR_HUMAN_REVIEW_NOTES_REQUIRED");
     const [existing] = await tx.select({ id: creatorReviews.id }).from(creatorReviews).where(and(
       eq(creatorReviews.workspaceId, input.workspaceId),
@@ -299,6 +334,7 @@ export async function finalizeCreatorMaster(input: {
     }
     if (asset.reviewDecision === "REJECTED") throw new Error("CREATOR_FINAL_MASTER_REJECTED");
     if (asset.reviewDecision === "APPROVED") throw new Error("CREATOR_FINAL_MASTER_ALREADY_APPROVED");
+    await assertCurrentCandidate(tx, asset, input);
 
   const reviews = await tx.select().from(creatorReviews).where(and(
     eq(creatorReviews.workspaceId, input.workspaceId),
