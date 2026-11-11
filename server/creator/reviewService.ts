@@ -255,6 +255,9 @@ export async function recordCreatorHumanReview(input: {
   )).limit(1);
   if (!quality) throw new Error("CREATOR_QUALITY_REVIEW_REQUIRED_FIRST");
   assertQualityCandidateBinding(quality.scoresJson, asset);
+  // Human approval must attest to bytes that still match the scored candidate.
+  // A final-master readback alone is too late to protect the review decision.
+  await verifyCandidateBytes(asset);
   if (quality.decision === "REGENERATE" || quality.decision === "REJECT") throw new Error("CREATOR_HUMAN_REVIEW_BLOCKED_BY_QUALITY");
 
   const inserted = await tx.insert(creatorReviews).values({
