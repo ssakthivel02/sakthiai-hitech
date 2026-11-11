@@ -151,6 +151,7 @@ async function assertCurrentCandidate(tx: Parameters<Parameters<NonNullable<Awai
       eq(creatorExports.creatorProjectId, input.creatorProjectId),
       eq(creatorExports.timelineId, timeline.id),
       eq(creatorExports.status, "SUCCEEDED"),
+      eq(creatorExports.checksumSha256, creatorAssets.checksumSha256),
       eq(creatorExports.width, Number(provenance.width)),
       eq(creatorExports.height, Number(provenance.height)),
       eq(creatorAssets.assetType, "RENDER"),
