@@ -231,7 +231,26 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
 
   it("verifies actual MinIO source and replacement bytes before immutable remediation linkage", async () => {
     const source = await candidate("lineage-real-source");
+    // Remediation must produce a genuinely different rendered candidate, not a
+    // second object key containing identical MP4 bytes.
+    const replacementMp4 = join(dir, "lineage-replacement-red.mp4");
+    await exec(process.env.FFMPEG_PATH?.trim() || "ffmpeg", [
+      "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+      "-f", "lavfi", "-i", "color=c=red:s=1920x1080:r=24:d=2",
+      "-f", "lavfi", "-i", "sine=frequency=660:sample_rate=48000:duration=2",
+      "-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-movflags", "+faststart", replacementMp4,
+    ], { timeout: 60_000 });
+    const replacementBytes = await readFile(replacementMp4);
+    const replacementChecksum = createHash("sha256").update(replacementBytes).digest("hex");
+    expect(replacementChecksum).not.toBe(checksum);
     const replacement = await candidate("lineage-real-replacement");
+    await s3.send(new PutObjectCommand({
+      Bucket: "creator-minio-ci", Key: replacement.storageKey,
+      Body: replacementBytes, ContentType: "video/mp4",
+    }));
+    await run(sql`UPDATE creatorAssets SET checksumSha256 = ${replacementChecksum},
+      byteSize = ${replacementBytes.length} WHERE id = ${replacement.assetId}`);
     const sourceQuality = await quality(source.assetId, zeroDimensions);
     expect(sourceQuality.decision).toBe("REGENERATE");
     const sourceReview = await one<{ id: number }>(sql`SELECT id FROM creatorReviews
@@ -242,7 +261,7 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
       await run(sql`INSERT INTO creatorExports
         (workspaceId, creatorProjectId, timelineId, status, width, height, format, renderer, assetId, checksumSha256)
         VALUES (7, ${projectId}, ${timelineId}, 'SUCCEEDED', 1920, 1080, 'mp4', 'ffmpeg',
-          ${item.assetId}, ${checksum})`);
+          ${item.assetId}, ${item.assetId === source.assetId ? checksum : replacementChecksum})`);
       const exportRow = await one<{ id: number }>(sql`SELECT MAX(id) AS id FROM creatorExports
         WHERE assetId = ${item.assetId}`);
       const provenance = JSON.stringify({
@@ -257,7 +276,7 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
       workspaceId: 7, creatorProjectId: projectId, reviewerUserId: 501,
       sourceCandidateAssetId: source.assetId, sourceQualityReviewId: sourceReview.id,
       replacementCandidateAssetId: replacement.assetId,
-      expectedSourceChecksumSha256: checksum, expectedReplacementChecksumSha256: checksum,
+      expectedSourceChecksumSha256: checksum, expectedReplacementChecksumSha256: replacementChecksum,
     };
     // Deliberately corrupt replacement bytes, leaving DB checksums unchanged.
     await s3.send(new PutObjectCommand({
@@ -272,7 +291,7 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
     // Restore exact bytes: a valid link must not create inherited approvals.
     await s3.send(new PutObjectCommand({
       Bucket: "creator-minio-ci", Key: replacement.storageKey,
-      Body: renderedBytes, ContentType: "video/mp4",
+      Body: replacementBytes, ContentType: "video/mp4",
     }));
     const linked = await linkCreatorRemediationReplacement(args);
     expect(linked).toMatchObject({
