@@ -129,7 +129,7 @@ test.describe("Creator browser vertical slice: synthetic audio and Tamil cues", 
     await page.getByPlaceholder("Shot title").fill("Synthetic opening shot");
     await page.getByPlaceholder("Generation prompt").fill("Disposable non-provider fixture");
     await page.getByRole("button", { name: "Shot", exact: true }).click();
-    await expect(page.getByText(/Synthetic opening shot/)).toBeVisible();
+    await expect(page.getByText("1. Synthetic opening shot", { exact: true }).first()).toBeVisible();
 
     const lockAudio = page.getByRole("button", { name: "Lock approved audio master" });
     const render = page.getByRole("button", { name: "Render 16:9 candidate" });
