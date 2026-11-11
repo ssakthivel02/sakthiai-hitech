@@ -95,7 +95,31 @@ export function startFakeS3(port: number) {
     if (req.method === "GET" || req.method === "HEAD") {
       const object = objects.get(key);
       if (!object) { res.writeHead(404, { "content-type": "application/xml" }); return res.end("<Error><Code>NoSuchKey</Code></Error>"); }
-      res.writeHead(200, { "content-type": object.type, "content-length": object.body.length, etag: '"fake"' }); return res.end(req.method === "HEAD" ? undefined : object.body);
+      // Honor exact S3 byte ranges: Creator approval verifies the stored bytes via 206.
+      // A full-object 200 response must never masquerade as checksum readback.
+      const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
+      if (range && req.method === "GET") {
+        const match = /^bytes=(\\d+)-(\\d+)$/.exec(range);
+        const start = match ? Number(match[1]) : NaN;
+        const requestedEnd = match ? Number(match[2]) : NaN;
+        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) ||
+            start > requestedEnd || start >= object.body.length) {
+          res.writeHead(416, { "content-range": `bytes */${object.body.length}` });
+          return res.end();
+        }
+        const end = Math.min(requestedEnd, object.body.length - 1);
+        const bytes = object.body.subarray(start, end + 1);
+        res.writeHead(206, {
+          "content-type": object.type,
+          "content-range": `bytes ${start}-${end}/${object.body.length}`,
+          "content-length": bytes.length,
+          "accept-ranges": "bytes",
+          etag: '"fake"',
+        });
+        return res.end(bytes);
+      }
+      res.writeHead(200, { "content-type": object.type, "content-length": object.body.length, "accept-ranges": "bytes", etag: '"fake"' });
+      return res.end(req.method === "HEAD" ? undefined : object.body);
     }
     if (req.method === "DELETE") { objects.delete(key); res.writeHead(204); return res.end(); }
     res.writeHead(405); res.end();
