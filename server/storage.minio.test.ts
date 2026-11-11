@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { CreateBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { beforeAll, describe, expect, it } from "vitest";
-import { storageListCreatorRenderObjects, storagePut, storageVerifySha256 } from "./storage";
+import { storageListCreatorRenderObjects, storagePut, storagePutCreatorStagedObject, storageVerifySha256 } from "./storage";
+import { creatorArtifactStageKey } from "./creator/artifactStage";
 import { inspectQuarantinedCreatorRender } from "./creator/renderReconciliation";
 import type { getDb } from "./db";
 
@@ -58,6 +59,23 @@ describe.skipIf(!enabled)("Creator real MinIO storage reconciliation (disposable
     });
     await s3.send(new CreateBucketCommand({ Bucket: bucket }));
   }, 30_000);
+
+  it("conditionally creates one immutable staged artifact and refuses overwrite", async () => {
+    const key = creatorArtifactStageKey({
+      workspaceId: 7, creatorProjectId: 11, generationId: 801,
+      provider: "google-veo", providerJobId: "disposable-minio-job-801",
+      checksumSha256: digest, extension: "mp4",
+    });
+    await storagePutCreatorStagedObject(key, payload, "video/mp4");
+    await expect(storageVerifySha256(key, payload.length, digest)).resolves.toBeUndefined();
+    await expect(storagePutCreatorStagedObject(key, payload, "video/mp4"))
+      .rejects.toMatchObject({ name: "PreconditionFailed" });
+    const tampered = Buffer.from(payload);
+    tampered[0] ^= 1;
+    await expect(storagePutCreatorStagedObject(key, tampered, "video/mp4"))
+      .rejects.toThrow("CREATOR_STAGED_STORAGE_CHECKSUM_INVALID");
+    await expect(storageVerifySha256(key, payload.length, digest)).resolves.toBeUndefined();
+  });
 
   it("uploads, inventories and verifies real ranged S3 bytes before reporting quarantined evidence", async () => {
     const identity = scope(17);
