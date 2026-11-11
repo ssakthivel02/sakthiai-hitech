@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
 
-const holder = vi.hoisted(() => ({ db: undefined as unknown, verify: vi.fn(async () => undefined) }));
+const holder = vi.hoisted(() => ({ db: undefined as unknown, verify: vi.fn(async (_key: string, _size: number, _sha: string) => undefined) }));
 vi.mock("../db", async importOriginal => ({
   ...(await importOriginal<typeof import("../db")>()), getDb: async () => holder.db,
 }));
