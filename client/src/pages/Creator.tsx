@@ -15,6 +15,7 @@ import CreatorGeneratedAssetReview from "./CreatorGeneratedAssetReview";
 import { creatorIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
 import { describeCreatorError } from "@shared/creatorErrors";
 import { creatorReviewReadiness } from "@/lib/creatorReviewReadiness";
+import { creatorCandidateReadiness } from "@/lib/creatorCandidateReadiness";
 
 type CueDraft = { startMs: number; endMs: number; text: string; language: "ta" | "en" };
 type TimelineDraft = { assetId: number; shotId?: number; startMs: number; endMs: number; track: 1; sortOrder: number };
@@ -102,6 +103,7 @@ export default function Creator() {
   const [captionStartMs, setCaptionStartMs] = useState(0);
   const [captionEndMs, setCaptionEndMs] = useState(3000);
   const [cueDrafts, setCueDrafts] = useState<CueDraft[]>([]);
+  const [tamilCuesReviewed, setTamilCuesReviewed] = useState(false);
   const [timelineDrafts, setTimelineDrafts] = useState<TimelineDraft[]>([]);
   const [reviewNotes, setReviewNotes] = useState("");
   const [sourcePrompt, setSourcePrompt] = useState("");
@@ -110,6 +112,8 @@ export default function Creator() {
     () => Object.fromEntries(qualityDimensionIds.map(id => [id, ""])) as Record<(typeof qualityDimensionIds)[number], string>,
   );
   const generationIntents = useRef<Record<string, CreatorRequestIntent>>({});
+  // Human review attestation is specific to the exact cue draft and project.
+  useEffect(() => { setTamilCuesReviewed(false); }, [projectId, cueDrafts]);
 
   function idempotencyKeyFor(scope: string, payload: unknown) {
     return creatorIntentKey(generationIntents.current, scope, payload, () => crypto.randomUUID());
@@ -136,19 +140,15 @@ export default function Creator() {
   const selectedScene = project.data?.scenes[project.data.scenes.length - 1];
   const nextShotIndex = project.data?.shots.filter(shot => shot.sceneId === selectedScene?.id).length ?? 0;
   const activeTimeline = project.data?.timelines?.[0];
-  // A browser click must not request an export before the immutable audio,
-  // persisted approved visual timeline, and human-locked Tamil cues exist.
-  // The server remains the authoritative source-validation and render fence.
-  const candidatePrerequisites = {
-    audio: Boolean(project.data?.project.audioMasterAssetId),
-    visuals: Boolean(activeTimeline && project.data?.timelineItems?.some(item =>
-      item.timelineId === activeTimeline.id && project.data?.assets?.some(asset =>
-        asset.id === item.assetId &&
-        (asset.assetType === "IMAGE" || asset.assetType === "VIDEO") &&
-        asset.reviewDecision === "APPROVED"))),
-    tamil: Boolean(activeTimeline && project.data?.captionCues?.some(cue =>
-      cue.timelineId === activeTimeline.id && cue.language === "ta" && cue.locked === 1)),
-  };
+  // UI is fail-closed across the entire persisted timeline, not merely one
+  // approved frame or one locked cue. The server remains authoritative.
+  const candidatePrerequisites = creatorCandidateReadiness({
+    project: project.data?.project,
+    timeline: activeTimeline,
+    assets: project.data?.assets,
+    items: project.data?.timelineItems,
+    cues: project.data?.captionCues,
+  });
   const canRequestCandidate = Object.values(candidatePrerequisites).every(Boolean);
   const renderAssets = project.data?.assets?.filter(asset => asset.assetType === "RENDER" && renderSource(asset.provenanceJson) === "deterministic-creator-render") ?? [];
   const latestRenderAsset = [...renderAssets].sort((a, b) => b.id - a.id)[0];
@@ -228,7 +228,7 @@ export default function Creator() {
   const retryGeneration = trpc.creator.retryGeneration.useMutation({ onSuccess: () => project.refetch() });
   const cancelGeneration = trpc.creator.cancelGeneration.useMutation({ onSuccess: () => project.refetch() });
   const ingestAudio = trpc.creator.audio.ingestApprovedMaster.useMutation({ onSuccess: () => { setAudioFile(undefined); setAudioApproved(false); project.refetch(); } });
-  const saveCues = trpc.creator.audio.replaceCaptionCues.useMutation({ onSuccess: () => project.refetch() });
+  const saveCues = trpc.creator.audio.replaceCaptionCues.useMutation({ onSuccess: () => { setTamilCuesReviewed(false); project.refetch(); } });
   const saveTimeline = trpc.creator.timeline.replaceApprovedItems.useMutation({ onSuccess: () => project.refetch() });
   const renderCandidate = trpc.creator.timeline.renderCandidate.useMutation({ onSuccess: () => project.refetch() });
   const qualityReview = trpc.creator.review.quality.useMutation({ onSuccess: () => project.refetch() });
@@ -369,7 +369,8 @@ export default function Creator() {
           <Card><CardHeader><CardTitle>2. Tamil subtitle alignment</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 10 }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 140px), 1fr))", gap: 8 }}><Input type="number" value={captionStartMs} onChange={e => setCaptionStartMs(Number(e.target.value))}/><Input type="number" value={captionEndMs} onChange={e => setCaptionEndMs(Number(e.target.value))}/><Input value={captionText} onChange={e => setCaptionText(e.target.value)} placeholder="Tamil caption text"/><Button onClick={addCaptionCue}><Plus size={14}/> Cue</Button></div>
             <div className="list">{cueDrafts.map((cue, index) => <div key={`${cue.startMs}-${index}`} className="list-row"><span>{cue.startMs}–{cue.endMs} ms · {cue.text}</span><Button size="sm" variant="ghost" onClick={() => setCueDrafts(current => current.filter((_, i) => i !== index))}>Remove</Button></div>)}</div>
-            <Button disabled={!activeTimeline || !cueDrafts.length || saveCues.isPending} onClick={() => saveCues.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, cues: cueDrafts, humanTamilReviewed: true })}><ShieldCheck size={16}/> Validate and lock Tamil cues</Button>
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={tamilCuesReviewed} onChange={e => setTamilCuesReviewed(e.target.checked)}/> I personally reviewed every Tamil cue and its timing for this project.</label>
+            <Button disabled={!activeTimeline || !cueDrafts.length || !tamilCuesReviewed || saveCues.isPending} onClick={() => { if (!tamilCuesReviewed) return; saveCues.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, cues: cueDrafts, humanTamilReviewed: true }); }}><ShieldCheck size={16}/> Validate and lock Tamil cues</Button>
             <small>{activeTimeline ? `Timeline ${activeTimeline.id} · ${activeTimeline.width}×${activeTimeline.height} @ ${activeTimeline.fps}fps` : "Timeline is created with the approved audio master."}</small>
           </CardContent></Card>
 

@@ -152,7 +152,12 @@ test.describe("Creator browser vertical slice: synthetic audio and Tamil cues", 
     await cueRow.locator('input[type="number"]').nth(1).fill("2000");
     await cueText.fill("அரோகரா");
     await page.getByRole("button", { name: "Cue", exact: true }).click();
-    await page.getByRole("button", { name: "Validate and lock Tamil cues" }).click();
+    const lockTamil = page.getByRole("button", { name: "Validate and lock Tamil cues" });
+    await expect(lockTamil).toBeDisabled(); // no implicit human approval
+    const tamilAttestation = page.getByLabel(/I personally reviewed every Tamil cue and its timing/);
+    await tamilAttestation.check();
+    await expect(lockTamil).toBeEnabled();
+    await lockTamil.click();
 
     await expect.poll(async () => {
       const current = await trpcQuery<{ captionCues: Array<{ text: string; language: string; locked: number }> }>(
