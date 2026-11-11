@@ -289,6 +289,10 @@ export const creatorArtifactLeases = mysqlTable("creatorArtifactLeases", {
   providerJobId: varchar("providerJobId", { length: 512 }).notNull(),
   leaseToken: char("leaseToken", { length: 36 }).notNull(),
   leaseUntil: datetime("leaseUntil", { fsp: 3 }).notNull(),
+  stagedStorageKey: varchar("stagedStorageKey", { length: 600 }),
+  stagedChecksumSha256: char("stagedChecksumSha256", { length: 64 }),
+  stagedByteSize: int("stagedByteSize"),
+  stagedMimeType: varchar("stagedMimeType", { length: 100 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, table => [

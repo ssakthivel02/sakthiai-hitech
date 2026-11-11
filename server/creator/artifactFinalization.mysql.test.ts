@@ -17,9 +17,14 @@ vi.mock("../db", async importOriginal => ({
 vi.mock("../storage", async () => {
   const { createHash } = await import("node:crypto");
   return {
-    storagePut: async (name: string, data: Uint8Array, _mimeType: string) => {
+    storagePutCreatorStagedObject: async (key: string, data: Uint8Array, _mimeType: string) => {
       if (state.failPut) throw new Error("INJECTED_STORAGE_UNAVAILABLE");
-      const key = `${name}-${++state.sequence}`;
+      if (state.objects.has(key)) {
+        const error = new Error("PreconditionFailed") as Error & { $metadata?: { httpStatusCode: number } };
+        error.name = "PreconditionFailed"; error.$metadata = { httpStatusCode: 412 };
+        throw error;
+      }
+      state.sequence++;
       state.objects.set(key, new Uint8Array(data));
       if (state.afterPut) {
         const callback = state.afterPut;
@@ -30,9 +35,9 @@ vi.mock("../storage", async () => {
     },
     storageVerifySha256: async (key: string, size: number, checksum: string) => {
       const data = state.objects.get(key);
-      if (!data || data.byteLength !== size || createHash("sha256").update(data).digest("hex") !== checksum) {
+      if (!data) { const error = new Error("NoSuchKey"); error.name = "NoSuchKey"; throw error; }
+      if (data.byteLength !== size || createHash("sha256").update(data).digest("hex") !== checksum)
         throw new Error("CREATOR_STORED_MEDIA_CHECKSUM_MISMATCH");
-      }
     },
   };
 });
@@ -134,7 +139,9 @@ describe.skipIf(skipMysqlSuite())("Creator artifact finalization ownership (disp
     const generationId = await seed("storage-retry-job");
     state.failPut = true;
     await expect(persist(generationId, "storage-retry-job")).rejects.toThrow("INJECTED_STORAGE_UNAVAILABLE");
-    expect(await query("SELECT * FROM creatorArtifactLeases WHERE generationId = ?", [generationId])).toHaveLength(0);
+    const released = await query("SELECT leaseUntil FROM creatorArtifactLeases WHERE generationId = ?", [generationId]);
+    expect(released).toHaveLength(1);
+    expect(new Date(released[0].leaseUntil).getTime()).toBeLessThan(Date.now());
     expect(await assetCount(generationId)).toBe(0);
     state.failPut = false;
     const recovered = await persist(generationId, "storage-retry-job");
@@ -175,7 +182,7 @@ describe.skipIf(skipMysqlSuite())("Creator artifact finalization ownership (disp
     const generationId = await seed("verified-job");
     const first = await persist(generationId, "verified-job");
     state.objects.delete(first.storageKey);
-    await expect(persist(generationId, "verified-job")).rejects.toThrow("CREATOR_STORED_MEDIA_CHECKSUM_MISMATCH");
+    await expect(persist(generationId, "verified-job")).rejects.toThrow("NoSuchKey");
     expect(await assetCount(generationId)).toBe(1);
   });
 
@@ -192,5 +199,37 @@ describe.skipIf(skipMysqlSuite())("Creator artifact finalization ownership (disp
     } finally {
       await d.pool.promise().query("DROP TRIGGER IF EXISTS creatorArtifactFinalizeAbort");
     }
+    const [stage] = await query("SELECT stagedStorageKey FROM creatorArtifactLeases WHERE generationId = ?", [generationId]);
+    expect(stage.stagedStorageKey).toMatch(/^creator\\//);
+    const recovered = await persist(generationId, "rollback-job");
+    expect(recovered.storageKey).toBe(stage.stagedStorageKey);
+    expect(state.sequence).toBe(1); // no second object PUT after failed DB finalization
+    expect(await assetCount(generationId)).toBe(1);
   });
+  it("recovers expired lease after a completed upload without another PUT", async () => {
+    const generationId = await seed("expired-after-put");
+    state.afterPut = async () => {
+      await d.pool.promise().query(
+        "UPDATE creatorArtifactLeases SET leaseUntil = DATE_SUB(NOW(3), INTERVAL 1 SECOND) WHERE generationId = ?",
+        [generationId]);
+    };
+    await expect(persist(generationId, "expired-after-put")).rejects.toThrow("CREATOR_ARTIFACT_LEASE_LOST");
+    const result = await persist(generationId, "expired-after-put");
+    expect(result.reused).toBe(false);
+    expect(state.sequence).toBe(1);
+    expect(await assetCount(generationId)).toBe(1);
+  });
+
+  it("refuses corrupt staged bytes rather than replacing the object", async () => {
+    const generationId = await seed("corrupt-after-put");
+    state.afterPut = async () => {
+      for (const [key, bytes] of state.objects)
+        state.objects.set(key, new Uint8Array(bytes.map((value, i) => i ? value : value ^ 255)));
+    };
+    await expect(persist(generationId, "corrupt-after-put")).rejects.toThrow("CREATOR_STORED_MEDIA_CHECKSUM_MISMATCH");
+    await expect(persist(generationId, "corrupt-after-put")).rejects.toThrow("CREATOR_STORED_MEDIA_CHECKSUM_MISMATCH");
+    expect(state.sequence).toBe(1);
+    expect(await assetCount(generationId)).toBe(0);
+  });
+
 });

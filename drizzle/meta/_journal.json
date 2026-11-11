@@ -162,6 +162,13 @@
       "when": 1794532000000,
       "tag": "0022_creator_artifact_leases",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1794532000000,
+      "tag": "0023_creator_staged_artifact_identity",
+      "breakpoints": true
     }
   ]
 }

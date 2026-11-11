@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { creatorArtifactLeases, creatorGenerations, creatorProviderJobs } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { assertCreatorArtifactJobOwnership } from "./artifactJobOwnership";
+import { assertCreatorStagedArtifactMatches, type CreatorStagedArtifact } from "./artifactStage";
 
 export const CREATOR_ARTIFACT_LEASE_MS = 10 * 60_000;
 
@@ -54,6 +55,8 @@ export async function acquireCreatorArtifactLease(scope: ArtifactLeaseScope): Pr
       throw new Error("CREATOR_ARTIFACT_LEASE_BUSY");
     }
 
+    if (existing?.stagedStorageKey && existing.providerJobId !== scope.providerJobId)
+      throw new Error("CREATOR_ARTIFACT_STAGE_JOB_MISMATCH");
     const leaseToken = randomUUID();
     const leaseUntil = new Date(now + CREATOR_ARTIFACT_LEASE_MS);
     if (existing) {
@@ -93,10 +96,62 @@ export async function assertCreatorArtifactLeaseActive(scope: ArtifactLeaseScope
   }
 }
 
+/** Stage metadata must commit before the first PUT, guarded by the generation lock. */
+export async function recordCreatorArtifactStage(scope: ArtifactLeaseScope, token: string, stage: CreatorStagedArtifact) {
+  const db = await requireDb();
+  return db.transaction(async tx => {
+    const [generation] = await tx.select().from(creatorGenerations)
+      .where(and(eq(creatorGenerations.id, scope.generationId),
+        eq(creatorGenerations.workspaceId, scope.workspaceId),
+        eq(creatorGenerations.creatorProjectId, scope.creatorProjectId))).limit(1).for("update");
+    if (!generation || generation.outputAssetId !== null) throw new Error("CREATOR_ARTIFACT_STAGE_GENERATION_INVALID");
+    const [lease] = await tx.select().from(creatorArtifactLeases)
+      .where(and(eq(creatorArtifactLeases.generationId, scope.generationId),
+        eq(creatorArtifactLeases.workspaceId, scope.workspaceId),
+        eq(creatorArtifactLeases.creatorProjectId, scope.creatorProjectId))).limit(1).for("update");
+    if (!lease || lease.leaseToken !== token || lease.providerJobId !== scope.providerJobId ||
+        new Date(lease.leaseUntil).getTime() <= Date.now()) throw new Error("CREATOR_ARTIFACT_LEASE_LOST");
+    if (lease.stagedStorageKey) {
+      const old = { storageKey: lease.stagedStorageKey, checksumSha256: lease.stagedChecksumSha256 ?? "",
+        byteSize: lease.stagedByteSize ?? 0, mimeType: lease.stagedMimeType ?? "" };
+      assertCreatorStagedArtifactMatches(old, stage);
+      return old;
+    }
+    if (lease.stagedChecksumSha256 || lease.stagedByteSize !== null || lease.stagedMimeType)
+      throw new Error("CREATOR_ARTIFACT_STAGE_PARTIAL");
+    await tx.update(creatorArtifactLeases).set({
+      stagedStorageKey: stage.storageKey, stagedChecksumSha256: stage.checksumSha256,
+      stagedByteSize: stage.byteSize, stagedMimeType: stage.mimeType,
+    }).where(and(eq(creatorArtifactLeases.generationId, scope.generationId),
+      eq(creatorArtifactLeases.leaseToken, token)));
+    return stage;
+  });
+}
+export async function readCreatorArtifactStage(scope: ArtifactLeaseScope, token: string): Promise<CreatorStagedArtifact | null> {
+  const db = await requireDb();
+  const [lease] = await db.select().from(creatorArtifactLeases)
+    .where(and(eq(creatorArtifactLeases.generationId, scope.generationId),
+      eq(creatorArtifactLeases.workspaceId, scope.workspaceId),
+      eq(creatorArtifactLeases.creatorProjectId, scope.creatorProjectId))).limit(1);
+  if (!lease || lease.leaseToken !== token || lease.providerJobId !== scope.providerJobId ||
+      new Date(lease.leaseUntil).getTime() <= Date.now()) throw new Error("CREATOR_ARTIFACT_LEASE_LOST");
+  if (!lease.stagedStorageKey) {
+    if (lease.stagedChecksumSha256 || lease.stagedByteSize !== null || lease.stagedMimeType)
+      throw new Error("CREATOR_ARTIFACT_STAGE_PARTIAL");
+    return null;
+  }
+  if (!lease.stagedChecksumSha256 || !lease.stagedByteSize || !lease.stagedMimeType)
+    throw new Error("CREATOR_ARTIFACT_STAGE_PARTIAL");
+  return { storageKey: lease.stagedStorageKey, checksumSha256: lease.stagedChecksumSha256,
+    byteSize: lease.stagedByteSize, mimeType: lease.stagedMimeType };
+}
+
 /** A stale worker must never release a newer worker's lease. */
 export async function releaseCreatorArtifactLease(scope: ArtifactLeaseScope, leaseToken: string): Promise<void> {
   const db = await requireDb();
-  await db.delete(creatorArtifactLeases).where(and(
+  // Retain the staged identity for crash-safe takeover; only successful
+  // finalization deletes the row. A stale token cannot expire a new claim.
+  await db.update(creatorArtifactLeases).set({ leaseUntil: new Date(0) }).where(and(
     eq(creatorArtifactLeases.generationId, scope.generationId),
     eq(creatorArtifactLeases.workspaceId, scope.workspaceId),
     eq(creatorArtifactLeases.creatorProjectId, scope.creatorProjectId),

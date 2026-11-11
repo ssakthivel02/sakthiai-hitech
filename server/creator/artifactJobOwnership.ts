@@ -43,5 +43,8 @@ export function isCreatorArtifactJobOwnershipError(error: unknown): boolean {
       error.message === "CREATOR_PROVIDER_POLL_ALREADY_FINALIZED" ||
       error.message === "CREATOR_ARTIFACT_LEASE_BUSY" ||
       error.message === "CREATOR_ARTIFACT_LEASE_LOST" ||
+      error.message === "CREATOR_ARTIFACT_STAGE_JOB_MISMATCH" ||
+      error.message === "CREATOR_ARTIFACT_STAGE_IDENTITY_CHANGED" ||
+      error.message === "CREATOR_ARTIFACT_STAGE_PARTIAL" ||
       error.message === "CREATOR_ARTIFACT_ALREADY_FINALIZED");
 }

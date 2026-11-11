@@ -2,10 +2,13 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { creatorArtifactLeases, creatorAssets, creatorGenerations, creatorProviderJobs, creatorShots } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { storagePut, storageVerifySha256 } from "../storage";
+import { isCreatorStagedObjectAlreadyExists, isCreatorStagedObjectMissing,
+  storagePutCreatorStagedObject, storageVerifySha256 } from "../storage";
 import { CREATOR_STORED_MEDIA_MAX_BYTES } from "./storageIntegrity";
 import { assertCreatorArtifactJobOwnership } from "./artifactJobOwnership";
-import { acquireCreatorArtifactLease, assertCreatorArtifactLeaseActive, releaseCreatorArtifactLease } from "./artifactLease";
+import { acquireCreatorArtifactLease, assertCreatorArtifactLeaseActive,
+  readCreatorArtifactStage, recordCreatorArtifactStage, releaseCreatorArtifactLease } from "./artifactLease";
+import { assertCreatorStagedArtifactMatches, creatorArtifactStageKey, type CreatorStagedArtifact } from "./artifactStage";
 import {
   assertCreatorJobTransition,
   canTransitionCreatorJob,
@@ -118,29 +121,53 @@ export async function persistCreatorGenerationArtifact(input: {
     return { assetId: existing.id, storageKey: existing.storageKey, checksumSha256: existing.checksumSha256, reused: true };
   }
 
-  if (!input.provider.fetchArtifact) throw new Error("CREATOR_PROVIDER_ARTIFACT_FETCH_UNSUPPORTED");
   assertCreatorJobTransition(generation.status as CreatorJobState, "SUCCEEDED");
 
   const leaseToken = await acquireCreatorArtifactLease(expectedJob);
   try {
-  const fetched = await input.provider.fetchArtifact(input.artifact);
-  const data = Buffer.from(fetched.data);
-  if (!data.byteLength) throw new Error("CREATOR_ARTIFACT_EMPTY");
-  if (data.byteLength > CREATOR_STORED_MEDIA_MAX_BYTES) throw new Error("CREATOR_ARTIFACT_TOO_LARGE");
-  const mimeType = fetched.mimeType.split(";", 1)[0].trim().toLowerCase();
-  const extension = extensionForCreatorMimeType(mimeType);
-  const checksumSha256 = createHash("sha256").update(data).digest("hex");
-  // Provider retrieval is asynchronous; reject jobs superseded during fetch.
-  await assertLatestCreatorArtifactJob(db, expectedJob);
+  let staged = await readCreatorArtifactStage(expectedJob, leaseToken);
+  let needsUpload = !staged;
+  if (staged) {
+    try {
+      await storageVerifySha256(staged.storageKey, staged.byteSize, staged.checksumSha256);
+    } catch (error) {
+      if (!isCreatorStagedObjectMissing(error)) throw error;
+      needsUpload = true;
+    }
+  }
+  if (needsUpload) {
+    if (!input.provider.fetchArtifact) throw new Error("CREATOR_PROVIDER_ARTIFACT_FETCH_UNSUPPORTED");
+    const fetched = await input.provider.fetchArtifact(input.artifact);
+    const data = Buffer.from(fetched.data);
+    if (!data.byteLength) throw new Error("CREATOR_ARTIFACT_EMPTY");
+    if (data.byteLength > CREATOR_STORED_MEDIA_MAX_BYTES) throw new Error("CREATOR_ARTIFACT_TOO_LARGE");
+    const mimeType = fetched.mimeType.split(";", 1)[0].trim().toLowerCase();
+    const extension = extensionForCreatorMimeType(mimeType);
+    const checksumSha256 = createHash("sha256").update(data).digest("hex");
+    const candidate: CreatorStagedArtifact = {
+      storageKey: creatorArtifactStageKey({
+        workspaceId: input.workspaceId, creatorProjectId: generation.creatorProjectId,
+        generationId: generation.id, provider: generation.provider,
+        providerJobId: input.providerJobId, checksumSha256, extension,
+      }),
+      checksumSha256, byteSize: data.byteLength, mimeType,
+    };
+    if (staged) assertCreatorStagedArtifactMatches(staged, candidate);
+    await assertLatestCreatorArtifactJob(db, expectedJob);
+    staged = await recordCreatorArtifactStage(expectedJob, leaseToken, candidate);
+    await assertCreatorArtifactLeaseActive(expectedJob, leaseToken);
+    try {
+      await storagePutCreatorStagedObject(staged.storageKey, data, mimeType);
+    } catch (error) {
+      if (!isCreatorStagedObjectAlreadyExists(error)) throw error;
+      // Another expired worker may have stored these bytes. Verify, never overwrite.
+    }
+    await storageVerifySha256(staged.storageKey, staged.byteSize, staged.checksumSha256);
+  }
+  if (!staged) throw new Error("CREATOR_ARTIFACT_STAGE_MISSING");
+  const { storageKey, checksumSha256, byteSize, mimeType } = staged;
   const persistedAt = new Date();
   await assertCreatorArtifactLeaseActive(expectedJob, leaseToken);
-  const storage = await storagePut(
-    `creator/${generation.creatorProjectId}/shots/${generation.shotId ?? "unbound"}/generation-${generation.id}.${extension}`,
-    data,
-    mimeType,
-  );
-  // Do not create an APPROVED/PENDING database asset for a corrupted or missing object.
-  await storageVerifySha256(storage.key, data.byteLength, checksumSha256);
 
   const provenance = {
     schemaVersion: 1,
@@ -188,6 +215,10 @@ export async function persistCreatorGenerationArtifact(input: {
       )).limit(1).for("update");
     if (!activeLease || activeLease.leaseToken !== leaseToken ||
         activeLease.providerJobId !== input.providerJobId ||
+        activeLease.stagedStorageKey !== storageKey ||
+        activeLease.stagedChecksumSha256 !== checksumSha256 ||
+        activeLease.stagedByteSize !== byteSize ||
+        activeLease.stagedMimeType !== mimeType ||
         new Date(activeLease.leaseUntil).getTime() <= Date.now()) {
       throw new Error("CREATOR_ARTIFACT_LEASE_LOST");
     }
@@ -218,9 +249,9 @@ export async function persistCreatorGenerationArtifact(input: {
       shotId: currentGeneration.shotId,
       assetType: assetTypeForGeneration(currentGeneration.kind),
       mimeType,
-      storageKey: storage.key,
+      storageKey,
       checksumSha256,
-      byteSize: data.byteLength,
+      byteSize,
       immutable: 0,
       provenanceJson: JSON.stringify(provenance),
       reviewDecision: "PENDING",
@@ -255,7 +286,7 @@ export async function persistCreatorGenerationArtifact(input: {
       eq(creatorArtifactLeases.generationId, generation.id),
       eq(creatorArtifactLeases.leaseToken, leaseToken),
     ));
-    return { assetId, storageKey: storage.key, checksumSha256, byteSize: data.byteLength, reused: false as const };
+    return { assetId, storageKey, checksumSha256, byteSize, reused: false as const };
   });
 
   // Never report replay success for missing or corrupted persisted bytes.

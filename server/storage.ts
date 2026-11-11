@@ -62,6 +62,34 @@ export async function storagePut(
   return { key, url: `/api/storage/${key}` };
 }
 
+/** Content-addressed Creator staging PUT. Never overwrite another worker's object. */
+export async function storagePutCreatorStagedObject(key: string, data: Uint8Array, contentType: string): Promise<void> {
+  const extensionByMime: Record<string, string> = {
+    "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "video/mp4": "mp4", "audio/wav": "wav",
+  };
+  const ext = extensionByMime[contentType];
+  if (!ext || !/^creator\/[1-9][0-9]*\/[1-9][0-9]*\/staged\/generation-[1-9][0-9]*\/job-[a-f0-9]{32}\/[a-f0-9]{64}\.(png|jpg|webp|mp4|wav)$/.test(key) ||
+      !key.endsWith(`.${ext}`) || !data.byteLength || data.byteLength > CREATOR_STORED_MEDIA_MAX_BYTES)
+    throw new Error("CREATOR_STAGED_STORAGE_KEY_INVALID");
+  const checksum = key.slice(key.lastIndexOf("/") + 1, -ext.length - 1);
+  if (createHash("sha256").update(data).digest("hex") !== checksum)
+    throw new Error("CREATOR_STAGED_STORAGE_CHECKSUM_INVALID");
+  const { client: s3, bucket } = getStorageConfig();
+  await s3.send(new PutObjectCommand({
+    Bucket: bucket, Key: key, Body: data, ContentType: contentType, IfNoneMatch: "*",
+  }), { abortSignal: AbortSignal.timeout(120_000) });
+}
+export function isCreatorStagedObjectMissing(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as { name?: string; Code?: string; code?: string };
+  return e.name === "NoSuchKey" || e.Code === "NoSuchKey" || e.code === "NoSuchKey";
+}
+export function isCreatorStagedObjectAlreadyExists(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e.name === "PreconditionFailed" && e.$metadata?.httpStatusCode === 412;
+}
+
 export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
   return { key, url: `/api/storage/${key}` };
