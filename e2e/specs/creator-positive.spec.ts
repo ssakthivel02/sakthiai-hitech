@@ -1,8 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { createConnection } from "mysql2/promise";
 import { login, myWorkspaceId, newIdentity, trpcMutate, trpcQuery } from "../support/helpers";
 import { urls } from "../support/ports";
+import { startDisposableFencedCreatorServer } from "../support/fencedServer";
 
 /**
  * Positive Creator browser journey using ONLY disposable E2E MySQL, fake S3,
@@ -37,6 +42,7 @@ function syntheticWav(): Buffer {
 
 test.describe("Creator browser positive synthetic visual approval", () => {
   test("approves two verified stored images, persists full Tamil timeline and refuses disabled fenced render", async ({ page }) => {
+    test.setTimeout(180_000);
     const databaseUrl = process.env.E2E_CREATOR_DATABASE_URL;
     expect(databaseUrl, "only the global-setup disposable database may be seeded").toMatch(/^mysql:\/\/.*\/[^/]+$/);
     const connection = await createConnection(databaseUrl!);
@@ -172,6 +178,114 @@ test.describe("Creator browser positive synthetic visual approval", () => {
       expect(state.data?.assets.filter(asset => asset.assetType === "RENDER")).toHaveLength(0);
       expect(state.data?.generations).toHaveLength(2);
       await expect(page.getByRole("button", { name: "Promote approved 16:9 final master" })).toBeDisabled();
+
+      
+      // Run the existing fenced dispatcher through the actual Creator browser
+      // using a separate disposable process. The default E2E server stays OFF.
+      const fenced = await startDisposableFencedCreatorServer();
+      try {
+        await page.goto(fenced.origin + "/creator");
+        await page.getByRole("button", { name: /E2E Synthetic Positive Slice/ }).click();
+        const fencedRender = page.getByRole("button", { name: "Render 16:9 candidate" });
+        await expect(fencedRender).toBeEnabled();
+        await fencedRender.click();
+        await expect.poll(async () => {
+          const current = await trpcQuery<{
+            exports: Array<{ id: number; status: string; assetId: number | null }>;
+          }>(page.request, "creator.workspace.getProject", { workspaceId, creatorProjectId });
+          return current.data?.exports.find(item => item.status === "SUCCEEDED")?.assetId ?? null;
+        }, { timeout: 120_000 }).toBeGreaterThan(0);
+
+        const rendered = await trpcQuery<{
+          exports: Array<{ id: number; status: string; assetId: number | null }>;
+          assets: Array<{ id: number; assetType: string; reviewDecision: string;
+            checksumSha256: string; byteSize: number; storageKey: string; provenanceJson: string }>;
+        }>(page.request, "creator.workspace.getProject", { workspaceId, creatorProjectId });
+        expect(rendered.status).toBe(200);
+        expect(rendered.data!.exports).toHaveLength(1);
+        const candidate = rendered.data!.assets.find(asset => asset.assetType === "RENDER");
+        expect(candidate, "one actual FFmpeg output must be persisted").toBeDefined();
+        expect(candidate!.reviewDecision).toBe("PENDING");
+        expect(rendered.data!.exports[0]).toMatchObject({
+          status: "SUCCEEDED", assetId: candidate!.id,
+        });
+        const provenance = JSON.parse(candidate!.provenanceJson) as Record<string, unknown>;
+        expect(provenance).toMatchObject({
+          source: "deterministic-creator-render", renderer: "ffmpeg",
+          outputEvidence: { width: 1920, height: 1080, fps: 24, hasAudio: true },
+        });
+
+        // Read the persisted MP4 back from disposable S3, hash its actual
+        // bytes, and independently inspect its video and audio with FFprobe.
+        const key = candidate!.storageKey.split("/").map(encodeURIComponent).join("/");
+        const object = await fetch(urls.s3 + "/e2e/" + key);
+        expect(object.status).toBe(200);
+        const bytes = Buffer.from(await object.arrayBuffer());
+        expect(bytes.length).toBe(candidate!.byteSize);
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(candidate!.checksumSha256);
+        const directory = mkdtempSync(join(tmpdir(), "creator-fenced-browser-"));
+        try {
+          const videoFile = join(directory, "synthetic-candidate.mp4");
+          writeFileSync(videoFile, bytes);
+          const probe = JSON.parse(execFileSync("ffprobe", [
+            "-v", "error", "-show_entries",
+            "stream=codec_type,width,height,avg_frame_rate,nb_frames",
+            "-of", "json", videoFile,
+          ], { encoding: "utf8", timeout: 15_000 })) as {
+            streams: Array<{ codec_type: string; width?: number; height?: number;
+              avg_frame_rate?: string; nb_frames?: string }>;
+          };
+          expect(probe.streams.find(stream => stream.codec_type === "video")).toMatchObject({
+            width: 1920, height: 1080, avg_frame_rate: "24/1", nb_frames: "48",
+          });
+          expect(probe.streams.some(stream => stream.codec_type === "audio")).toBe(true);
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+
+        // Replaying the exact same authorized intent must reuse the existing
+        // claim, not create another export, render, storage object or charge.
+        const duplicateResponse = await page.request.post(
+          fenced.origin + "/api/trpc/creator.timeline.renderCandidate", {
+            data: { json: {
+              workspaceId, creatorProjectId, timelineId: audio.data!.timelineId,
+              confirmCandidateOnly: true,
+            } },
+            headers: { "content-type": "application/json" },
+          },
+        );
+        expect(duplicateResponse.status()).toBe(200);
+        const duplicate = await duplicateResponse.json();
+        expect(duplicate.result.data.json).toMatchObject({
+          dispatched: false, exportId: rendered.data!.exports[0].id,
+          state: "SUCCEEDED", finalMaster: false, publishApproved: false,
+        });
+        const [claims] = await connection.execute(
+          "SELECT state, outputAssetId FROM creatorRenderClaims WHERE workspaceId = ? AND creatorProjectId = ?",
+          [workspaceId, creatorProjectId],
+        );
+        expect(claims).toHaveLength(1);
+        expect((claims as Array<{ state: string; outputAssetId: number }>)[0]).toMatchObject({
+          state: "SUCCEEDED", outputAssetId: candidate!.id,
+        });
+
+        const denied = await page.request.post(
+          fenced.origin + "/api/trpc/creator.review.finalizeMaster", {
+            data: { json: { workspaceId, creatorProjectId, assetId: candidate!.id } },
+            headers: { "content-type": "application/json" },
+          },
+        );
+        expect(denied.status()).toBe(400);
+        await expect(page.getByRole("button", { name: "Promote approved 16:9 final master" })).toBeDisabled();
+        const after = await trpcQuery<{
+          exports: unknown[]; assets: Array<{ assetType: string; reviewDecision: string }>;
+        }>(page.request, "creator.workspace.getProject", { workspaceId, creatorProjectId });
+        expect(after.data?.exports).toHaveLength(1);
+        expect(after.data?.assets.filter(asset => asset.assetType === "RENDER")).toHaveLength(1);
+        expect(after.data?.assets.find(asset => asset.assetType === "RENDER")?.reviewDecision).toBe("PENDING");
+      } finally {
+        await fenced.close();
+      }
     } finally {
       await connection.end();
     }
