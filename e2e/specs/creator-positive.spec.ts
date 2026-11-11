@@ -281,6 +281,64 @@ test.describe("Creator browser positive synthetic visual approval", () => {
           state: "SUCCEEDED", outputAssetId: candidate!.id,
         });
 
+        // Real FFmpeg candidate + persisted fake-S3 bytes must flow through
+        // the existing scorer. This is an API-level synthetic reviewer fixture,
+        // not a human Murugan approval or a live MinIO certification.
+        const remediationScores = Object.fromEntries([
+          "VQ-CONTENT-01", "VQ-TEMPORAL-01", "VQ-IDENTITY-01",
+          "VQ-VISUAL-01", "VQ-CAMERA-01", "VQ-AUDIO-01",
+          "VQ-TEXT-01", "VQ-DELIVERY-01",
+        ].map(id => [id, 0]));
+        const quality = await trpcMutate<{ decision: string; reviewId: number }>(
+          page.request, "creator.review.quality", {
+            workspaceId, creatorProjectId, assetId: candidate!.id,
+            reviewerType: "HUMAN",
+            sourcePromptOrStoryboard: "Disposable synthetic two-shot storyboard",
+            dimensionScores: remediationScores, criticalDefects: [],
+            notes: "Synthetic quality fixture only; deliberately requires regeneration",
+          },
+        );
+        expect(quality.status, JSON.stringify(quality)).toBe(200);
+        expect(quality.data?.decision).toBe("REGENERATE");
+        const [qualityRows] = await connection.execute(
+          "SELECT decision, scoresJson FROM creatorReviews WHERE workspaceId = ? AND creatorProjectId = ? AND assetId = ? AND reviewType = 'QUALITY'",
+          [workspaceId, creatorProjectId, candidate!.id],
+        );
+        expect(qualityRows).toHaveLength(1);
+        const persistedQuality = (qualityRows as Array<{ decision: string; scoresJson: string }>)[0];
+        expect(persistedQuality.decision).toBe("REGENERATE");
+        const scored = JSON.parse(persistedQuality.scoresJson) as {
+          candidateArtifact: { checksumSha256: string; storageKey: string; byteSize: number };
+          remediationSummary: { items: Array<{ id: string }> };
+        };
+        expect(scored.candidateArtifact).toEqual({
+          checksumSha256: candidate!.checksumSha256,
+          storageKey: candidate!.storageKey,
+          byteSize: candidate!.byteSize,
+        });
+        expect(scored.remediationSummary.items.length).toBeGreaterThan(0);
+
+        // Show actionable remediation in the existing Creator review UI.
+        await page.reload();
+        await page.getByRole("button", { name: /E2E Synthetic Positive Slice/ }).click();
+        await expect(page.getByTestId("creator-quality-remediation")).toContainText(
+          "Recorded quality decision: REGENERATE",
+        );
+        await expect(page.getByTestId("creator-quality-remediation")).toContainText(
+          candidate!.checksumSha256,
+        );
+        await expect(page.getByTestId("creator-quality-remediation")).toContainText(
+          "Create a separately attributed replacement",
+        );
+        const forbiddenHuman = await trpcMutate(
+          page.request, "creator.review.humanTamil", {
+            workspaceId, creatorProjectId, assetId: candidate!.id,
+            decision: "PASS", notes: "TEST ONLY: must not approve a regenerate candidate",
+          },
+        );
+        expect(forbiddenHuman.status).toBe(400);
+        expect(forbiddenHuman.message).toContain("CREATOR_HUMAN_REVIEW_BLOCKED_BY_QUALITY");
+
         const denied = await page.request.post(
           fenced.origin + "/api/trpc/creator.review.finalizeMaster", {
             data: { json: { workspaceId, creatorProjectId, assetId: candidate!.id } },
