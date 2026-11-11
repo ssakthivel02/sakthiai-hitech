@@ -13,6 +13,7 @@ import CreatorSpendAdminPanel from "./CreatorSpendAdminPanel";
 import CreatorSpeechAvatarPanel from "./CreatorSpeechAvatarPanel";
 import { creatorIntentKey, type CreatorRequestIntent } from "@/lib/creatorIntent";
 import { describeCreatorError } from "@shared/creatorErrors";
+import { creatorReviewReadiness } from "@/lib/creatorReviewReadiness";
 
 type CueDraft = { startMs: number; endMs: number; text: string; language: "ta" | "en" };
 type TimelineDraft = { assetId: number; shotId?: number; startMs: number; endMs: number; track: 1; sortOrder: number };
@@ -101,11 +102,32 @@ export default function Creator() {
   const [captionEndMs, setCaptionEndMs] = useState(3000);
   const [cueDrafts, setCueDrafts] = useState<CueDraft[]>([]);
   const [timelineDrafts, setTimelineDrafts] = useState<TimelineDraft[]>([]);
-  const [reviewNotes, setReviewNotes] = useState("Human review completed against the approved Murugan audio, Tamil text and visual reference intent.");
-  const [sourcePrompt, setSourcePrompt] = useState("Approved Murugan storyboard and shot prompts in this Creator project.");
+  const [reviewNotes, setReviewNotes] = useState("");
+  const [sourcePrompt, setSourcePrompt] = useState("");
   const [criticalDefects, setCriticalDefects] = useState("");
-  const [qualityScores, setQualityScores] = useState<Record<(typeof qualityDimensionIds)[number], number>>(() => Object.fromEntries(qualityDimensionIds.map(id => [id, 5])) as Record<(typeof qualityDimensionIds)[number], number>);
+  const [qualityScores, setQualityScores] = useState<Record<(typeof qualityDimensionIds)[number], string>>(
+    () => Object.fromEntries(qualityDimensionIds.map(id => [id, ""])) as Record<(typeof qualityDimensionIds)[number], string>,
+  );
   const generationIntents = useRef<Record<string, CreatorRequestIntent>>({});
+  // New render means a new review. Never carry over an earlier candidate's
+  // playback, pre-filled verdict, notes or quality scores.
+  useEffect(() => {
+    setWatchedRenderAssetId(undefined);
+    setReviewNotes("");
+    setSourcePrompt("");
+    setCriticalDefects("");
+    setQualityScores(Object.fromEntries(qualityDimensionIds.map(id => [id, ""])) as Record<(typeof qualityDimensionIds)[number], string>);
+  }, [latestRenderAsset?.id]);
+  const reviewGate = creatorReviewReadiness({
+    candidateId: latestRenderAsset?.id,
+    candidateDecision: latestRenderAsset?.reviewDecision,
+    watchedAssetId: watchedRenderAssetId,
+    notes: reviewNotes,
+    source: sourcePrompt,
+    qualityScores,
+    dimensionIds: qualityDimensionIds,
+    reviews: project.data?.reviews ?? [],
+  });
 
   function idempotencyKeyFor(scope: string, payload: unknown) {
     return creatorIntentKey(generationIntents.current, scope, payload, () => crypto.randomUUID());
@@ -135,6 +157,7 @@ export default function Creator() {
   const renderAssets = project.data?.assets?.filter(asset => asset.assetType === "RENDER" && renderSource(asset.provenanceJson) === "deterministic-creator-render") ?? [];
   const latestRenderAsset = [...renderAssets].sort((a, b) => b.id - a.id)[0];
   const finalMaster = [...renderAssets].filter(asset => asset.reviewDecision === "APPROVED").sort((a, b) => b.id - a.id)[0];
+  const [watchedRenderAssetId, setWatchedRenderAssetId] = useState<number>();
   const [panelError, setPanelError] = useState<unknown>();
   const [manifestError, setManifestError] = useState<unknown>();
   const utils = trpc.useUtils();
@@ -337,13 +360,29 @@ export default function Creator() {
 
           <Card><CardHeader><CardTitle>4. Quality → Tamil → Visual → Final master</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 12 }}>
             <div>{latestRenderAsset ? <Badge>Latest render asset {latestRenderAsset.id}</Badge> : <Badge variant="outline">No render candidate yet</Badge>}</div>
+            {latestRenderAsset && <div style={{ display: "grid", gap: 8 }}>
+              <video
+                key={latestRenderAsset.id}
+                controls
+                playsInline
+                preload="metadata"
+                src={`/api/storage/${latestRenderAsset.storageKey.split("/").map(encodeURIComponent).join("/")}`}
+                onEnded={() => setWatchedRenderAssetId(latestRenderAsset.id)}
+                onError={() => setWatchedRenderAssetId(undefined)}
+                style={{ width: "min(100%, 800px)", aspectRatio: "16 / 9", background: "#000" }}
+                aria-label={`Review 16:9 candidate render ${latestRenderAsset.id}`}
+              />
+              <small>{reviewGate.watched
+                ? "This candidate played to the end. Record your own quality scores and evidence notes before approval."
+                : "Play this exact 16:9 candidate through to the end before recording a PASS. An earlier render's playback never counts."}</small>
+            </div>}
             <Textarea value={sourcePrompt} onChange={e => setSourcePrompt(e.target.value)} placeholder="Approved source storyboard/prompt"/>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 8 }}>{qualityDimensionIds.map(id => <label key={id} style={{ display: "grid", gap: 4 }}><small>{id}</small><Input type="number" min={0} max={5} step={0.1} value={qualityScores[id]} onChange={e => setQualityScores(current => ({ ...current, [id]: Number(e.target.value) }))}/></label>)}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 160px), 1fr))", gap: 8 }}>{qualityDimensionIds.map(id => <label key={id} style={{ display: "grid", gap: 4 }}><small>{id}</small><Input type="number" min={0} max={5} step={0.1} value={qualityScores[id]} onChange={e => setQualityScores(current => ({ ...current, [id]: e.target.value }))}/></label>)}</div>
             <Textarea value={criticalDefects} onChange={e => setCriticalDefects(e.target.value)} placeholder="Critical defects, one per line. Leave blank if none."/>
-            <Button disabled={!latestRenderAsset || qualityReview.isPending} onClick={() => qualityReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, reviewerType: "HUMAN", sourcePromptOrStoryboard: sourcePrompt, dimensionScores: qualityScores, criticalDefects: criticalDefects.split("\n").map(v => v.trim()).filter(Boolean), notes: reviewNotes })}>Record governed quality review</Button>
+            <Button disabled={!reviewGate.quality || qualityReview.isPending} onClick={() => qualityReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, reviewerType: "HUMAN", sourcePromptOrStoryboard: sourcePrompt, dimensionScores: Object.fromEntries(qualityDimensionIds.map(id => [id, Number(qualityScores[id])])) as Record<(typeof qualityDimensionIds)[number], number>, criticalDefects: criticalDefects.split("\n").map(v => v.trim()).filter(Boolean), notes: reviewNotes })}>Record governed quality review</Button>
             <Textarea value={reviewNotes} onChange={e => setReviewNotes(e.target.value)} placeholder="Human review evidence notes"/>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button disabled={!latestRenderAsset || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Tamil PASS</Button><Button variant="outline" disabled={!latestRenderAsset || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Tamil REJECT</Button><Button disabled={!latestRenderAsset || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Visual PASS</Button><Button variant="outline" disabled={!latestRenderAsset || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Visual REJECT</Button></div>
-            <Button disabled={!latestRenderAsset || finalizeMaster.isPending} onClick={() => finalizeMaster.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id })}><ShieldCheck size={16}/> Promote approved 16:9 final master</Button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button disabled={!reviewGate.tamilPass || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Tamil PASS</Button><Button variant="outline" disabled={!reviewGate.tamilReject || tamilReview.isPending} onClick={() => tamilReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Tamil REJECT</Button><Button disabled={!reviewGate.visualPass || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "PASS", notes: reviewNotes })}>Visual PASS</Button><Button variant="outline" disabled={!reviewGate.visualReject || visualReview.isPending} onClick={() => visualReview.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id, decision: "REJECT", notes: reviewNotes })}>Visual REJECT</Button></div>
+            <Button disabled={!reviewGate.finalize || finalizeMaster.isPending} onClick={() => finalizeMaster.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, assetId: latestRenderAsset!.id })}><ShieldCheck size={16}/> Promote approved 16:9 final master</Button>
             <div className="list">{project.data?.reviews?.map(review => <div key={review.id} className="list-row"><span>{review.reviewType} · {review.decision}</span><small>asset {review.assetId ?? "—"} · review {review.id}</small></div>)}</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <Button variant="outline" disabled={!finalMaster || !activeTimeline || renderVertical.isPending} onClick={() => renderVertical.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, finalMasterAssetId: finalMaster!.id })}><Smartphone size={16}/> Render 9:16 mobile version</Button>
