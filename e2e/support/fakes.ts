@@ -99,10 +99,17 @@ export function startFakeS3(port: number) {
       // A full-object 200 response must never masquerade as checksum readback.
       const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
       if (range && req.method === "GET") {
-        const match = /^bytes=(\d+)-(\d+)$/.exec(range);
-        const start = match ? Number(match[1]) : NaN;
-        const requestedEnd = match ? Number(match[2]) : NaN;
-        if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) ||
+        // S3 readback uses exact ranges, while FFmpeg commonly asks for an
+        // open-ended range (bytes=0-) or a suffix range (bytes=-N).
+        // Reject multi-range and malformed requests instead of returning 200.
+        const match = /^bytes=(\d+)-(\d*)$/.exec(range);
+        const suffix = /^bytes=-(\d+)$/.exec(range);
+        const start = match ? Number(match[1])
+          : suffix ? Math.max(0, object.body.length - Number(suffix[1])) : NaN;
+        const requestedEnd = match && match[2] ? Number(match[2]) : object.body.length - 1;
+        if ((!match && !suffix) ||
+            !Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) ||
+            (suffix && (!Number.isSafeInteger(Number(suffix[1])) || Number(suffix[1]) < 1)) ||
             start > requestedEnd || start >= object.body.length) {
           res.writeHead(416, { "content-range": `bytes */${object.body.length}` });
           return res.end();
