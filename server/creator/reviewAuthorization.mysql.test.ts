@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
@@ -10,7 +11,11 @@ import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testin
  * cross-tenant users are denied; and the existing owner-authorized flow (quality -> Tamil -> visual -> finalize)
  * still works end to end.
  */
-const holder = vi.hoisted(() => ({ db: undefined as unknown, roles: new Map<number, "owner" | "member">() }));
+const holder = vi.hoisted(() => ({ db: undefined as unknown, roles: new Map<number, "owner" | "member">(), verify: vi.fn(async (_key: string, _size: number, _sha: string) => undefined) }));
+vi.mock("../storage", async importOriginal => ({
+  ...(await importOriginal<typeof import("../storage")>()),
+  storageVerifySha256: (...args: [string, number, string]) => holder.verify(...args),
+}));
 vi.mock("../db", async importOriginal => ({
   ...(await importOriginal<typeof import("../db")>()),
   getDb: async () => holder.db,
@@ -55,7 +60,7 @@ describe.skipIf(skipMysqlSuite())("16:9 master review authorization (real SQL)",
   async function freshMaster(label: string, outputEvidence: unknown = { width: 1920, height: 1080, fps: 24, durationSeconds: 4, hasAudio: true }) {
     const provenance = JSON.stringify({ source: "deterministic-creator-render", timelineId: ids.timeline, audioMasterAssetId: ids.audio, audioMasterChecksumSha256: "a".repeat(64), width: 1920, height: 1080, fps: 24, durationMs: 4000, outputEvidence });
     await run(sql`INSERT INTO creatorAssets (workspaceId, creatorProjectId, assetType, mimeType, storageKey, checksumSha256, byteSize, immutable, provenanceJson, reviewDecision) VALUES
-      (7, ${ids.project}, 'RENDER', 'video/mp4', ${`r/${label}.mp4`}, ${label.padEnd(64, "0")}, 1000, 1, ${provenance}, 'PENDING')`);
+      (7, ${ids.project}, 'RENDER', 'video/mp4', ${`r/${label}.mp4`}, ${createHash("sha256").update(label).digest("hex")}, 1000, 1, ${provenance}, 'PENDING')`);
     return (await one<{ id: number }>(sql`SELECT id FROM creatorAssets WHERE storageKey = ${`r/${label}.mp4`}`)).id;
   }
   const counts = async (assetId: number) => ({
@@ -116,6 +121,49 @@ describe.skipIf(skipMysqlSuite())("16:9 master review authorization (real SQL)",
       })).rejects.toMatchObject({ message: item.code });
       expect(await counts(assetId)).toEqual({ reviews: 0, reviewDecision: "PENDING" });
     }
+  });
+
+
+  it("fails closed before recording quality if the candidate storage checksum cannot be verified", async () => {
+    const assetId = await freshMaster("storage-corrupt");
+    holder.verify.mockRejectedValueOnce(new Error("simulated S3 checksum mismatch"));
+    await expect(caller(501).creator.review.quality({
+      workspaceId: 7, creatorProjectId: ids.project, assetId,
+      reviewerType: "HUMAN", sourcePromptOrStoryboard: "synthetic storyboard",
+      dimensionScores: dims, criticalDefects: [],
+    })).rejects.toMatchObject({ message: "CREATOR_REVIEW_CANDIDATE_STORAGE_UNVERIFIED" });
+    expect(await counts(assetId)).toEqual({ reviews: 0, reviewDecision: "PENDING" });
+  });
+
+  it("binds quality scores to the candidate bytes and rejects metadata substitution before human approval", async () => {
+    const assetId = await freshMaster("candidate-drift");
+    const base = { workspaceId: 7, creatorProjectId: ids.project, assetId };
+    await caller(501).creator.review.quality({
+      ...base, reviewerType: "HUMAN", sourcePromptOrStoryboard: "synthetic storyboard",
+      dimensionScores: dims, criticalDefects: [],
+    });
+    const saved = await one<{ scoresJson: string }>(sql`SELECT scoresJson FROM creatorReviews WHERE assetId = ${assetId} AND reviewType = 'QUALITY'`);
+    const bound = JSON.parse(saved.scoresJson).candidateArtifact;
+    expect(bound).toMatchObject({ storageKey: "r/candidate-drift.mp4", byteSize: 1000 });
+    await run(sql`UPDATE creatorAssets SET checksumSha256 = ${"b".repeat(64)} WHERE id = ${assetId}`);
+    await expect(caller(501).creator.review.humanTamil({ ...base, decision: "PASS", notes: "reviewed Tamil" }))
+      .rejects.toMatchObject({ message: "CREATOR_REVIEW_CANDIDATE_IDENTITY_DRIFT" });
+    expect(await counts(assetId)).toEqual({ reviews: 1, reviewDecision: "PENDING" });
+  });
+
+  it("re-verifies the exact stored candidate before final-master promotion", async () => {
+    const assetId = await freshMaster("final-readback");
+    const base = { workspaceId: 7, creatorProjectId: ids.project, assetId };
+    await caller(501).creator.review.quality({
+      ...base, reviewerType: "HUMAN", sourcePromptOrStoryboard: "synthetic storyboard",
+      dimensionScores: dims, criticalDefects: [],
+    });
+    await caller(501).creator.review.humanTamil({ ...base, decision: "PASS", notes: "Tamil reviewed" });
+    await caller(501).creator.review.humanVisual({ ...base, decision: "PASS", notes: "visual reviewed" });
+    holder.verify.mockRejectedValueOnce(new Error("simulated missing object"));
+    await expect(caller(501).creator.review.finalizeMaster(base))
+      .rejects.toMatchObject({ message: "CREATOR_REVIEW_CANDIDATE_STORAGE_UNVERIFIED" });
+    expect(await counts(assetId)).toEqual({ reviews: 3, reviewDecision: "PENDING" });
   });
 
   it("a member can still read the project (getProject is unaffected)", async () => {

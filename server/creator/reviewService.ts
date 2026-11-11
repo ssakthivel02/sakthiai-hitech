@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { creatorAssets, creatorReviews, creatorTimelines } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { storageVerifySha256 } from "../storage";
 import { scoreCreatorRenderQuality, type CreatorOutputEvidence, type CreatorQualityReviewerType } from "./qualityGate";
 
 async function requireDb() {
@@ -81,6 +82,52 @@ async function requireRenderAsset(input: { workspaceId: number; creatorProjectId
   return { db, asset, provenance: parseRenderProvenance(asset.provenanceJson) };
 }
 
+
+type CandidateArtifactIdentity = { storageKey: string; checksumSha256: string; byteSize: number };
+
+function candidateArtifactIdentity(asset: typeof creatorAssets.$inferSelect): CandidateArtifactIdentity {
+  if (typeof asset.storageKey !== "string" || !asset.storageKey.trim() ||
+      typeof asset.checksumSha256 !== "string" || !/^[a-f0-9]{64}$/.test(asset.checksumSha256) ||
+      !Number.isSafeInteger(asset.byteSize) || Number(asset.byteSize) <= 0) {
+    throw new Error("CREATOR_REVIEW_CANDIDATE_IDENTITY_INVALID");
+  }
+  return { storageKey: asset.storageKey, checksumSha256: asset.checksumSha256, byteSize: Number(asset.byteSize) };
+}
+
+/** The scored bytes must still exist and match the immutable render record. */
+async function verifyCandidateBytes(asset: typeof creatorAssets.$inferSelect): Promise<CandidateArtifactIdentity> {
+  const identity = candidateArtifactIdentity(asset);
+  try {
+    await storageVerifySha256(identity.storageKey, identity.byteSize, identity.checksumSha256);
+  } catch {
+    // Do not disclose storage credentials, URLs, or backend errors through review APIs.
+    throw new Error("CREATOR_REVIEW_CANDIDATE_STORAGE_UNVERIFIED");
+  }
+  return identity;
+}
+
+/** Reject stale or pre-binding quality reviews; never promote a different artifact under the same asset ID. */
+function assertQualityCandidateBinding(scoresJson: string | null, asset: typeof creatorAssets.$inferSelect): void {
+  let stored: unknown;
+  try {
+    stored = JSON.parse(scoresJson ?? "");
+  } catch {
+    throw new Error("CREATOR_REVIEW_CANDIDATE_IDENTITY_MISSING");
+  }
+  if (!stored || typeof stored !== "object" || Array.isArray(stored) ||
+      !("candidateArtifact" in stored)) {
+    throw new Error("CREATOR_REVIEW_CANDIDATE_IDENTITY_MISSING");
+  }
+  const bound = (stored as { candidateArtifact: unknown }).candidateArtifact;
+  const current = candidateArtifactIdentity(asset);
+  if (!bound || typeof bound !== "object" || Array.isArray(bound) ||
+      (bound as CandidateArtifactIdentity).storageKey !== current.storageKey ||
+      (bound as CandidateArtifactIdentity).checksumSha256 !== current.checksumSha256 ||
+      (bound as CandidateArtifactIdentity).byteSize !== current.byteSize) {
+    throw new Error("CREATOR_REVIEW_CANDIDATE_IDENTITY_DRIFT");
+  }
+}
+
 async function ensureReviewAbsent(input: {
   workspaceId: number;
   creatorProjectId: number;
@@ -111,6 +158,7 @@ export async function recordCreatorQualityReview(input: {
   const { db, asset, provenance } = await requireRenderAsset(input);
   if (asset.reviewDecision !== "PENDING") throw new Error("CREATOR_QUALITY_REVIEW_ASSET_ALREADY_FINAL");
   await ensureReviewAbsent({ ...input, reviewType: "QUALITY" });
+  const candidateArtifact = await verifyCandidateBytes(asset);
 
   const [timeline] = await db.select().from(creatorTimelines).where(and(
     eq(creatorTimelines.id, Number(provenance.timelineId)),
@@ -151,6 +199,7 @@ export async function recordCreatorQualityReview(input: {
     scoresJson: JSON.stringify({
       reviewerType: input.reviewerType,
       sourcePromptOrStoryboard: input.sourcePromptOrStoryboard,
+      candidateArtifact,
       ...score,
     }),
     notes: input.notes?.trim() || null,
@@ -188,6 +237,7 @@ export async function recordCreatorHumanReview(input: {
     eq(creatorReviews.reviewType, "QUALITY"),
   )).limit(1);
   if (!quality) throw new Error("CREATOR_QUALITY_REVIEW_REQUIRED_FIRST");
+  assertQualityCandidateBinding(quality.scoresJson, asset);
   if (quality.decision === "REGENERATE" || quality.decision === "REJECT") throw new Error("CREATOR_HUMAN_REVIEW_BLOCKED_BY_QUALITY");
 
   const inserted = await db.insert(creatorReviews).values({
@@ -232,6 +282,8 @@ export async function finalizeCreatorMaster(input: {
   if (tamil?.decision !== "PASS") throw new Error("CREATOR_FINAL_MASTER_TAMIL_PASS_REQUIRED");
   if (visual?.decision !== "PASS") throw new Error("CREATOR_FINAL_MASTER_VISUAL_PASS_REQUIRED");
   if (!quality.reviewerUserId || !tamil.reviewerUserId || !visual.reviewerUserId) throw new Error("CREATOR_FINAL_MASTER_HUMAN_EVIDENCE_REQUIRED");
+  assertQualityCandidateBinding(quality.scoresJson, asset);
+  await verifyCandidateBytes(asset);
 
   await db.update(creatorAssets).set({ reviewDecision: "APPROVED" }).where(and(
     eq(creatorAssets.id, input.assetId),
