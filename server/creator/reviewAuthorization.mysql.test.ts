@@ -220,6 +220,35 @@ describe.skipIf(skipMysqlSuite())("16:9 master review authorization (real SQL)",
     expect(await counts(assetId)).toEqual({ reviews: 3, reviewDecision: "APPROVED" });
   });
 
+  it("blocks stale Tamil/visual/final decisions after a newer successful 16:9 export on the same timeline", async () => {
+    const oldAssetId = await freshMaster("superseded-original");
+    const old = { workspaceId: 7, creatorProjectId: ids.project, assetId: oldAssetId };
+    await caller(501).creator.review.quality({
+      ...old, reviewerType: "HUMAN", sourcePromptOrStoryboard: "synthetic original",
+      dimensionScores: dims, criticalDefects: [],
+    });
+    await caller(501).creator.review.humanTamil({ ...old, decision: "PASS", notes: "Tamil reviewed on original" });
+
+    const replacementAssetId = await freshMaster("superseded-replacement");
+    await run(sql`INSERT INTO creatorExports
+      (workspaceId, creatorProjectId, timelineId, assetId, status, width, height, format, renderer)
+      VALUES (7, ${ids.project}, ${ids.timeline}, ${replacementAssetId}, 'SUCCEEDED', 1920, 1080, 'mp4', 'ffmpeg')`);
+
+    await expect(caller(501).creator.review.humanVisual({
+      ...old, decision: "PASS", notes: "stale original visual",
+    })).rejects.toMatchObject({ message: "CREATOR_REVIEW_CANDIDATE_SUPERSEDED" });
+    await expect(caller(501).creator.review.finalizeMaster(old))
+      .rejects.toMatchObject({ message: "CREATOR_REVIEW_CANDIDATE_SUPERSEDED" });
+    expect(await counts(oldAssetId)).toEqual({ reviews: 2, reviewDecision: "PENDING" });
+
+    const replacement = { workspaceId: 7, creatorProjectId: ids.project, assetId: replacementAssetId };
+    await expect(caller(501).creator.review.quality({
+      ...replacement, reviewerType: "HUMAN", sourcePromptOrStoryboard: "replacement synthetic storyboard",
+      dimensionScores: dims, criticalDefects: [],
+    })).resolves.toMatchObject({ decision: "PASS" });
+    expect(await counts(replacementAssetId)).toEqual({ reviews: 1, reviewDecision: "PENDING" });
+  });
+
   it("a member can still read the project (getProject is unaffected)", async () => {
     await expect(caller(502).creator.workspace.getProject({ workspaceId: 7, creatorProjectId: ids.project })).resolves.toBeTruthy();
   });
