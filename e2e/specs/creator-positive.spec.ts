@@ -99,6 +99,18 @@ test.describe("Creator browser positive synthetic visual approval", () => {
           body: new Uint8Array(bytes),
         });
         expect(put.status, "synthetic object stored in loopback fake S3").toBe(200);
+        // The same fixture must satisfy FFmpeg's open-ended HTTP Range,
+        // not just the exact 206 reads used by SHA-256 storage approval.
+        const openEnded = await fetch(`${urls.s3}/e2e/${storageKey}`, {
+          headers: { range: "bytes=0-" },
+        });
+        expect(openEnded.status).toBe(206);
+        expect(Buffer.from(await openEnded.arrayBuffer()).equals(bytes)).toBe(true);
+        const suffix = await fetch(`${urls.s3}/e2e/${storageKey}`, {
+          headers: { range: "bytes=-4" },
+        });
+        expect(suffix.status).toBe(206);
+        expect(Buffer.from(await suffix.arrayBuffer()).equals(bytes.subarray(-4))).toBe(true);
         const [generationInsert] = await connection.execute(
           "INSERT INTO creatorGenerations (workspaceId, creatorProjectId, shotId, kind, provider, model, parametersJson, status) VALUES (?, ?, ?, 'IMAGE', 'synthetic-e2e', 'fixture', '{}', 'SUCCEEDED')",
           [workspaceId, creatorProjectId, shotIds[index]],
