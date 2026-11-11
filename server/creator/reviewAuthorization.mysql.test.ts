@@ -250,6 +250,43 @@ describe.skipIf(skipMysqlSuite())("16:9 master review authorization (real SQL)",
     expect(await counts(replacementAssetId)).toEqual({ reviews: 1, reviewDecision: "PENDING" });
   });
 
+  it("does not let a foreign asset pointer or non-FFmpeg export supersede an owned candidate", async () => {
+    const assetId = await freshMaster("supersession-scope-original");
+    const base = { workspaceId: 7, creatorProjectId: ids.project, assetId };
+    const foreignProjectName = "supersession-foreign-project";
+    await run(sql`INSERT INTO creatorProjects (workspaceId, name) VALUES (8, ${foreignProjectName})`);
+    const foreignProject = (await one<{ id: number }>(sql`SELECT id FROM creatorProjects WHERE workspaceId = 8 AND name = ${foreignProjectName}`)).id;
+    const foreignSha = createHash("sha256").update("foreign-supersession").digest("hex");
+    const provenance = JSON.stringify({
+      source: "deterministic-creator-render", timelineId: ids.timeline,
+      audioMasterAssetId: ids.audio, audioMasterChecksumSha256: "a".repeat(64),
+      width: 1920, height: 1080, fps: 24, durationMs: 4000,
+      outputEvidence: { width: 1920, height: 1080, fps: 24, durationSeconds: 4, hasAudio: true },
+    });
+    await run(sql`INSERT INTO creatorAssets
+      (workspaceId, creatorProjectId, assetType, mimeType, storageKey, checksumSha256,
+       byteSize, immutable, provenanceJson, reviewDecision)
+      VALUES (8, ${foreignProject}, 'RENDER', 'video/mp4', 'foreign/supersession.mp4',
+        ${foreignSha}, 1000, 1, ${provenance}, 'PENDING')`);
+    const foreignAssetId = (await one<{ id: number }>(sql`SELECT id FROM creatorAssets WHERE storageKey = 'foreign/supersession.mp4'`)).id;
+    // Corrupt export linkage must not influence review of this tenant's candidate.
+    await run(sql`INSERT INTO creatorExports
+      (workspaceId, creatorProjectId, timelineId, assetId, status, width, height, format, renderer, checksumSha256)
+      VALUES (7, ${ids.project}, ${ids.timeline}, ${foreignAssetId}, 'SUCCEEDED',
+        1920, 1080, 'mp4', 'ffmpeg', ${foreignSha})`);
+    const unrelatedAssetId = await freshMaster("supersession-untrusted-renderer");
+    const unrelatedSha = createHash("sha256").update("supersession-untrusted-renderer").digest("hex");
+    await run(sql`INSERT INTO creatorExports
+      (workspaceId, creatorProjectId, timelineId, assetId, status, width, height, format, renderer, checksumSha256)
+      VALUES (7, ${ids.project}, ${ids.timeline}, ${unrelatedAssetId}, 'SUCCEEDED',
+        1920, 1080, 'mp4', 'untrusted', ${unrelatedSha})`);
+    await expect(caller(501).creator.review.quality({
+      ...base, reviewerType: "HUMAN", sourcePromptOrStoryboard: "owned synthetic candidate",
+      dimensionScores: dims, criticalDefects: [],
+    })).resolves.toMatchObject({ decision: "PASS" });
+    expect(await counts(assetId)).toEqual({ reviews: 1, reviewDecision: "PENDING" });
+  });
+
   it("a member can still read the project (getProject is unaffected)", async () => {
     await expect(caller(502).creator.workspace.getProject({ workspaceId: 7, creatorProjectId: ids.project })).resolves.toBeTruthy();
   });
