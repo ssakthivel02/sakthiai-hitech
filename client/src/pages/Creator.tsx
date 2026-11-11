@@ -136,6 +136,20 @@ export default function Creator() {
   const selectedScene = project.data?.scenes[project.data.scenes.length - 1];
   const nextShotIndex = project.data?.shots.filter(shot => shot.sceneId === selectedScene?.id).length ?? 0;
   const activeTimeline = project.data?.timelines?.[0];
+  // A browser click must not request an export before the immutable audio,
+  // persisted approved visual timeline, and human-locked Tamil cues exist.
+  // The server remains the authoritative source-validation and render fence.
+  const candidatePrerequisites = {
+    audio: Boolean(project.data?.project.audioMasterAssetId),
+    visuals: Boolean(activeTimeline && project.data?.timelineItems?.some(item =>
+      item.timelineId === activeTimeline.id && project.data?.assets?.some(asset =>
+        asset.id === item.assetId &&
+        (asset.assetType === "IMAGE" || asset.assetType === "VIDEO") &&
+        asset.reviewDecision === "APPROVED"))),
+    tamil: Boolean(activeTimeline && project.data?.captionCues?.some(cue =>
+      cue.timelineId === activeTimeline.id && cue.language === "ta" && cue.locked === 1)),
+  };
+  const canRequestCandidate = Object.values(candidatePrerequisites).every(Boolean);
   const renderAssets = project.data?.assets?.filter(asset => asset.assetType === "RENDER" && renderSource(asset.provenanceJson) === "deterministic-creator-render") ?? [];
   const latestRenderAsset = [...renderAssets].sort((a, b) => b.id - a.id)[0];
   const finalMaster = [...renderAssets].filter(asset => asset.reviewDecision === "APPROVED").sort((a, b) => b.id - a.id)[0];
@@ -362,8 +376,8 @@ export default function Creator() {
           <Card><CardHeader><CardTitle>3. Visual timeline → candidate render</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 10 }}>
             <Button variant="outline" disabled={!approvedVisualAssets.length} onClick={buildTimelineFromApprovedAssets}>Build draft from approved, timed shot assets</Button>
             <div className="list">{timelineDrafts.map((item, index) => <div key={`${item.assetId}-${index}`} className="list-row"><span>{index + 1}. asset {item.assetId} · shot {item.shotId ?? "—"} · {item.startMs}–{item.endMs} ms</span><Button size="sm" variant="ghost" onClick={() => setTimelineDrafts(current => current.filter((_, i) => i !== index).map((value, i) => ({ ...value, sortOrder: i })))}>Remove</Button></div>)}</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button disabled={!activeTimeline || !timelineDrafts.length || saveTimeline.isPending} onClick={() => saveTimeline.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, items: timelineDrafts })}><CheckCircle2 size={16}/> Validate/save timeline</Button><Button disabled={!activeTimeline || renderCandidate.isPending} onClick={() => renderCandidate.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, confirmCandidateOnly: true })}><Play size={16}/> Render 16:9 candidate</Button></div>
-            <small>Candidate render remains non-final until quality + Tamil + visual gates all pass.</small>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Button disabled={!activeTimeline || !timelineDrafts.length || saveTimeline.isPending} onClick={() => saveTimeline.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, items: timelineDrafts })}><CheckCircle2 size={16}/> Validate/save timeline</Button><Button disabled={!canRequestCandidate || renderCandidate.isPending} onClick={() => renderCandidate.mutate({ workspaceId: workspaceId!, creatorProjectId: projectId!, timelineId: activeTimeline!.id, confirmCandidateOnly: true })}><Play size={16}/> Render 16:9 candidate</Button></div>
+            <small>Candidate render requires locked audio, a saved approved visual timeline, and locked Tamil cues. Missing: {Object.entries(candidatePrerequisites).filter(([, ready]) => !ready).map(([name]) => name).join(", ") || "none"}. Quality, Tamil and visual approvals remain separate mandatory gates.</small>
           </CardContent></Card>
 
           <Card><CardHeader><CardTitle>4. Quality → Tamil → Visual → Final master</CardTitle></CardHeader><CardContent style={{ display: "grid", gap: 12 }}>
