@@ -151,10 +151,17 @@ async function assertCurrentCandidate(tx: Parameters<Parameters<NonNullable<Awai
       eq(creatorExports.creatorProjectId, input.creatorProjectId),
       eq(creatorExports.timelineId, timeline.id),
       eq(creatorExports.status, "SUCCEEDED"),
+      eq(creatorExports.format, "mp4"),
+      eq(creatorExports.renderer, "ffmpeg"),
       eq(creatorExports.checksumSha256, creatorAssets.checksumSha256),
       eq(creatorExports.width, Number(provenance.width)),
       eq(creatorExports.height, Number(provenance.height)),
+      // The export's assetId is not proof of tenancy: reject corrupt or
+      // cross-project pointers before allowing them to supersede a candidate.
+      eq(creatorAssets.workspaceId, input.workspaceId),
+      eq(creatorAssets.creatorProjectId, input.creatorProjectId),
       eq(creatorAssets.assetType, "RENDER"),
+      eq(creatorAssets.mimeType, "video/mp4"),
       eq(creatorAssets.immutable, 1),
       ne(creatorAssets.reviewDecision, "REJECTED"),
       gt(creatorAssets.id, asset.id),
