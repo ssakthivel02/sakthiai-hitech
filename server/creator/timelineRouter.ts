@@ -41,23 +41,30 @@ function mapTimelineError(error: unknown): never {
  * Legacy renderCandidate must NOT bypass the durable claim or dispatch a
  * separate FFmpeg job. Caller authorization is enforced before invocation.
  */
-async function runFencedMasterCandidate(input: {
+async function runFencedCreatorRender(input: {
   workspaceId: number; creatorProjectId: number; timelineId: number;
+  verticalDerivativeOf?: number;
 }) {
   if (process.env.CREATOR_FENCED_RENDER_ENABLED !== "true") {
     throw new TRPCError({ code: "PRECONDITION_FAILED", message: "CREATOR_FENCED_RENDER_DISABLED" });
+  }
+  const derivative = input.verticalDerivativeOf !== undefined;
+  if (derivative && process.env.CREATOR_FENCED_DERIVATIVE_ENABLED !== "true") {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "CREATOR_FENCED_DERIVATIVE_DISABLED" });
   }
   try {
     const result = await dispatchReservedCreatorRender({
       workspaceId: input.workspaceId,
       creatorProjectId: input.creatorProjectId,
       timelineId: input.timelineId,
+      ...(derivative ? { verticalDerivativeOf: input.verticalDerivativeOf } : {}),
     }, {
       rendererVersion: "ffmpeg-v1",
       fontFamily: CREATOR_CAPTION_FONT_FAMILY,
     });
     if (!result.dispatched) {
       return {
+        ...(derivative ? { aspectRatio: "9:16" as const, derivative: true as const, humanCropCheckRequired: true as const } : {}),
         dispatched: false as const,
         claimId: result.claimId,
         exportId: result.exportId,
@@ -68,6 +75,7 @@ async function runFencedMasterCandidate(input: {
       };
     }
     return {
+      ...(derivative ? { aspectRatio: "9:16" as const, derivative: true as const, humanCropCheckRequired: true as const } : {}),
       dispatched: true as const,
       claimId: result.claimId,
       exportId: result.exportId,
@@ -112,7 +120,7 @@ export const creatorTimelineRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
-      return runFencedMasterCandidate(input);
+      return runFencedCreatorRender(input);
     }),
 
 
@@ -176,7 +184,7 @@ export const creatorTimelineRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
-      return runFencedMasterCandidate(input);
+      return runFencedCreatorRender(input);
     }),
 
   /** 9:16 (1080×1920, centre-crop) delivery derivative of an APPROVED 16:9 final master; refuses on any source drift. */
@@ -188,11 +196,14 @@ export const creatorTimelineRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
-      // There is no approved claim-fenced 9:16 dispatch entrypoint yet.
-      // Fail closed rather than call the old idempotency-bypassing service.
-      throw new TRPCError({
-        code: "PRECONDITION_FAILED",
-        message: "CREATOR_VERTICAL_DERIVATIVE_FENCED_DISPATCH_REQUIRED",
+      // A separate opt-in flag protects the delivery path. The shared fenced
+      // dispatcher verifies the approved final master, source fingerprint,
+      // tenant and active worker lease before running any 9:16 FFmpeg job.
+      return runFencedCreatorRender({
+        workspaceId: input.workspaceId,
+        creatorProjectId: input.creatorProjectId,
+        timelineId: input.timelineId,
+        verticalDerivativeOf: input.finalMasterAssetId,
       });
     }),
 
