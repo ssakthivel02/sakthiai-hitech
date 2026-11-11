@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { urls } from "./ports";
 
 /**
@@ -18,6 +18,12 @@ export async function startDisposableFencedCreatorServer() {
       !["localhost", "127.0.0.1", "mysql", "db"].includes(parsed.hostname) ||
       !/^sakthi_it_[a-z0-9]+_[a-f0-9]{8}$/.test(name)) {
     throw new Error("E2E_FENCED_UNSAFE_DATABASE_TARGET");
+  }
+  for (const executable of ["ffmpeg", "ffprobe"]) {
+    const probe = spawnSync(executable, ["-version"], { timeout: 5000, stdio: "ignore" });
+    if (probe.error || probe.status !== 0) {
+      throw new Error("E2E_FENCED_MEDIA_TOOL_MISSING:" + executable);
+    }
   }
   const port = 4330;
   const origin = "http://localhost:" + port;
