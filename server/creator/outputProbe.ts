@@ -61,7 +61,7 @@ export async function probeCreatorRenderedOutput(
   }
   const audios = streams.filter(s => s && s.codec_type === "audio");
   const hasAudio = audios.length > 0;
-  if (hasAudio && !audios.some(audio => typeof audio.codec_name === "string" && audio.codec_name.trim().toLowerCase() === "aac")) {
+  if (audios.length !== 1 || audios[0].codec_name !== "aac") {
     throw new Error("CREATOR_RENDER_OUTPUT_AUDIO_CODEC_INVALID");
   }
   const fpsAverage = rationalFps(video.avg_frame_rate);
