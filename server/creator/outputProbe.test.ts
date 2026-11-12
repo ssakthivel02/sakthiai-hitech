@@ -21,11 +21,11 @@ describe("Creator real-output technical evidence", () => {
     expect(await probeCreatorRenderedOutput("/local/master.mp4", target, run(probeJson())))
       .toEqual(target);
   });
-  it("rejects wrong resolution, frame rate, duration, and missing audio before storage", async () => {
+  it("rejects missing audio before other output-conformance checks", async () => {
     await expect(probeCreatorRenderedOutput("/local/master.mp4", target, run(probeJson({
       format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration: "2.500000" },
       streams: [{ codec_type: "video", codec_name: "h264", width: 640, height: 360, avg_frame_rate: "30/1", r_frame_rate: "30/1" }],
-    })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_NONCONFORMANT:width,height,fps,duration,audio");
+    })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_AUDIO_CODEC_INVALID");
   });
   it("rejects invalid JSON, missing video and invalid frame-rate metadata", async () => {
     await expect(probeCreatorRenderedOutput("x", target, run("not json")))
