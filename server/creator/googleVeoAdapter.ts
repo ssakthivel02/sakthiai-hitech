@@ -125,9 +125,10 @@ export async function fetchGoogleVeoArtifact(artifact: CreatorProviderArtifact) 
     redirect: "error",
   });
   if (!response.ok) throw new Error(`GOOGLE_VEO_ARTIFACT_DOWNLOAD_FAILED_${response.status}`);
-  // Reject successful HTTP responses that contain HTML/errors instead of video.
-  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (contentType && contentType !== "video/mp4") {
+  // Fail closed unless the provider explicitly identifies the artifact as MP4.
+  // Storage integrity checks prove byte identity, not media-format identity.
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  if (contentType !== "video/mp4") {
     try { await response.body?.cancel(); } catch { /* preserve validation error */ }
     throw new Error("CREATOR_VEO_ARTIFACT_MIME_INVALID");
   }

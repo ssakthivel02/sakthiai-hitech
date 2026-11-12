@@ -138,6 +138,17 @@ describe("Google Veo provider-neutral Creator adapter", () => {
     })).rejects.toThrow("CREATOR_VEO_ARTIFACT_MIME_INVALID");
   });
 
+  it("rejects a successful response with no Content-Type rather than relabelling unknown bytes as video", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]), {
+      status: 200,
+    })));
+    await expect(fetchGoogleVeoArtifact({
+      mimeType: "video/mp4",
+      uri: "https://generativelanguage.googleapis.com/v1beta/files/test:download",
+    })).rejects.toThrow("CREATOR_VEO_ARTIFACT_MIME_INVALID");
+  });
+
   it("fails closed instead of automatically following artifact redirects", async () => {
     process.env.GEMINI_API_KEY = "test-key";
     const fetchMock = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
