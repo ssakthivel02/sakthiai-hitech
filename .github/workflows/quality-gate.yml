@@ -267,6 +267,19 @@ jobs:
           STORAGE_FORCE_PATH_STYLE: "true"
         run: pnpm exec vitest run server/creator/fencedRenderRealMedia.mysql.test.ts --reporter=verbose
 
+      - name: Real MinIO + MySQL candidate quality and human-review fail-closed acceptance
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+          MYSQL_REQUIRED: "1"
+          CREATOR_MINIO_TEST_ACK: disposable-local-only
+          STORAGE_ENDPOINT: http://127.0.0.1:9000
+          STORAGE_REGION: us-east-1
+          STORAGE_BUCKET: creator-minio-ci
+          STORAGE_ACCESS_KEY_ID: ci-minio-user
+          STORAGE_SECRET_ACCESS_KEY: ci-minio-secret-only
+          STORAGE_FORCE_PATH_STYLE: "true"
+        run: pnpm exec vitest run server/creator/creatorQualityReviewRealMinio.mysql.test.ts --reporter=verbose
+
       - name: Stop disposable MinIO
         if: always()
         run: docker rm -f sakthiai-creator-minio || true

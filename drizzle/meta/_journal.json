@@ -169,6 +169,13 @@
       "when": 1794535600000,
       "tag": "0023_creator_staged_artifact_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1794539200000,
+      "tag": "0024_creator_remediation_lineage",
+      "breakpoints": true
     }
   ]
 }

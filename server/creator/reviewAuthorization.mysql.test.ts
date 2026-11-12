@@ -166,6 +166,127 @@ describe.skipIf(skipMysqlSuite())("16:9 master review authorization (real SQL)",
     expect(await counts(assetId)).toEqual({ reviews: 3, reviewDecision: "PENDING" });
   });
 
+  it("serializes two simultaneous quality decisions into exactly one durable review", async () => {
+    const assetId = await freshMaster("parallel-quality");
+    const base = { workspaceId: 7, creatorProjectId: ids.project, assetId };
+    const payload = { ...base, reviewerType: "HUMAN" as const, sourcePromptOrStoryboard: "reviewed synthetic storyboard", dimensionScores: dims, criticalDefects: [] };
+    const outcomes = await Promise.allSettled([
+      caller(501).creator.review.quality(payload),
+      caller(501).creator.review.quality(payload),
+    ]);
+    expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter(outcome => outcome.status === "rejected")).toHaveLength(1);
+    expect(await counts(assetId)).toEqual({ reviews: 1, reviewDecision: "PENDING" });
+  });
+
+  it("serializes simultaneous Tamil reviews and preserves the first immutable decision", async () => {
+    const assetId = await freshMaster("parallel-tamil");
+    const base = { workspaceId: 7, creatorProjectId: ids.project, assetId };
+    await caller(501).creator.review.quality({
+      ...base, reviewerType: "HUMAN", sourcePromptOrStoryboard: "approved synthetic storyboard",
+      dimensionScores: dims, criticalDefects: [],
+    });
+    const outcomes = await Promise.allSettled([
+      caller(501).creator.review.humanTamil({ ...base, decision: "PASS", notes: "Tamil text reviewed" }),
+      caller(501).creator.review.humanTamil({ ...base, decision: "REJECT", notes: "Tamil text rejected" }),
+    ]);
+    expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter(outcome => outcome.status === "rejected")).toHaveLength(1);
+    const rows = (await run(sql`SELECT decision FROM creatorReviews WHERE assetId = ${assetId} AND reviewType = 'HUMAN_TAMIL'`)) as unknown as [{ decision: string }[]];
+    expect(rows[0]).toHaveLength(1);
+    const winner = outcomes.find(outcome => outcome.status === "fulfilled");
+    if (!winner || winner.status !== "fulfilled") throw new Error("no Tamil winner");
+    expect(rows[0][0].decision).toBe(winner.value.decision);
+    expect(await counts(assetId)).toEqual({
+      reviews: 2, reviewDecision: winner.value.decision === "REJECT" ? "REJECTED" : "PENDING",
+    });
+  });
+
+  it("permits exactly one concurrent final-master promotion after all human approvals", async () => {
+    const assetId = await freshMaster("parallel-final");
+    const base = { workspaceId: 7, creatorProjectId: ids.project, assetId };
+    await caller(501).creator.review.quality({
+      ...base, reviewerType: "HUMAN", sourcePromptOrStoryboard: "approved synthetic storyboard",
+      dimensionScores: dims, criticalDefects: [],
+    });
+    await caller(501).creator.review.humanTamil({ ...base, decision: "PASS", notes: "Tamil text reviewed" });
+    await caller(501).creator.review.humanVisual({ ...base, decision: "PASS", notes: "visual playback reviewed" });
+    const outcomes = await Promise.allSettled([
+      caller(501).creator.review.finalizeMaster(base),
+      caller(501).creator.review.finalizeMaster(base),
+    ]);
+    expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter(outcome => outcome.status === "rejected")).toHaveLength(1);
+    expect(await counts(assetId)).toEqual({ reviews: 3, reviewDecision: "APPROVED" });
+  });
+
+  it("blocks stale Tamil/visual/final decisions after a newer successful 16:9 export on the same timeline", async () => {
+    const oldAssetId = await freshMaster("superseded-original");
+    const old = { workspaceId: 7, creatorProjectId: ids.project, assetId: oldAssetId };
+    await caller(501).creator.review.quality({
+      ...old, reviewerType: "HUMAN", sourcePromptOrStoryboard: "synthetic original",
+      dimensionScores: dims, criticalDefects: [],
+    });
+    await caller(501).creator.review.humanTamil({ ...old, decision: "PASS", notes: "Tamil reviewed on original" });
+
+    const replacementAssetId = await freshMaster("superseded-replacement");
+    await run(sql`INSERT INTO creatorExports
+      (workspaceId, creatorProjectId, timelineId, assetId, status, width, height, format, renderer, checksumSha256)
+      VALUES (7, ${ids.project}, ${ids.timeline}, ${replacementAssetId}, 'SUCCEEDED', 1920, 1080, 'mp4', 'ffmpeg',
+        ${createHash("sha256").update("superseded-replacement").digest("hex")})`);
+
+    await expect(caller(501).creator.review.humanVisual({
+      ...old, decision: "PASS", notes: "stale original visual",
+    })).rejects.toMatchObject({ message: "CREATOR_REVIEW_CANDIDATE_SUPERSEDED" });
+    await expect(caller(501).creator.review.finalizeMaster(old))
+      .rejects.toMatchObject({ message: "CREATOR_REVIEW_CANDIDATE_SUPERSEDED" });
+    expect(await counts(oldAssetId)).toEqual({ reviews: 2, reviewDecision: "PENDING" });
+
+    const replacement = { workspaceId: 7, creatorProjectId: ids.project, assetId: replacementAssetId };
+    await expect(caller(501).creator.review.quality({
+      ...replacement, reviewerType: "HUMAN", sourcePromptOrStoryboard: "replacement synthetic storyboard",
+      dimensionScores: dims, criticalDefects: [],
+    })).resolves.toMatchObject({ decision: "PASS" });
+    expect(await counts(replacementAssetId)).toEqual({ reviews: 1, reviewDecision: "PENDING" });
+  });
+
+  it("does not let a foreign asset pointer or non-FFmpeg export supersede an owned candidate", async () => {
+    const assetId = await freshMaster("supersession-scope-original");
+    const base = { workspaceId: 7, creatorProjectId: ids.project, assetId };
+    const foreignProjectName = "supersession-foreign-project";
+    await run(sql`INSERT INTO creatorProjects (workspaceId, name) VALUES (8, ${foreignProjectName})`);
+    const foreignProject = (await one<{ id: number }>(sql`SELECT id FROM creatorProjects WHERE workspaceId = 8 AND name = ${foreignProjectName}`)).id;
+    const foreignSha = createHash("sha256").update("foreign-supersession").digest("hex");
+    const provenance = JSON.stringify({
+      source: "deterministic-creator-render", timelineId: ids.timeline,
+      audioMasterAssetId: ids.audio, audioMasterChecksumSha256: "a".repeat(64),
+      width: 1920, height: 1080, fps: 24, durationMs: 4000,
+      outputEvidence: { width: 1920, height: 1080, fps: 24, durationSeconds: 4, hasAudio: true },
+    });
+    await run(sql`INSERT INTO creatorAssets
+      (workspaceId, creatorProjectId, assetType, mimeType, storageKey, checksumSha256,
+       byteSize, immutable, provenanceJson, reviewDecision)
+      VALUES (8, ${foreignProject}, 'RENDER', 'video/mp4', 'foreign/supersession.mp4',
+        ${foreignSha}, 1000, 1, ${provenance}, 'PENDING')`);
+    const foreignAssetId = (await one<{ id: number }>(sql`SELECT id FROM creatorAssets WHERE storageKey = 'foreign/supersession.mp4'`)).id;
+    // Corrupt export linkage must not influence review of this tenant's candidate.
+    await run(sql`INSERT INTO creatorExports
+      (workspaceId, creatorProjectId, timelineId, assetId, status, width, height, format, renderer, checksumSha256)
+      VALUES (7, ${ids.project}, ${ids.timeline}, ${foreignAssetId}, 'SUCCEEDED',
+        1920, 1080, 'mp4', 'ffmpeg', ${foreignSha})`);
+    const unrelatedAssetId = await freshMaster("supersession-untrusted-renderer");
+    const unrelatedSha = createHash("sha256").update("supersession-untrusted-renderer").digest("hex");
+    await run(sql`INSERT INTO creatorExports
+      (workspaceId, creatorProjectId, timelineId, assetId, status, width, height, format, renderer, checksumSha256)
+      VALUES (7, ${ids.project}, ${ids.timeline}, ${unrelatedAssetId}, 'SUCCEEDED',
+        1920, 1080, 'mp4', 'untrusted', ${unrelatedSha})`);
+    await expect(caller(501).creator.review.quality({
+      ...base, reviewerType: "HUMAN", sourcePromptOrStoryboard: "owned synthetic candidate",
+      dimensionScores: dims, criticalDefects: [],
+    })).resolves.toMatchObject({ decision: "PASS" });
+    expect(await counts(assetId)).toEqual({ reviews: 1, reviewDecision: "PENDING" });
+  });
+
   it("a member can still read the project (getProject is unaffected)", async () => {
     await expect(caller(502).creator.workspace.getProject({ workspaceId: 7, creatorProjectId: ids.project })).resolves.toBeTruthy();
   });
