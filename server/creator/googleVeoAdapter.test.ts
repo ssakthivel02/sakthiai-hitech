@@ -14,6 +14,19 @@ afterEach(() => {
 });
 
 describe("Google Veo provider-neutral Creator adapter", () => {
+  it("rejects credential-bearing and nonstandard-port artifact URLs before sending API keys", () => {
+    for (const uri of [
+      "https://user@generativelanguage.googleapis.com/v1beta/files/a",
+      "https://user:password@generativelanguage.googleapis.com/v1beta/files/a",
+      "https://generativelanguage.googleapis.com:8443/v1beta/files/a",
+      "http://generativelanguage.googleapis.com/v1beta/files/a",
+    ]) {
+      expect(() => validateGoogleVeoDownloadUri(uri)).toThrow("CREATOR_VEO_ARTIFACT_URI_INVALID");
+    }
+    expect(validateGoogleVeoDownloadUri("https://generativelanguage.googleapis.com/v1beta/files/a").hostname)
+      .toBe("generativelanguage.googleapis.com");
+  });
+
   it("extracts the documented generated video URI from a completed operation", () => {
     const artifacts = extractGoogleVeoArtifacts({
       name: "operations/test",
