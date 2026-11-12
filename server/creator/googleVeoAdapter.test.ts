@@ -6,6 +6,7 @@ import {
   googleVeoProvider,
   validateGoogleVeoDownloadUri,
   readBoundedGoogleVeoBody,
+  validateGoogleVeoMp4Signature,
 } from "./googleVeoAdapter";
 
 afterEach(() => {
@@ -149,11 +150,38 @@ describe("Google Veo provider-neutral Creator adapter", () => {
     })).rejects.toThrow("CREATOR_VEO_ARTIFACT_MIME_INVALID");
   });
 
+  it("rejects spoofed video/mp4 responses whose bytes are not an MP4 ftyp container", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new TextEncoder().encode("not-an-mp4-payload"), {
+      status: 200,
+      headers: { "content-type": "video/mp4" },
+    })));
+    await expect(fetchGoogleVeoArtifact({
+      mimeType: "video/mp4",
+      uri: "https://generativelanguage.googleapis.com/v1beta/files/test:download",
+    })).rejects.toThrow("CREATOR_VEO_ARTIFACT_FORMAT_INVALID");
+  });
+
+  it("accepts a structurally valid minimal ftyp box signature", () => {
+    const minimalFtyp = new Uint8Array([
+      0x00, 0x00, 0x00, 0x10,
+      0x66, 0x74, 0x79, 0x70,
+      0x69, 0x73, 0x6f, 0x6d,
+      0x00, 0x00, 0x00, 0x00,
+    ]);
+    expect(() => validateGoogleVeoMp4Signature(minimalFtyp)).not.toThrow();
+  });
+
   it("fails closed instead of automatically following artifact redirects", async () => {
     process.env.GEMINI_API_KEY = "test-key";
     const fetchMock = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
       expect(init?.redirect).toBe("error");
-      const response = new Response(new Uint8Array([1, 2, 3]), {
+      const response = new Response(new Uint8Array([
+        0x00, 0x00, 0x00, 0x10,
+        0x66, 0x74, 0x79, 0x70,
+        0x69, 0x73, 0x6f, 0x6d,
+        0x00, 0x00, 0x00, 0x00,
+      ]), {
         status: 200,
         headers: { "content-type": "video/mp4" },
       });
@@ -172,6 +200,6 @@ describe("Google Veo provider-neutral Creator adapter", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(result.mimeType).toBe("video/mp4");
-    expect(Array.from(result.data)).toEqual([1, 2, 3]);
+    expect(Array.from(result.data.slice(4, 8))).toEqual([0x66, 0x74, 0x79, 0x70]);
   });
 });

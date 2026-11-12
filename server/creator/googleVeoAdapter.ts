@@ -111,6 +111,18 @@ export async function readBoundedGoogleVeoBody(response: Response, maxBytes = MA
   }
 }
 
+export function validateGoogleVeoMp4Signature(data: Uint8Array): void {
+  // ISO-BMFF MP4 files are expected to begin with an ftyp box. Require the
+  // complete fixed ftyp fields (size/type/major_brand/minor_version) before
+  // treating provider bytes as MP4; Content-Type alone is not evidence.
+  if (data.byteLength < 16) throw new Error("CREATOR_VEO_ARTIFACT_FORMAT_INVALID");
+  const boxSize = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, false);
+  const isFtyp = data[4] === 0x66 && data[5] === 0x74 && data[6] === 0x79 && data[7] === 0x70;
+  if (!isFtyp || boxSize < 16 || boxSize > data.byteLength) {
+    throw new Error("CREATOR_VEO_ARTIFACT_FORMAT_INVALID");
+  }
+}
+
 export async function fetchGoogleVeoArtifact(artifact: CreatorProviderArtifact) {
   if (!artifact.uri) throw new Error("CREATOR_VEO_ARTIFACT_URI_MISSING");
   const apiKey = process.env.GEMINI_API_KEY ?? "";
@@ -133,6 +145,7 @@ export async function fetchGoogleVeoArtifact(artifact: CreatorProviderArtifact) 
     throw new Error("CREATOR_VEO_ARTIFACT_MIME_INVALID");
   }
   const data = await readBoundedGoogleVeoBody(response);
+  validateGoogleVeoMp4Signature(data);
   return {
     mimeType: "video/mp4",
     data,
