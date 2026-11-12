@@ -326,8 +326,9 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
     });
     expect(await countReviews(replacement.assetId)).toBe(3);
     expect(await countReviews(source.assetId)).toBe(1);
+    // A linked source is superseded before its older quality decision is considered.
     await expect(finalizeCreatorMaster(scope(source.assetId)))
-      .rejects.toThrow("CREATOR_FINAL_MASTER_QUALITY_PASS_REQUIRED");
+      .rejects.toThrow("CREATOR_REVIEW_CANDIDATE_SUPERSEDED");
 
     const master = await finalizeCreatorMaster(scope(replacement.assetId));
     expect(master).toMatchObject({
