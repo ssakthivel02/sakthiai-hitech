@@ -302,5 +302,39 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
     expect(await countReviews(replacement.assetId)).toBe(0);
     await expect(finalizeCreatorMaster(scope(replacement.assetId)))
       .rejects.toThrow("CREATOR_FINAL_MASTER_QUALITY_PASS_REQUIRED");
+
+    // All three decisions must be fresh and bound to the replacement bytes.
+    const replacementQuality = await quality(replacement.assetId);
+    expect(replacementQuality.decision).toBe("PASS");
+    expect(await countReviews(replacement.assetId)).toBe(1);
+    await expect(finalizeCreatorMaster(scope(replacement.assetId)))
+      .rejects.toThrow("CREATOR_FINAL_MASTER_TAMIL_PASS_REQUIRED");
+
+    await recordCreatorHumanReview({
+      ...scope(replacement.assetId), reviewerUserId: 501,
+      reviewType: "HUMAN_TAMIL", decision: "PASS",
+      notes: "TEST FIXTURE ONLY: replacement Tamil review",
+    });
+    await expect(finalizeCreatorMaster(scope(replacement.assetId)))
+      .rejects.toThrow("CREATOR_FINAL_MASTER_VISUAL_PASS_REQUIRED");
+
+    await recordCreatorHumanReview({
+      ...scope(replacement.assetId), reviewerUserId: 502,
+      reviewType: "HUMAN_VISUAL", decision: "PASS",
+      notes: "TEST FIXTURE ONLY: replacement visual review",
+    });
+    expect(await countReviews(replacement.assetId)).toBe(3);
+    expect(await countReviews(source.assetId)).toBe(1);
+    await expect(finalizeCreatorMaster(scope(source.assetId)))
+      .rejects.toThrow("CREATOR_FINAL_MASTER_QUALITY_PASS_REQUIRED");
+
+    const master = await finalizeCreatorMaster(scope(replacement.assetId));
+    expect(master).toMatchObject({
+      assetId: replacement.assetId, checksumSha256: replacementChecksum,
+      finalMaster: true, qualityPass: true, humanTamilPass: true,
+      humanVisualPass: true, publishApproved: false, automaticPublish: false,
+    });
+    expect(await decision(replacement.assetId)).toBe("APPROVED");
+    expect(await decision(source.assetId)).toBe("PENDING");
   });
 });
