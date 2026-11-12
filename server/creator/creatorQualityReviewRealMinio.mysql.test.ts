@@ -268,6 +268,7 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
         source: "deterministic-creator-render", exportId: exportRow.id, timelineId,
         audioMasterAssetId: audioId, audioMasterChecksumSha256: "a".repeat(64),
         width: 1920, height: 1080, fps: 24, durationMs: 2000,
+        outputEvidence: measured,
       });
       await run(sql`UPDATE creatorAssets SET provenanceJson = ${provenance} WHERE id = ${item.assetId}`);
     }
