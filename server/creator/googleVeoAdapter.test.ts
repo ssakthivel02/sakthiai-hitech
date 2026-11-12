@@ -126,6 +126,18 @@ describe("Google Veo provider-neutral Creator adapter", () => {
     );
   });
 
+  it("rejects a successful HTML response rather than persisting it as video", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>upstream error</html>", {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    })));
+    await expect(fetchGoogleVeoArtifact({
+      mimeType: "video/mp4",
+      uri: "https://generativelanguage.googleapis.com/v1beta/files/test:download",
+    })).rejects.toThrow("CREATOR_VEO_ARTIFACT_MIME_INVALID");
+  });
+
   it("fails closed instead of automatically following artifact redirects", async () => {
     process.env.GEMINI_API_KEY = "test-key";
     const fetchMock = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
