@@ -73,6 +73,7 @@ describe("Creator render-intent fingerprint (pure; no dispatch or DB claim)", ()
       (x: CreatorRenderIntentInput) => { x.visuals[0].checksumSha256 = "NOT_SHA256"; },
       (x: CreatorRenderIntentInput) => { x.captions[0].locked = false; },
       (x: CreatorRenderIntentInput) => { x.output.width = 1080; },
+      (x: CreatorRenderIntentInput) => { x.output.fps = 25; },
       (x: CreatorRenderIntentInput) => { x.visuals[0].shotId = Number.MAX_SAFE_INTEGER + 1; },
     ];
     for (const change of cases) {

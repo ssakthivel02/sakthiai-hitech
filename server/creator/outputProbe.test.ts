@@ -7,10 +7,10 @@ import { probeCreatorRenderedOutput } from "./outputProbe";
 
 const target = { width: 320, height: 180, fps: 24, durationSeconds: 2, hasAudio: true };
 const probeJson = (overrides: Record<string, unknown> = {}) => JSON.stringify({
-  format: { duration: "2.000000" },
+  format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration: "2.000000" },
   streams: [
-    { codec_type: "video", width: 320, height: 180, avg_frame_rate: "24/1", r_frame_rate: "24/1" },
-    { codec_type: "audio" },
+    { codec_type: "video", codec_name: "h264", width: 320, height: 180, avg_frame_rate: "24/1", r_frame_rate: "24/1" },
+    { codec_type: "audio", codec_name: "aac" },
   ],
   ...overrides,
 });
@@ -23,18 +23,44 @@ describe("Creator real-output technical evidence", () => {
   });
   it("rejects wrong resolution, frame rate, duration, and missing audio before storage", async () => {
     await expect(probeCreatorRenderedOutput("/local/master.mp4", target, run(probeJson({
-      format: { duration: "2.500000" },
-      streams: [{ codec_type: "video", width: 640, height: 360, avg_frame_rate: "30/1" }],
+      format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration: "2.500000" },
+      streams: [{ codec_type: "video", codec_name: "h264", width: 640, height: 360, avg_frame_rate: "30/1", r_frame_rate: "30/1" }],
     })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_NONCONFORMANT:width,height,fps,duration,audio");
   });
   it("rejects invalid JSON, missing video and invalid frame-rate metadata", async () => {
     await expect(probeCreatorRenderedOutput("x", target, run("not json")))
       .rejects.toThrow("CREATOR_RENDER_FFPROBE_INVALID_JSON");
-    await expect(probeCreatorRenderedOutput("x", target, run(probeJson({ streams: [{ codec_type: "audio" }] }))))
+    await expect(probeCreatorRenderedOutput("x", target, run(probeJson({ streams: [{ codec_type: "audio", codec_name: "aac" }] }))))
       .rejects.toThrow("CREATOR_RENDER_FFPROBE_VIDEO_STREAM_INVALID");
     await expect(probeCreatorRenderedOutput("x", target, run(probeJson({
-      streams: [{ codec_type: "video", width: 320, height: 180, avg_frame_rate: "0/0", r_frame_rate: "0/0" }, { codec_type: "audio" }],
+      streams: [
+        { codec_type: "video", codec_name: "h264", width: 320, height: 180, avg_frame_rate: "0/0", r_frame_rate: "0/0" },
+        { codec_type: "audio", codec_name: "aac" },
+      ],
     })))).rejects.toThrow("CREATOR_RENDER_FFPROBE_METADATA_INVALID");
+  });
+  it("rejects wrong codecs, container and divergent CFR evidence", async () => {
+    await expect(probeCreatorRenderedOutput("x", target, run(probeJson({
+      streams: [
+        { codec_type: "video", codec_name: "vp9", width: 320, height: 180, avg_frame_rate: "24/1", r_frame_rate: "24/1" },
+        { codec_type: "audio", codec_name: "aac" },
+      ],
+    })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_VIDEO_CODEC_INVALID");
+    await expect(probeCreatorRenderedOutput("x", target, run(probeJson({
+      streams: [
+        { codec_type: "video", codec_name: "h264", width: 320, height: 180, avg_frame_rate: "24/1", r_frame_rate: "24/1" },
+        { codec_type: "audio", codec_name: "mp3" },
+      ],
+    })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_AUDIO_CODEC_INVALID");
+    await expect(probeCreatorRenderedOutput("x", target, run(probeJson({
+      format: { format_name: "matroska,webm", duration: "2.000000" },
+    })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_CONTAINER_INVALID");
+    await expect(probeCreatorRenderedOutput("x", target, run(probeJson({
+      streams: [
+        { codec_type: "video", codec_name: "h264", width: 320, height: 180, avg_frame_rate: "19/1", r_frame_rate: "24/1" },
+        { codec_type: "audio", codec_name: "aac" },
+      ],
+    })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_NONCONFORMANT:fps");
   });
 });
 
