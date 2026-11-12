@@ -118,7 +118,7 @@ export function validateGoogleVeoMp4Signature(data: Uint8Array): void {
   if (data.byteLength < 16) throw new Error("CREATOR_VEO_ARTIFACT_FORMAT_INVALID");
   const boxSize = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, false);
   const isFtyp = data[4] === 0x66 && data[5] === 0x74 && data[6] === 0x79 && data[7] === 0x70;
-  if (!isFtyp || boxSize < 16 || boxSize > data.byteLength) {
+  // An ftyp header with a zeroed major brand is not a meaningful MP4 signature.\n  const majorBrandIsZero = data[8] === 0 && data[9] === 0 && data[10] === 0 && data[11] === 0;\n  if (!isFtyp || boxSize < 16 || boxSize > data.byteLength || majorBrandIsZero) {
     throw new Error("CREATOR_VEO_ARTIFACT_FORMAT_INVALID");
   }
 }
