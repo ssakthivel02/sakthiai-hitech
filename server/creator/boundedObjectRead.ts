@@ -19,6 +19,12 @@ export async function readExactRangedObject(
   if (!match || Number(match[1]) !== 0 || Number(match[2]) !== expectedSize - 1 ||
       Number(match[3]) !== expectedSize ||
       (contentLength !== undefined && contentLength !== expectedSize)) {
+    // The SDK may already have opened a streaming HTTP response. Rejecting its
+    // headers without cancellation can leave a connection and buffered body alive.
+    // Do not acquire a reader or consume bytes from an untrusted response.
+    try { await stream.cancel("CREATOR_CHECKSUM_RANGE_NOT_HONORED"); } catch {
+      // Preserve the range-contract failure if transport cleanup itself fails.
+    }
     throw new Error("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
   }
   const reader = stream.getReader();
