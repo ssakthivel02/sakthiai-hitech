@@ -39,6 +39,18 @@ describe("Creator real-output technical evidence", () => {
       ],
     })))).rejects.toThrow("CREATOR_RENDER_FFPROBE_METADATA_INVALID");
   });
+  it("rejects mixed-codec, duplicate AAC and missing audio streams", async () => {
+    const video = { codec_type: "video", codec_name: "h264", width: 320, height: 180, avg_frame_rate: "24/1", r_frame_rate: "24/1" };
+    for (const audioStreams of [
+      [{ codec_type: "audio", codec_name: "aac" }, { codec_type: "audio", codec_name: "mp3" }],
+      [{ codec_type: "audio", codec_name: "aac" }, { codec_type: "audio", codec_name: "aac" }],
+      [],
+    ]) {
+      await expect(probeCreatorRenderedOutput("x", target, run(probeJson({
+        streams: [video, ...audioStreams],
+      })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_AUDIO_CODEC_INVALID");
+    }
+  });
   it("rejects wrong codecs, container and divergent CFR evidence", async () => {
     await expect(probeCreatorRenderedOutput("x", target, run(probeJson({
       streams: [
