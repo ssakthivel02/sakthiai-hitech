@@ -172,6 +172,16 @@ describe("Google Veo provider-neutral Creator adapter", () => {
     expect(() => validateGoogleVeoMp4Signature(minimalFtyp)).not.toThrow();
   });
 
+  it("rejects an ftyp-shaped header with a zeroed major brand", () => {
+    const forged = new Uint8Array([
+      0x00, 0x00, 0x00, 0x10,
+      0x66, 0x74, 0x79, 0x70,
+      0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,
+    ]);
+    expect(() => validateGoogleVeoMp4Signature(forged)).toThrow("CREATOR_VEO_ARTIFACT_FORMAT_INVALID");
+  });
+
   it("fails closed instead of automatically following artifact redirects", async () => {
     process.env.GEMINI_API_KEY = "test-key";
     const fetchMock = vi.fn(async (_input: URL | RequestInfo, init?: RequestInit) => {
