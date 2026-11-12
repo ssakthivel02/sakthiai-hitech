@@ -50,7 +50,9 @@ export function extractGoogleVeoArtifacts(snapshot: VeoOperationSnapshot): Creat
 
 export function validateGoogleVeoDownloadUri(uri: string): URL {
   const parsed = new URL(uri);
-  if (parsed.protocol !== "https:") throw new Error("CREATOR_VEO_ARTIFACT_URI_INVALID");
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) {
+    throw new Error("CREATOR_VEO_ARTIFACT_URI_INVALID");
+  }
   if (parsed.hostname !== "generativelanguage.googleapis.com" && !parsed.hostname.endsWith(".googleapis.com")) {
     throw new Error("CREATOR_VEO_ARTIFACT_HOST_INVALID");
   }
