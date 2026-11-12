@@ -301,6 +301,21 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
       replacementRequiresFreshVisualReview: true,
     });
     expect(await countReviews(replacement.assetId)).toBe(0);
+
+    // A valid lineage record must not authorize a later-modified replacement.
+    // The fresh quality gate must re-read real object bytes, not trust linkage.
+    await s3.send(new PutObjectCommand({
+      Bucket: "creator-minio-ci", Key: replacement.storageKey,
+      Body: Buffer.from("tampered after valid remediation linkage"),
+    }));
+    await expect(quality(replacement.assetId))
+      .rejects.toThrow("CREATOR_REVIEW_CANDIDATE_STORAGE_UNVERIFIED");
+    expect(await countReviews(replacement.assetId)).toBe(0);
+    await s3.send(new PutObjectCommand({
+      Bucket: "creator-minio-ci", Key: replacement.storageKey,
+      Body: replacementBytes, ContentType: "video/mp4",
+    }));
+
     await expect(finalizeCreatorMaster(scope(replacement.assetId)))
       .rejects.toThrow("CREATOR_FINAL_MASTER_QUALITY_PASS_REQUIRED");
 
