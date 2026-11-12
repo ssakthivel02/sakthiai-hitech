@@ -125,9 +125,15 @@ export async function fetchGoogleVeoArtifact(artifact: CreatorProviderArtifact) 
     redirect: "error",
   });
   if (!response.ok) throw new Error(`GOOGLE_VEO_ARTIFACT_DOWNLOAD_FAILED_${response.status}`);
+  // Reject successful HTTP responses that contain HTML/errors instead of video.
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType && contentType !== "video/mp4") {
+    try { await response.body?.cancel(); } catch { /* preserve validation error */ }
+    throw new Error("CREATOR_VEO_ARTIFACT_MIME_INVALID");
+  }
   const data = await readBoundedGoogleVeoBody(response);
   return {
-    mimeType: response.headers.get("content-type") || artifact.mimeType || "video/mp4",
+    mimeType: "video/mp4",
     data,
   };
 }
