@@ -51,6 +51,23 @@ describe("Creator real-output technical evidence", () => {
       })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_AUDIO_CODEC_INVALID");
     }
   });
+  it("rejects wrong resolution, frame rate and duration with a valid AAC stream", async () => {
+    const validAudio = { codec_type: "audio", codec_name: "aac" };
+    const video = (overrides: Record<string, unknown> = {}) => ({
+      codec_type: "video", codec_name: "h264", width: 320, height: 180,
+      avg_frame_rate: "24/1", r_frame_rate: "24/1", ...overrides,
+    });
+    const cases: Array<{ name: string; overrides: Record<string, unknown>; error: string }> = [
+      { name: "width", overrides: { streams: [video({ width: 640 }), validAudio] }, error: "CREATOR_RENDER_OUTPUT_NONCONFORMANT:width" },
+      { name: "height", overrides: { streams: [video({ height: 360 }), validAudio] }, error: "CREATOR_RENDER_OUTPUT_NONCONFORMANT:height" },
+      { name: "fps", overrides: { streams: [video({ avg_frame_rate: "30/1", r_frame_rate: "30/1" }), validAudio] }, error: "CREATOR_RENDER_OUTPUT_NONCONFORMANT:fps" },
+      { name: "duration", overrides: { format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration: "2.500000" } }, error: "CREATOR_RENDER_OUTPUT_NONCONFORMANT:duration" },
+    ];
+    for (const testCase of cases) {
+      await expect(probeCreatorRenderedOutput("x", target, run(probeJson(testCase.overrides)),))
+        .rejects.toThrow(testCase.error);
+    }
+  });
   it("rejects wrong codecs, container and divergent CFR evidence", async () => {
     await expect(probeCreatorRenderedOutput("x", target, run(probeJson({
       streams: [
