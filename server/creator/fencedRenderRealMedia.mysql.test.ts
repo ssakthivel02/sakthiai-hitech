@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sql } from "drizzle-orm";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
 import type { TrpcContext } from "../_core/context";
 import type { CreatorRenderDispatchDependencies } from "./renderDispatch";
@@ -38,6 +39,8 @@ import { creatorTimelineRouter } from "./timelineRouter";
 import { MysqlCreatorRenderClaims } from "./renderClaims";
 import { readCreatorRenderIntentFromDatabase, reserveCreatorRenderIntentFromDatabase } from "./renderIntentDb";
 import { resolveCreatorCaptionFonts } from "./renderWorker";
+import { loadCreatorQualityPolicy } from "./qualityGate";
+import { finalizeCreatorMaster, recordCreatorHumanReview, recordCreatorQualityReview } from "./reviewService";
 import { storageListCreatorRenderObjects, storagePut, storageVerifySha256 } from "../storage";
 
 const hasMediaTools = spawnSync("ffmpeg", ["-version"]).status === 0 &&
@@ -302,5 +305,146 @@ describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
         await storageVerifySha256(persisted.storageKey, persisted.byteSize, persisted.checksumSha256);
       }
     }, 120_000);
+
+    it.skipIf(!realMinio)("uses test-only human approvals to fence real 9:16 MySQL/FFmpeg/MinIO render and deny automatic crop approval", async () => {
+      // A disposable simulated reviewer is NOT a human's approval for Murugan.
+      vi.stubEnv("CREATOR_FENCED_RENDER_ENABLED", "true");
+      vi.stubEnv("CREATOR_FENCED_DERIVATIVE_ENABLED", "true");
+      await exec(sql`UPDATE creatorCaptionCues SET text = 'வேல் முருகா vertical-test-only'
+        WHERE timelineId = ${ids.timeline}`);
+
+      // New candidate keeps this test independent of earlier test assertions.
+      const master = await caller().renderFencedCandidate({
+        workspaceId: 7, creatorProjectId: ids.project, timelineId: ids.timeline,
+        confirmCandidateOnly: true,
+      });
+      if (!master.dispatched) throw new Error("CREATOR_DERIVATIVE_TEST_MASTER_NOT_RENDERED");
+      expect(master).toMatchObject({ reviewDecision: "PENDING", finalMaster: false, publishApproved: false });
+
+      const input = {
+        workspaceId: 7, creatorProjectId: ids.project,
+        timelineId: ids.timeline, finalMasterAssetId: master.assetId,
+      };
+      const before = outputs.size;
+      // No claimed derivative or FFmpeg may start with an unreviewed master.
+      await expect(caller().renderVerticalDerivative(input)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      expect(outputs.size).toBe(before);
+
+      const dimensions = Object.fromEntries(
+        loadCreatorQualityPolicy().spec.sakthiaiAcceptanceDimensions.map(item => [item.id, 5]),
+      );
+      const quality = await recordCreatorQualityReview({
+        workspaceId: 7, creatorProjectId: ids.project, assetId: master.assetId,
+        reviewerUserId: 501, reviewerType: "HUMAN",
+        sourcePromptOrStoryboard: "Synthetic fixture; not an actual Murugan approval",
+        dimensionScores: dimensions, criticalDefects: [],
+        notes: "TEST ONLY: simulated technical approval",
+      });
+      expect(quality.decision).toBe("PASS");
+      for (const reviewType of ["HUMAN_TAMIL", "HUMAN_VISUAL"] as const) {
+        const review = await recordCreatorHumanReview({
+          workspaceId: 7, creatorProjectId: ids.project, assetId: master.assetId,
+          reviewerUserId: 501, reviewType, decision: "PASS",
+          notes: "TEST FIXTURE ONLY, not a genuine human review",
+        });
+        expect(review.decision).toBe("PASS");
+      }
+      const approved = await finalizeCreatorMaster({
+        workspaceId: 7, creatorProjectId: ids.project, assetId: master.assetId,
+      });
+      expect(approved).toMatchObject({
+        finalMaster: true, qualityPass: true,
+        humanTamilPass: true, humanVisualPass: true,
+        publishApproved: false, automaticPublish: false,
+      });
+
+      const derivative = await caller().renderVerticalDerivative(input);
+      if (!derivative.dispatched) throw new Error("CREATOR_DERIVATIVE_TEST_NOT_RENDERED");
+      expect(derivative).toMatchObject({
+        dispatched: true, aspectRatio: "9:16", derivative: true,
+        humanCropCheckRequired: true, reviewDecision: "PENDING",
+        finalMaster: false, publishApproved: false,
+      });
+      expect(outputs.size).toBe(before + 1);
+      const asset = await first<{
+        reviewDecision: string; checksumSha256: string; byteSize: number;
+        storageKey: string; provenanceJson: string;
+      }>(sql`SELECT reviewDecision, checksumSha256, byteSize, storageKey, provenanceJson
+        FROM creatorAssets WHERE id = ${derivative.assetId}`);
+      expect(asset.reviewDecision).toBe("PENDING");
+      expect(JSON.parse(asset.provenanceJson)).toMatchObject({
+        source: "deterministic-creator-derivative",
+        derivativeOfRenderAssetId: master.assetId,
+        width: 1080, height: 1920, fps: 24,
+        outputEvidence: { width: 1080, height: 1920, fps: 24, hasAudio: true },
+      });
+      await storageVerifySha256(asset.storageKey, asset.byteSize, asset.checksumSha256);
+
+      // Independently read the real disposable S3 object and inspect MP4 bytes.
+      const endpoint = process.env.STORAGE_ENDPOINT ?? "";
+      if (endpoint !== "http://127.0.0.1:9000" ||
+          process.env.STORAGE_BUCKET !== "creator-minio-ci") {
+        throw new Error("CREATOR_DERIVATIVE_TEST_NOT_DISPOSABLE");
+      }
+      const s3 = new S3Client({
+        endpoint, region: process.env.STORAGE_REGION || "us-east-1", forcePathStyle: true,
+        credentials: {
+          accessKeyId: process.env.STORAGE_ACCESS_KEY_ID || "",
+          secretAccessKey: process.env.STORAGE_SECRET_ACCESS_KEY || "",
+        },
+      });
+      try {
+        const object = await s3.send(new GetObjectCommand({
+          Bucket: "creator-minio-ci", Key: asset.storageKey,
+        }));
+        if (!object.Body) throw new Error("CREATOR_DERIVATIVE_TEST_OBJECT_MISSING");
+        const bytes = Buffer.from(await object.Body.transformToByteArray());
+        expect(bytes.length).toBe(asset.byteSize);
+        expect(digest(bytes)).toBe(asset.checksumSha256);
+        const persisted = join(dir, "fenced-vertical-persisted.mp4");
+        writeFileSync(persisted, bytes);
+        const probe = JSON.parse(execFileSync("ffprobe", [
+          "-v", "error", "-show_entries",
+          "stream=codec_type,width,height,avg_frame_rate,nb_frames",
+          "-of", "json", persisted,
+        ], { encoding: "utf8", timeout: 15_000 })) as {
+          streams: Array<{
+            codec_type: string; width?: number; height?: number;
+            avg_frame_rate?: string; nb_frames?: string;
+          }>;
+        };
+        expect(probe.streams.find(stream => stream.codec_type === "video")).toMatchObject({
+          width: 1080, height: 1920, avg_frame_rate: "24/1", nb_frames: "48",
+        });
+        expect(probe.streams.some(stream => stream.codec_type === "audio")).toBe(true);
+      } finally {
+        s3.destroy();
+      }
+
+      const manifest = await caller().exportManifest({
+        workspaceId: 7, creatorProjectId: ids.project, exportId: derivative.exportId,
+      });
+      expect(manifest.output).toMatchObject({
+        kind: "DELIVERY_DERIVATIVE", finalMaster: false,
+        deliveryApproved: false, reviewDecision: "PENDING",
+        derivativeOf: { renderAssetId: master.assetId },
+      });
+      expect(manifest.gates).toMatchObject({ publishApproved: false, automaticPublish: false });
+      const duplicate = await caller().renderVerticalDerivative(input);
+      expect(duplicate).toMatchObject({
+        dispatched: false, claimId: derivative.claimId, exportId: derivative.exportId,
+        finalMaster: false, publishApproved: false,
+      });
+      expect(outputs.size).toBe(before + 1);
+      expect(JSON.stringify(duplicate)).not.toContain("leaseToken");
+      expect(await storageListCreatorRenderObjects({
+        workspaceId: 7, creatorProjectId: ids.project, timelineId: ids.timeline,
+        exportId: derivative.exportId, claimId: derivative.claimId,
+      })).toEqual([{ key: asset.storageKey, sizeBytes: asset.byteSize }]);
+      const after = await first<{ reviewDecision: string }>(sql`SELECT reviewDecision
+        FROM creatorAssets WHERE id = ${master.assetId}`);
+      expect(after.reviewDecision).toBe("APPROVED");
+    }, 120_000);
+
   },
 );
