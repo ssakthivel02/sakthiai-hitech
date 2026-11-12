@@ -279,6 +279,21 @@ describe.skipIf(!enabled)("Creator quality and human review: real MinIO + MySQL"
       replacementCandidateAssetId: replacement.assetId,
       expectedSourceChecksumSha256: checksum, expectedReplacementChecksumSha256: replacementChecksum,
     };
+    // Source integrity is independently mandatory: a valid replacement cannot
+    // launder a corrupted source into immutable remediation lineage.
+    await s3.send(new PutObjectCommand({
+      Bucket: "creator-minio-ci", Key: source.storageKey,
+      Body: Buffer.from("tampered source before remediation linkage"),
+    }));
+    await expect(linkCreatorRemediationReplacement(args))
+      .rejects.toThrow("CREATOR_REMEDIATION_STORAGE_UNVERIFIED");
+    expect(Number((await one<{ n: number }>(sql`SELECT COUNT(*) AS n FROM creatorRemediationLineage
+      WHERE sourceQualityReviewId = ${sourceReview.id}`)).n)).toBe(0);
+    await s3.send(new PutObjectCommand({
+      Bucket: "creator-minio-ci", Key: source.storageKey,
+      Body: renderedBytes, ContentType: "video/mp4",
+    }));
+
     // Deliberately corrupt replacement bytes, leaving DB checksums unchanged.
     await s3.send(new PutObjectCommand({
       Bucket: "creator-minio-ci", Key: replacement.storageKey, Body: Buffer.from("changed replacement"),
