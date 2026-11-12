@@ -41,6 +41,7 @@ import { readCreatorRenderIntentFromDatabase, reserveCreatorRenderIntentFromData
 import { resolveCreatorCaptionFonts } from "./renderWorker";
 import { loadCreatorQualityPolicy } from "./qualityGate";
 import { finalizeCreatorMaster, recordCreatorHumanReview, recordCreatorQualityReview } from "./reviewService";
+import { getCreatorExportManifest } from "./exportManifest";
 import { storageListCreatorRenderObjects, storagePut, storageVerifySha256 } from "../storage";
 
 const hasMediaTools = spawnSync("ffmpeg", ["-version"]).status === 0 &&
@@ -421,7 +422,9 @@ describe.skipIf(skipMysqlSuite() || !hasMediaTools)(
         s3.destroy();
       }
 
-      const manifest = await caller().exportManifest({
+      // Manifest persistence is tested via the service. The route's
+      // workspace membership guard is covered in its dedicated auth tests.
+      const manifest = await getCreatorExportManifest({
         workspaceId: 7, creatorProjectId: ids.project, exportId: derivative.exportId,
       });
       expect(manifest.output).toMatchObject({
