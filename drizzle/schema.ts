@@ -255,6 +255,7 @@ export const creatorConsents = mysqlTable("creatorConsents", {
   validUntil: timestamp("validUntil"),
   revokedAt: timestamp("revokedAt"),
   revokedByUserId: int("revokedByUserId"),
+  lastDispatchAdmittedAt: datetime("lastDispatchAdmittedAt", { fsp: 6 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [
   index("creatorConsents_workspace_subject_idx").on(table.workspaceId, table.provider, table.providerSubjectId, table.purpose),
