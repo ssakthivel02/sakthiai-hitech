@@ -197,6 +197,24 @@ describe("avatar generation", () => {
     expect(m.windows.cost).toBe(0);
   });
 
+  it("never retries an ambiguous provider submission after admission, retaining the spend hold", async () => {
+    const key = randomUUID();
+    m.avatarSubmit.mockRejectedValueOnce(new Error("provider reply lost"));
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key)))
+      .rejects.toMatchObject({ code: "BAD_GATEWAY" });
+    expect(m.admitAvatarConsentDispatch).toHaveBeenCalledTimes(1);
+    expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
+    expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "HELD" })]);
+    expect(m.windows.cost).toBeGreaterThan(0);
+    // Same idempotency key cannot resubmit the ambiguous (possibly billed) job.
+    m.getGenerationExecutionContext.mockResolvedValue({
+      generation: { status: "RUNNING", provider: "heygen-avatar", outputAssetId: null },
+      providerJob: { status: "SUBMITTED" },
+    });
+    await caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key));
+    expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
+  });
+
   it("unapproved audio stops before the ledger and the provider", async () => {
     m.resolveAvatarAudio.mockRejectedValue(new Error("CREATOR_AVATAR_AUDIO_NOT_APPROVED"));
     await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar())).rejects.toMatchObject({ code: "BAD_REQUEST", message: "CREATOR_AVATAR_AUDIO_NOT_APPROVED" });

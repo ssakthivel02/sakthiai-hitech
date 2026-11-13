@@ -43,6 +43,16 @@ describe.skipIf(skipMysqlSuite())("Creator avatar consent dispatch linearization
     await expect(admitAvatarConsentDispatch(input())).rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
   });
 
+  it("permits repeated active admissions but refuses revoked, expired or mismatched consent", async () => {
+    await insert();
+    await expect(admitAvatarConsentDispatch(input())).resolves.toMatchObject({ admitted: true });
+    await expect(admitAvatarConsentDispatch(input())).resolves.toMatchObject({ admitted: true });
+    await expect(admitAvatarConsentDispatch({ ...input(), workspaceId: 8 })).rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
+    await expect(admitAvatarConsentDispatch({ ...input(), providerSubjectId: "other_avatar_01" })).rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
+    await fixture.db.execute(sql`UPDATE creatorConsents SET validUntil = DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 1 DAY) WHERE id = ${id}`);
+    await expect(admitAvatarConsentDispatch(input())).rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
+  });
+
   it("serializes a revocation held in another transaction against admission on another connection", async () => {
     await insert();
     const locked = await fixture.pool.promise().getConnection();
