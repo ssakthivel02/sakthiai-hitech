@@ -191,7 +191,7 @@ test.describe("Creator browser positive synthetic visual approval", () => {
       expect(state.data?.generations).toHaveLength(2);
       await expect(page.getByRole("button", { name: "Promote approved 16:9 final master" })).toBeDisabled();
 
-      
+
       // Run the existing fenced dispatcher through the actual Creator browser
       // using a separate disposable process. The default E2E server stays OFF.
       const fenced = await startDisposableFencedCreatorServer();
