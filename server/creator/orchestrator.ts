@@ -170,11 +170,26 @@ export async function submitCreatorGeneration(input: {
     throw error;
   }
 
+  // A consent denial occurs before any provider request; it cannot be an ambiguous/billable submission.
+  // Handle it separately from provider failures so its spend hold is always released.
+  if (input.beforeProviderSubmit) {
+    try {
+      await input.beforeProviderSubmit();
+    } catch (error) {
+      await input.spend.release();
+      await markGenerationFailed({
+        workspaceId: input.workspaceId,
+        creatorProjectId: input.creatorProjectId,
+        generationId,
+        failureClass: "INVALID_REQUEST",
+        errorMessage: errorMessage(error),
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+
   let submission: Awaited<ReturnType<typeof provider.submit>>;
   try {
-    // The router's initial consent check may have gone stale during audio reads or spend reservation.
-    // Run this check inside the existing error/ledger settlement boundary, not after dispatch.
-    await input.beforeProviderSubmit?.();
     submission = await provider.submit(input.request);
   } catch (error) {
     const failureClass = provider.classifyFailure(error);
