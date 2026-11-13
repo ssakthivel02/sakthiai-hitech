@@ -65,7 +65,7 @@ vi.mock("./providerRegistry", () => {
     supports: (request: { kind: string }) => request.kind === kind,
     submit, poll: vi.fn(), classifyFailure: () => "UNKNOWN",
   });
-  const providers = [make("sarvam-tts", "SPEECH", "bulbul:v3", m.speechSubmit), make("heygen-avatar", "AVATAR_VIDEO", "heygen-v2", m.avatarSubmit)];
+  const providers = [make("sarvam-tts", "SPEECH", "bulbul:v3", m.speechSubmit), make("heygen-avatar", "AVATAR_VIDEO", "heygen-v3", m.avatarSubmit)];
   return {
     listCreatorProviderStatuses: () => providers.map(p => p.status()),
     getCreatorProvider: (id: string) => providers.find(p => p.id === id),
@@ -85,7 +85,7 @@ const ENV: Record<string, string> = {
   CREATOR_PAID_GENERATION_ENABLED: "true",
   CREATOR_PAID_SPEECH_USERS: "speaker",
   CREATOR_PAID_AVATAR_USERS: "presenter",
-  CREATOR_MODEL_COSTS: JSON.stringify({ "bulbul:v3": { perThousandChars: 0.5 }, "heygen-v2": { perSecond: 0.1 } }),
+  CREATOR_MODEL_COSTS: JSON.stringify({ "bulbul:v3": { perThousandChars: 0.5 }, "heygen-v3": { perSecond: 0.1 } }),
   CREATOR_GLOBAL_MAX_GENERATIONS_PER_DAY: "100", CREATOR_GLOBAL_MAX_COST_PER_DAY: "100",
   CREATOR_WORKSPACE_MAX_GENERATIONS_PER_DAY: "100", CREATOR_WORKSPACE_MAX_COST_PER_DAY: "100",
   CREATOR_USER_MAX_GENERATIONS_PER_DAY: "100", CREATOR_USER_MAX_COST_PER_DAY: "100",
@@ -113,7 +113,7 @@ beforeEach(() => {
   for (const [k, v] of Object.entries(ENV)) vi.stubEnv(k, v);
   m.acceptance.mockResolvedValue({ readyForPaidGeneration: true, checks: [] });
   m.speechSubmit.mockImplementation(async () => ({ providerJobId: `creator/staging/speech/${randomUUID()}.wav`, state: "SUCCEEDED", provider: "sarvam-tts", model: "bulbul:v3", raw: {} }));
-  m.avatarSubmit.mockImplementation(async () => ({ providerJobId: "vid_abc123", state: "SUBMITTED", provider: "heygen-avatar", model: "heygen-v2", raw: {} }));
+  m.avatarSubmit.mockImplementation(async () => ({ providerJobId: "vid_abc123", state: "SUBMITTED", provider: "heygen-avatar", model: "heygen-v3", raw: {} }));
   m.findActiveConsent.mockResolvedValue({ id: 3 });
   m.resolveAvatarAudio.mockResolvedValue({ assetId: 9, data: new Uint8Array([1, 2, 3]), mimeType: "audio/wav", durationMs: 12_200 });
 });
@@ -202,7 +202,7 @@ describe("avatar generation", () => {
 
   it("an unpriced avatar model is refused before any generation row", async () => {
     vi.stubEnv("CREATOR_MODEL_COSTS", JSON.stringify({ "bulbul:v3": { perThousandChars: 0.5 } }));
-    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar())).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: "CREATOR_MODEL_NOT_PRICED:heygen-v2" });
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar())).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: "CREATOR_MODEL_NOT_PRICED:heygen-v3" });
     expect(m.createQueuedGeneration).not.toHaveBeenCalled();
   });
 
