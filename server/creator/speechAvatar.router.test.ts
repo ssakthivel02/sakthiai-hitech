@@ -105,7 +105,7 @@ function caller(openId: string, role: "owner" | "member" = "owner") {
 
 const target = (idempotencyKey: string = randomUUID()) => ({ workspaceId: 7, creatorProjectId: 1, shotId: 1, idempotencyKey });
 const speech = (key?: string) => ({ ...target(key), text: "முருகா வேல் வேல் — Vetrivel" });
-const avatar = (key?: string) => ({ ...target(key), avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9 });
+const avatar = (key?: string) => ({ ...target(key), avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9, live: true });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -164,6 +164,17 @@ describe("speech generation", () => {
 });
 
 describe("avatar generation", () => {
+  it("rejects undocumented free preview before access checks, readiness, consent, audio, ledger and provider", async () => {
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo({ ...avatar(), live: false }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST", message: "AVATAR_V3_LIVE_APPROVAL_REQUIRED" });
+    expect(m.acceptance).not.toHaveBeenCalled();
+    expect(m.findActiveConsent).not.toHaveBeenCalled();
+    expect(m.resolveAvatarAudio).not.toHaveBeenCalled();
+    expect(m.createQueuedGeneration).not.toHaveBeenCalled();
+    expect(m.holds.size).toBe(0);
+    expect(m.avatarSubmit).not.toHaveBeenCalled();
+  });
+
   it("revoked/absent consent stops before the audio read, the ledger and the provider", async () => {
     m.findActiveConsent.mockRejectedValue(new Error("CREATOR_CONSENT_REVOKED"));
     await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar())).rejects.toMatchObject({ code: "BAD_REQUEST", message: "CREATOR_CONSENT_REVOKED" });
@@ -179,12 +190,12 @@ describe("avatar generation", () => {
     expect(m.avatarSubmit).not.toHaveBeenCalled();
   });
 
-  it("passes server-resolved audio, binds consent, defaults to provider test mode, and budgets the rounded-up audio seconds", async () => {
+  it("passes server-resolved audio, binds consent, requires paid mode, and budgets the rounded-up audio seconds", async () => {
     const key = randomUUID();
     await caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key));
     expect(m.findActiveConsent).toHaveBeenCalledWith({ workspaceId: 7, consentId: 3, purpose: "avatar_video", provider: "heygen-avatar", providerSubjectId: "avatar_ok_01" });
     const request = m.avatarSubmit.mock.calls[0][0];
-    expect(request).toMatchObject({ kind: "AVATAR_VIDEO", avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9, expectedSeconds: 12.2, callbackId: key, live: false });
+    expect(request).toMatchObject({ kind: "AVATAR_VIDEO", avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9, expectedSeconds: 12.2, callbackId: key, live: true });
     expect(Array.from(request.audio.data)).toEqual([1, 2, 3]);
     expect([...m.holds.values()][0].cost).toBeCloseTo(1.3, 6);
   });
