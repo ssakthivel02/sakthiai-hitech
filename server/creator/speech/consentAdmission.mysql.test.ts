@@ -53,6 +53,43 @@ describe.skipIf(skipMysqlSuite())("Creator avatar consent dispatch linearization
     await expect(admitAvatarConsentDispatch(input())).rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
   });
 
+  it("does not mistake a consent watermark for a per-generation provider receipt after a crash", async () => {
+    await insert();
+    // The first generation reaches the submission-unknown state before any
+    // consent admission or provider call. This is an intentionally ambiguous
+    // crash window and must not be automatically retried.
+    await fixture.db.execute(sql`INSERT INTO creatorGenerations
+      (workspaceId, creatorProjectId, idempotencyKey, kind, provider, model, parametersJson, status)
+      VALUES (7, 1, '00000000-0000-4000-8000-000000000091',
+              'AVATAR_VIDEO', 'heygen-avatar', 'heygen-v3', '{}', 'SUBMISSION_UNKNOWN')`);
+    const [before] = await fixture.db.execute(sql`
+      SELECT lastDispatchAdmittedAt AS stamp FROM creatorConsents WHERE id = ${id}
+    `) as unknown as [{ stamp: Date | null }[]];
+    expect(before[0].stamp).toBeNull();
+
+    // A different request can update the shared consent watermark. That
+    // does NOT establish whether the earlier unknown generation was dispatched.
+    await admitAvatarConsentDispatch(input());
+    const [rows] = await fixture.db.execute(sql`
+      SELECT g.status AS status, g.idempotencyKey AS requestKey,
+             (SELECT lastDispatchAdmittedAt FROM creatorConsents WHERE id = ${id}) AS watermark
+      FROM creatorGenerations g
+      WHERE g.workspaceId = 7
+        AND g.idempotencyKey = '00000000-0000-4000-8000-000000000091'
+    `) as unknown as [{ status: string; requestKey: string; watermark: Date | null }[]];
+    expect(rows[0]).toMatchObject({ status: "SUBMISSION_UNKNOWN", watermark: expect.any(Date) });
+    // No provider job ID and no proof of network acceptance: hold/reconcile,
+    // never infer a safe retry from the shared consent timestamp.
+    const [jobs] = await fixture.db.execute(sql`
+      SELECT COUNT(*) AS count FROM creatorProviderJobs
+      WHERE workspaceId = 7 AND generationId = (
+        SELECT id FROM creatorGenerations WHERE workspaceId = 7
+          AND idempotencyKey = '00000000-0000-4000-8000-000000000091'
+      )
+    `) as unknown as [{ count: number }[]];
+    expect(Number(jobs[0].count)).toBe(0);
+  });
+
   it("serializes a revocation held in another transaction against admission on another connection", async () => {
     await insert();
     const locked = await fixture.pool.promise().getConnection();
