@@ -183,6 +183,18 @@ describe("avatar generation", () => {
     expect(m.avatarSubmit).not.toHaveBeenCalled();
   });
 
+  it("revocation between initial lookup and provider dispatch releases the spend hold and never invokes HeyGen", async () => {
+    m.findActiveConsent
+      .mockResolvedValueOnce({ id: 3 })
+      .mockRejectedValueOnce(new Error("CREATOR_CONSENT_REVOKED"));
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar()))
+      .rejects.toMatchObject({ code: "BAD_REQUEST", message: "CREATOR_CONSENT_REVOKED" });
+    expect(m.findActiveConsent).toHaveBeenCalledTimes(2);
+    expect(m.avatarSubmit).not.toHaveBeenCalled();
+    expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "RELEASED" })]);
+    expect(m.windows.cost).toBe(0);
+  });
+
   it("unapproved audio stops before the ledger and the provider", async () => {
     m.resolveAvatarAudio.mockRejectedValue(new Error("CREATOR_AVATAR_AUDIO_NOT_APPROVED"));
     await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar())).rejects.toMatchObject({ code: "BAD_REQUEST", message: "CREATOR_AVATAR_AUDIO_NOT_APPROVED" });

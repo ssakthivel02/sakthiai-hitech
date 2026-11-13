@@ -123,6 +123,9 @@ export const creatorSpeechAvatarRouter = router({
             callbackId: input.idempotencyKey,
             live: input.live,
           },
+          beforeProviderSubmit: async () => {
+            await findActiveConsent({ workspaceId: input.workspaceId, consentId: input.consentId, purpose: "avatar_video", provider: "heygen-avatar", providerSubjectId: input.avatarId });
+          },
         });
       } catch (error) { creatorError(error); }
     }),

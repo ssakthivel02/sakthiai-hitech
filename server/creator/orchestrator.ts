@@ -108,6 +108,8 @@ export async function submitCreatorGeneration(input: {
   idempotencyKey: string;
   request: CreatorMediaRequest;
   spend: CreatorSpendHook;
+  /** A fresh authorization check after asynchronous reservations, immediately before external dispatch. */
+  beforeProviderSubmit?: () => Promise<void>;
 }) {
   const provider = selectCreatorProvider(input.request);
   const providerStatus = provider.status();
@@ -170,6 +172,9 @@ export async function submitCreatorGeneration(input: {
 
   let submission: Awaited<ReturnType<typeof provider.submit>>;
   try {
+    // The router's initial consent check may have gone stale during audio reads or spend reservation.
+    // Run this check inside the existing error/ledger settlement boundary, not after dispatch.
+    await input.beforeProviderSubmit?.();
     submission = await provider.submit(input.request);
   } catch (error) {
     const failureClass = provider.classifyFailure(error);
