@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { describe, expect, it } from "vitest";
 import { runCreatorRenderWorker, resolveCreatorCaptionFonts } from "./renderWorker";
 import { scoreCreatorRenderQuality, loadCreatorQualityPolicy } from "./qualityGate";
@@ -108,4 +108,101 @@ describe.skipIf(!enabled)("Murugan Creator P0: real FFmpeg and MinIO candidate a
       s3.destroy();
     }
   });
+
+
+  it("persists a genuine 1080×1920 cover-cropped synthetic delivery clip in disposable MinIO", async () => {
+    const endpoint = requireDisposableStorage();
+    const s3 = new S3Client({
+      endpoint, region: process.env.STORAGE_REGION ?? "us-east-1", forcePathStyle: true,
+      credentials: {
+        accessKeyId: process.env.STORAGE_ACCESS_KEY_ID ?? "",
+        secretAccessKey: process.env.STORAGE_SECRET_ACCESS_KEY ?? "",
+      },
+    });
+    await s3.send(new CreateBucketCommand({ Bucket: "creator-minio-ci" })).catch(error => {
+      if (error?.name !== "BucketAlreadyOwnedByYou" && error?.name !== "BucketAlreadyExists") throw error;
+    });
+    const dir = await mkdtemp(join(tmpdir(), "sakthiai-vertical-delivery-"));
+    try {
+      const first = join(dir, "landscape-1.ppm");
+      const last = join(dir, "landscape-2.ppm");
+      const audio = join(dir, "synthetic-test-audio.wav");
+      await Promise.all([
+        writeFile(first, ppm(120, 32, 12)),
+        writeFile(last, ppm(18, 48, 125)),
+      ]);
+      await exec(process.env.FFMPEG_PATH?.trim() || "ffmpeg", [
+        "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=2:sample_rate=48000",
+        "-c:a", "pcm_s16le", audio,
+      ], { timeout: 20_000 });
+
+      // This is renderer/storage acceptance only. It does NOT bypass the
+      // separate DB parent-master approval or claim/lease controls.
+      const exportId = randomInt(1, 1_000_000_000);
+      const rendered = await runCreatorRenderWorker({
+        workspaceId: 7, creatorProjectId: 11, timelineId: 13, exportId,
+        width: 1080, height: 1920, fit: "cover", fps: 24, audioDurationMs: 2000,
+        audioSourceUrl: audio, captionFonts: resolveCreatorCaptionFonts(),
+        visualItems: [
+          { assetId: 201, shotId: 1, assetType: "IMAGE", sourceUrl: first,
+            startMs: 0, endMs: 1000, approved: true },
+          { assetId: 202, shotId: 2, assetType: "IMAGE", sourceUrl: last,
+            startMs: 1000, endMs: 2000, approved: true },
+        ],
+        captions: [
+          { startMs: 0, endMs: 1000, text: "வேல் முருகா", language: "ta", locked: true },
+          { startMs: 1000, endMs: 2000, text: "அரோகரா", language: "ta", locked: true },
+        ],
+      });
+      expect(rendered).toMatchObject({
+        renderer: "ffmpeg", width: 1080, height: 1920, fps: 24,
+        durationMs: 2000, frameCount: 48, visualAssetIds: [201, 202],
+        outputEvidence: { width: 1080, height: 1920, fps: 24, hasAudio: true },
+      });
+      expect(rendered.checksumSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(rendered.storageKey).toMatch(/^creator\/7\/11\/renders\/timeline-13\/export-\d+_[0-9a-f]{8}\.mp4$/);
+      await expect(storageVerifySha256(rendered.storageKey, rendered.byteSize, rendered.checksumSha256))
+        .resolves.toBeUndefined();
+
+      // Independently GET the stored object, hash the actual MinIO bytes,
+      // and FFprobe the file, rather than trusting the worker metadata.
+      const object = await s3.send(new GetObjectCommand({
+        Bucket: "creator-minio-ci", Key: rendered.storageKey,
+      }));
+      if (!object.Body) throw new Error("CREATOR_VERTICAL_MINIO_OBJECT_MISSING");
+      const bytes = Buffer.from(await object.Body.transformToByteArray());
+      expect(bytes.length).toBe(rendered.byteSize);
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(rendered.checksumSha256);
+      const persisted = join(dir, "persisted-vertical.mp4");
+      await writeFile(persisted, bytes);
+      const { stdout } = await exec(process.env.FFPROBE_PATH?.trim() || "ffprobe", [
+        "-v", "error", "-show_entries",
+        "stream=codec_type,width,height,avg_frame_rate,nb_frames",
+        "-of", "json", persisted,
+      ], { timeout: 15_000 });
+      const probe = JSON.parse(stdout) as { streams: Array<{
+        codec_type: string; width?: number; height?: number;
+        avg_frame_rate?: string; nb_frames?: string;
+      }> };
+      expect(probe.streams.find(stream => stream.codec_type === "video")).toMatchObject({
+        width: 1080, height: 1920, avg_frame_rate: "24/1", nb_frames: "48",
+      });
+      expect(probe.streams.some(stream => stream.codec_type === "audio")).toBe(true);
+      // An executable synthetic render is not a publish authorization.
+      const { spec } = loadCreatorQualityPolicy();
+      const scores = Object.fromEntries(spec.sakthiaiAcceptanceDimensions.map(item => [item.id, 0]));
+      const quality = scoreCreatorRenderQuality({
+        reviewerType: "ASSISTED_HUMAN", dimensionScores: scores, criticalDefects: [],
+        actual: rendered.outputEvidence,
+        target: { width: 1080, height: 1920, fps: 24, durationSeconds: 2, hasAudio: true },
+      });
+      expect(quality.outputConformance.verified).toBe(true);
+      expect(quality.publishHumanReviewSatisfied).toBe(false);
+      expect(quality.decision).toBe("REGENERATE");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      s3.destroy();
+    }
+  }, 120_000);
 });
