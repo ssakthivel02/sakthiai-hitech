@@ -54,6 +54,15 @@ describe("Google Veo provider-neutral Creator adapter", () => {
     expect(classifyGoogleVeoFailure(new Error("RESOURCE_EXHAUSTED quota"))).toBe("QUOTA");
   });
 
+  it("matches actual rate limits, not unrelated generate or moderate text", () => {
+    expect(classifyGoogleVeoFailure(new Error("HTTP 429 Too Many Requests"))).toBe("RATE_LIMIT");
+    expect(classifyGoogleVeoFailure(new Error("Rate limit exceeded"))).toBe("RATE_LIMIT");
+    expect(classifyGoogleVeoFailure(new Error("rate_limit_exceeded"))).toBe("RATE_LIMIT");
+    expect(classifyGoogleVeoFailure(new Error("Failed to generate video"))).toBe("UNKNOWN");
+    expect(classifyGoogleVeoFailure(new Error("Moderate safety policy violation"))).toBe("CONTENT_POLICY");
+    expect(classifyGoogleVeoFailure(new Error("Video generation failed"))).toBe("UNKNOWN");
+  });
+
   it("accepts only HTTPS Google API artifact hosts", () => {
     expect(validateGoogleVeoDownloadUri("https://generativelanguage.googleapis.com/v1beta/files/test:download").hostname).toBe(
       "generativelanguage.googleapis.com",

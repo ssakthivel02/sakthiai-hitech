@@ -26,7 +26,7 @@ export function classifyGoogleVeoFailure(error: unknown): CreatorFailureClass {
   const combined = errorText(error).toLowerCase();
   if (combined.includes("401") || combined.includes("403") || combined.includes("api key")) return "AUTH";
   if (combined.includes("quota") || combined.includes("resource_exhausted")) return "QUOTA";
-  if (combined.includes("429") || combined.includes("rate")) return "RATE_LIMIT";
+  if (/\b(?:429|rate[\s_-]*limit(?:ed)?(?:[\s_-]*exceeded)?|too many requests)\b/.test(combined)) return "RATE_LIMIT";
   if (combined.includes("safety") || combined.includes("policy") || combined.includes("blocked")) return "CONTENT_POLICY";
   if (combined.includes("400") || combined.includes("invalid") || combined.includes("unsupported")) return "INVALID_REQUEST";
   if (combined.includes("408") || combined.includes("504") || combined.includes("timeout")) return "TIMEOUT";
