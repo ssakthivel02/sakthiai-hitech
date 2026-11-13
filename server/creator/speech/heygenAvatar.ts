@@ -2,32 +2,31 @@ import { createHash } from "node:crypto";
 import { callSignal, classifyHttpStatus, SpeechProviderError, toSpeechError, type CallControl, type FetchLike } from "./types";
 
 /**
- * HeyGen avatar-video adapter (approved-audio -> talking avatar). Contract source: docs.heygen.com (v2):
- *   POST https://upload.heygen.com/v1/asset              raw audio bytes, Content-Type = MIME  -> { code:100, data:{ id } }
- *   POST https://api.heygen.com/v2/video/generate         voice: { type:"audio", audio_asset_id }  -> { data:{ video_id } }
- *   GET  https://api.heygen.com/v1/video_status.get       ?video_id=  -> { data:{ status, video_url, duration, error } }
+ * HeyGen v3 talking-avatar adapter: mocked contract only; no approved live API call.
+ *   POST /v3/assets multipart { file } -> data.asset_id, 32 MB maximum.
+ *   POST /v3/videos { type:"avatar", avatar_id, audio_asset_id } -> data.video_id.
+ *   GET /v3/videos/{video_id} -> data.status/video_url/failure_message.
  *
  * STATUS: CONTRACT_TESTED against documented shapes only; NO live call has been made from this repository.
- * HeyGen's documentation now presents a /v3 API ("formerly v2/video/generate"); endpoints are isolated in
- * HEYGEN_ENDPOINTS so a v3 move is a contained change, to be confirmed at the first owner-approved live call.
+ * v3 provider compatibility requires owner-approved live acceptance; mocks alone do not prove compatibility.
  *
  * CANCELLATION: no provider-side cancel endpoint is documented for in-flight renders (only permanent delete).
  * Aborting therefore stops polling and returns the provider video id for reconciliation; provider-side work and cost
  * may still complete. That is reported as `providerCancelSupported: false`, never as a successful cancel.
  *
- * COST CONTROL: `test: true` (watermarked, free) is the default. A live render requires `live: true`, which the
- * caller may set only after authorizeSpeechAvatar() has allowed the spend.
+ * COST CONTROL: v3 does not document the old free test mode. Only explicitly approved `live:true` may submit.
  */
 export const HEYGEN_ENDPOINTS = {
-  upload: "https://upload.heygen.com/v1/asset",
-  generate: "https://api.heygen.com/v2/video/generate",
-  status: "https://api.heygen.com/v1/video_status.get",
+  upload: "https://api.heygen.com/v3/assets",
+  generate: "https://api.heygen.com/v3/videos",
+  status: "https://api.heygen.com/v3/videos",
 } as const;
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 const DEFAULT_MAX_WAIT_MS = 20 * 60_000;
 const MAX_VIDEO_BYTES = 512 * 1024 * 1024;
+const MAX_V3_AUDIO_BYTES = 32 * 1024 * 1024;
 const DEFAULT_DOWNLOAD_HOST_SUFFIXES = [".heygen.ai", ".heygen.com"];
 
 export type HeygenDeps = {
@@ -62,19 +61,21 @@ function idOf(value: unknown, code: string): string {
 
 export async function uploadAvatarAudio(audio: Buffer, contentType: "audio/wav" | "audio/mpeg", control: CallControl = {}, deps: HeygenDeps = {}): Promise<{ assetId: string }> {
   if (!audio.length) throw new SpeechProviderError("AVATAR_AUDIO_EMPTY", "INVALID_REQUEST", false);
+  if (audio.length > MAX_V3_AUDIO_BYTES) throw new SpeechProviderError("AVATAR_AUDIO_V3_UPLOAD_TOO_LARGE", "INVALID_REQUEST", false);
   const doFetch = deps.fetch ?? fetch;
   try {
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(audio)], { type: contentType }), contentType === "audio/wav" ? "approved.wav" : "approved.mp3");
     const response = await doFetch(HEYGEN_ENDPOINTS.upload, {
       method: "POST",
-      headers: { "x-api-key": key(deps), "content-type": contentType },
-      body: new Uint8Array(audio),
+      headers: { "x-api-key": key(deps) },
+      body: form,
       redirect: "error",
       signal: callSignal(control.signal, deps.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
     if (!response.ok) await failFromResponse(response);
-    const payload = (await response.json()) as { code?: number; data?: { id?: unknown } };
-    if (payload.code !== undefined && payload.code !== 100) throw new SpeechProviderError("AVATAR_UPLOAD_REJECTED", "INVALID_REQUEST", false);
-    return { assetId: idOf(payload.data?.id, "AVATAR_UPLOAD_ASSET_ID_MISSING") };
+    const payload = (await response.json()) as { data?: { asset_id?: unknown } };
+    return { assetId: idOf(payload.data?.asset_id, "AVATAR_UPLOAD_ASSET_ID_MISSING") };
   } catch (error) {
     throw toSpeechError(error, control);
   }
@@ -88,11 +89,12 @@ export type AvatarSubmitRequest = {
   title?: string;
   /** Our idempotency key, echoed by the provider so an unknown submission can be reconciled. */
   callbackId: string;
-  /** Default false: provider test mode (free, watermarked). */
+  /** Explicitly billable v3 generation, approved by caller gates. */
   live?: boolean;
 };
 
 export function buildAvatarGeneratePayload(request: AvatarSubmitRequest) {
+  if (request.live !== true) throw new SpeechProviderError("AVATAR_V3_LIVE_APPROVAL_REQUIRED", "INVALID_REQUEST", false);
   idOf(request.avatarId, "AVATAR_ID_INVALID");
   idOf(request.audioAssetId, "AVATAR_AUDIO_ASSET_INVALID");
   if (!/^[A-Za-z0-9_.:-]{8,128}$/.test(request.callbackId)) throw new SpeechProviderError("AVATAR_CALLBACK_ID_INVALID", "INVALID_REQUEST", false);
@@ -100,15 +102,13 @@ export function buildAvatarGeneratePayload(request: AvatarSubmitRequest) {
   const height = request.height ?? 1080;
   if (![width, height].every(value => Number.isInteger(value) && value >= 360 && value <= 4096)) throw new SpeechProviderError("AVATAR_DIMENSION_INVALID", "INVALID_REQUEST", false);
   return {
-    test: request.live !== true,
-    caption: false,
+    type: "avatar" as const,
+    avatar_id: request.avatarId,
+    audio_asset_id: request.audioAssetId,
     title: (request.title ?? "SakthiAI avatar video").slice(0, 120),
     callback_id: request.callbackId,
-    dimension: { width, height },
-    video_inputs: [{
-      character: { type: "avatar", avatar_id: request.avatarId, avatar_style: "normal" },
-      voice: { type: "audio", audio_asset_id: request.audioAssetId },
-    }],
+    aspect_ratio: "auto" as const,
+    resolution: "1080p" as const,
   };
 }
 
@@ -126,7 +126,7 @@ export async function submitAvatarVideo(request: AvatarSubmitRequest, control: C
     });
     if (!response.ok) await failFromResponse(response);
     const payload = (await response.json()) as { data?: { video_id?: unknown }; error?: unknown };
-    return { videoId: idOf(payload.data?.video_id, "AVATAR_SUBMIT_VIDEO_ID_MISSING"), testMode: body.test };
+    return { videoId: idOf(payload.data?.video_id, "AVATAR_SUBMIT_VIDEO_ID_MISSING"), testMode: false };
   } catch (error) {
     const mapped = toSpeechError(error, control);
     // A network/timeout failure AFTER the request may have reached the provider: the submission is ambiguous.
@@ -143,7 +143,7 @@ export type AvatarPoll = {
 };
 
 export function mapAvatarStatus(payload: unknown): AvatarPoll {
-  const data = (payload as { data?: { status?: unknown; video_url?: unknown; duration?: unknown; error?: unknown } } | null)?.data;
+  const data = (payload as { data?: { status?: unknown; video_url?: unknown; duration?: unknown; failure_message?: unknown } } | null)?.data;
   const status = typeof data?.status === "string" ? data.status : "";
   if (status === "completed") {
     if (typeof data?.video_url !== "string" || !data.video_url) return { state: "FAILED", providerStatus: status, errorMessage: "AVATAR_OUTPUT_URL_MISSING" };
@@ -158,7 +158,7 @@ export async function pollAvatarVideo(videoId: string, control: CallControl = {}
   idOf(videoId, "AVATAR_VIDEO_ID_INVALID");
   const doFetch = deps.fetch ?? fetch;
   try {
-    const response = await doFetch(`${HEYGEN_ENDPOINTS.status}?video_id=${encodeURIComponent(videoId)}`, {
+    const response = await doFetch(`${HEYGEN_ENDPOINTS.status}/${encodeURIComponent(videoId)}`, {
       method: "GET",
       headers: { "x-api-key": key(deps), accept: "application/json" },
       redirect: "error",
@@ -261,6 +261,7 @@ export async function runAvatarVideo(
   const deadline = Date.now() + (deps.maxWaitMs ?? DEFAULT_MAX_WAIT_MS);
   let videoId: string | undefined;
   try {
+    if (input.live !== true) throw new SpeechProviderError("AVATAR_V3_LIVE_APPROVAL_REQUIRED", "INVALID_REQUEST", false);
     control.onProgress?.({ stage: "upload-audio", completed: 0, total: 4 });
     const { assetId } = await uploadAvatarAudio(input.audio, input.audioContentType, control, deps);
     control.onProgress?.({ stage: "submit", completed: 1, total: 4 });
