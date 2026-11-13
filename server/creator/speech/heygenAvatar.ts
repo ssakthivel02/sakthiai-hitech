@@ -50,7 +50,8 @@ function key(deps: HeygenDeps): string {
 
 async function failFromResponse(response: Response): Promise<never> {
   const { failureClass, retryable } = classifyHttpStatus(response.status);
-  await response.arrayBuffer().catch(() => undefined);
+  // Provider error bodies are untrusted. Preserve status without buffering them.
+  try { await response.body?.cancel(); } catch { /* preserve HTTP error */ }
   throw new SpeechProviderError(`AVATAR_PROVIDER_HTTP_${response.status}`, failureClass, retryable, response.status);
 }
 
@@ -188,11 +189,46 @@ export async function downloadAvatarVideo(videoUrl: string, control: CallControl
   try {
     const response = await doFetch(url.toString(), { method: "GET", redirect: "error", signal: callSignal(control.signal, 5 * 60_000) });
     if (!response.ok) await failFromResponse(response);
-    const declared = Number(response.headers.get("content-length") ?? 0);
-    if (declared > MAX_VIDEO_BYTES) throw new SpeechProviderError("AVATAR_DOWNLOAD_TOO_LARGE", "ARTIFACT", false);
-    const data = Buffer.from(await response.arrayBuffer());
-    if (!data.length) throw new SpeechProviderError("AVATAR_DOWNLOAD_EMPTY", "ARTIFACT", true);
-    if (data.length > MAX_VIDEO_BYTES) throw new SpeechProviderError("AVATAR_DOWNLOAD_TOO_LARGE", "ARTIFACT", false);
+    const lengthHeader = response.headers.get("content-length");
+    if (lengthHeader !== null && !/^(0|[1-9][0-9]*)$/.test(lengthHeader)) {
+      try { await response.body?.cancel(); } catch { /* preserve invalid-header failure */ }
+      throw new SpeechProviderError("AVATAR_DOWNLOAD_LENGTH_INVALID", "ARTIFACT", false);
+    }
+    const declared = lengthHeader === null ? undefined : Number(lengthHeader);
+    if (declared !== undefined && !Number.isSafeInteger(declared)) {
+      try { await response.body?.cancel(); } catch { /* preserve invalid-header failure */ }
+      throw new SpeechProviderError("AVATAR_DOWNLOAD_LENGTH_INVALID", "ARTIFACT", false);
+    }
+    if (declared !== undefined && declared > MAX_VIDEO_BYTES) {
+      try { await response.body?.cancel(); } catch { /* preserve size failure */ }
+      throw new SpeechProviderError("AVATAR_DOWNLOAD_TOO_LARGE", "ARTIFACT", false);
+    }
+    if (!response.body) throw new SpeechProviderError("AVATAR_DOWNLOAD_EMPTY", "ARTIFACT", true);
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!(value instanceof Uint8Array)) throw new SpeechProviderError("AVATAR_DOWNLOAD_CHUNK_INVALID", "ARTIFACT", false);
+        if (value.byteLength > MAX_VIDEO_BYTES - total) throw new SpeechProviderError("AVATAR_DOWNLOAD_TOO_LARGE", "ARTIFACT", false);
+        chunks.push(value);
+        total += value.byteLength;
+      }
+      if (!total) throw new SpeechProviderError("AVATAR_DOWNLOAD_EMPTY", "ARTIFACT", true);
+      if (declared !== undefined && declared !== total) throw new SpeechProviderError("AVATAR_DOWNLOAD_LENGTH_MISMATCH", "ARTIFACT", false);
+    } finally {
+      try { await reader.cancel(); } catch { /* preserve original error */ }
+      reader.releaseLock();
+    }
+    // Allocate output exactly once; avoid an intermediate copy of each chunk.
+    const data = Buffer.allocUnsafe(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      data.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
     // ISO-BMFF: "ftyp" at offset 4. Refuse anything that is not an MP4 container.
     if (data.length < 12 || data.toString("ascii", 4, 8) !== "ftyp") throw new SpeechProviderError("AVATAR_DOWNLOAD_NOT_MP4", "ARTIFACT", false);
     return { data, sha256: createHash("sha256").update(data).digest("hex"), mimeType: "video/mp4" };

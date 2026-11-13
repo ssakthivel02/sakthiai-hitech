@@ -76,6 +76,65 @@ describe("HeyGen avatar adapter (contract-tested; no live call)", () => {
     await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, { fetch: html })).rejects.toMatchObject({ code: "AVATAR_DOWNLOAD_NOT_MP4" });
   });
 
+  it("streams an MP4 with unknown length without using Response.arrayBuffer", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(mp4.subarray(0, 6)));
+        controller.enqueue(new Uint8Array(mp4.subarray(6)));
+        controller.close();
+      },
+    });
+    const response = new Response(body, { status: 200 });
+    const arraySpy = vi.spyOn(response, "arrayBuffer");
+    const fetchMock = vi.fn(async () => response);
+    const output = await downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, { fetch: fetchMock });
+    expect(output.data.equals(mp4)).toBe(true);
+    expect(arraySpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a declared oversized video and cancels without buffering", async () => {
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }), {
+      status: 200,
+      headers: { "Content-Length": String(512 * 1024 * 1024 + 1) },
+    });
+    const fetchMock = vi.fn(async () => response);
+    await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, { fetch: fetchMock }))
+      .rejects.toMatchObject({ code: "AVATAR_DOWNLOAD_TOO_LARGE" });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unknown-length oversized chunks before allocation", async () => {
+    const oversized = new Uint8Array([1, 2, 3]);
+    Object.defineProperty(oversized, "byteLength", { get: () => 512 * 1024 * 1024 + 1 });
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(oversized); },
+      cancel,
+    }));
+    await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, {
+      fetch: vi.fn(async () => response),
+    })).rejects.toMatchObject({ code: "AVATAR_DOWNLOAD_TOO_LARGE" });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses bogus Content-Length and cancels error bodies", async () => {
+    const oversized = new Response(new ReadableStream<Uint8Array>({ cancel: vi.fn() }), {
+      headers: { "Content-Length": "NaN" },
+    });
+    await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, {
+      fetch: vi.fn(async () => oversized),
+    })).rejects.toMatchObject({ code: "AVATAR_DOWNLOAD_LENGTH_INVALID" });
+    const cancel = vi.fn();
+    const denied = new Response(new ReadableStream<Uint8Array>({ cancel }), { status: 503 });
+    const arraySpy = vi.spyOn(denied, "arrayBuffer");
+    await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, {
+      fetch: vi.fn(async () => denied),
+    })).rejects.toMatchObject({ code: "AVATAR_PROVIDER_HTTP_503" });
+    expect(arraySpy).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed without a dedicated key and classifies provider HTTP errors", async () => {
     const prior = process.env.CREATOR_AVATAR_HEYGEN_API_KEY;
     delete process.env.CREATOR_AVATAR_HEYGEN_API_KEY;
