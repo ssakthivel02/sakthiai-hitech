@@ -95,10 +95,11 @@ export const creatorSpeechAvatarRouter = router({
       consentId: z.number().int().positive(),
       audioAssetId: z.number().int().positive(),
       title: z.string().trim().min(1).max(120).default("SakthiAI avatar video"),
-      /** false (default) = provider test mode: watermarked, not billed. */
+      /** HeyGen v3: no documented free preview; only explicit billed mode may proceed. */
       live: z.boolean().default(false),
     }))
     .mutation(async ({ ctx, input }) => {
+      if (input.live !== true) throw new TRPCError({ code: "BAD_REQUEST", message: "AVATAR_V3_LIVE_APPROVAL_REQUIRED" });
       const paidConfig = await requirePaidCreatorAccess(ctx.user, input.workspaceId, "AVATAR_VIDEO");
       await requirePaidGenerationReady();
       try {
