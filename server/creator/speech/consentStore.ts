@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { creatorConsents } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 
@@ -61,6 +61,32 @@ export async function recordConsent(input: {
   const id = Number(result[0].insertId);
   if (!id) throw new Error("CREATOR_CONSENT_CREATE_FAILED");
   return { consentId: id };
+}
+
+/**
+ * Durable admission boundary shared with revokeConsent's InnoDB row update.
+ * Admission first: provider work may proceed despite subsequent revocation.
+ * Revocation first: admission is rejected before any external request.
+ * This is not evidence that the provider received a request: a crash after
+ * admission is handled as an ambiguous submission, never a safe retry.
+ */
+export async function admitAvatarConsentDispatch(input: {
+  workspaceId: number; consentId: number; purpose: ConsentPurpose; provider: string; providerSubjectId: string;
+}) {
+  const db = await requireDb();
+  const result = await db.update(creatorConsents)
+    .set({ lastDispatchAdmittedAt: sql`CURRENT_TIMESTAMP(6)` })
+    .where(and(
+      eq(creatorConsents.id, input.consentId),
+      eq(creatorConsents.workspaceId, input.workspaceId),
+      eq(creatorConsents.purpose, input.purpose),
+      eq(creatorConsents.provider, input.provider),
+      eq(creatorConsents.providerSubjectId, input.providerSubjectId),
+      isNull(creatorConsents.revokedAt),
+      or(isNull(creatorConsents.validUntil), gt(creatorConsents.validUntil, sql`CURRENT_TIMESTAMP(6)`)),
+    ));
+  if (Number(result[0].affectedRows) !== 1) throw new Error("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
+  return { consentId: input.consentId, admitted: true as const };
 }
 
 /** Revocation is permanent and stops new generations; it cannot recall media a provider has already produced. */

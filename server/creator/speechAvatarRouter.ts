@@ -7,7 +7,7 @@ import { createCreatorSpendHook, requireCreatorWorkspaceOwner, requirePaidCreato
 import { creatorError, requirePaidGenerationReady } from "./routerGuards";
 import { resolveAvatarAudio } from "./speech/audioAsset";
 import { reviewGeneratedSpeech } from "./speech/speechReview";
-import { findActiveConsent, listConsents, PROVIDER_SUBJECT_ID, recordConsent, revokeConsent } from "./speech/consentStore";
+import { admitAvatarConsentDispatch, findActiveConsent, listConsents, PROVIDER_SUBJECT_ID, recordConsent, revokeConsent } from "./speech/consentStore";
 
 /**
  * Speech (TTS) and avatar-video generation for Creator, plus the consent records avatar video requires.
@@ -124,7 +124,7 @@ export const creatorSpeechAvatarRouter = router({
             live: input.live,
           },
           beforeProviderSubmit: async () => {
-            await findActiveConsent({ workspaceId: input.workspaceId, consentId: input.consentId, purpose: "avatar_video", provider: "heygen-avatar", providerSubjectId: input.avatarId });
+            await admitAvatarConsentDispatch({ workspaceId: input.workspaceId, consentId: input.consentId, purpose: "avatar_video", provider: "heygen-avatar", providerSubjectId: input.avatarId });
           },
         });
       } catch (error) { creatorError(error); }
