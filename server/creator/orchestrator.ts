@@ -108,6 +108,8 @@ export async function submitCreatorGeneration(input: {
   idempotencyKey: string;
   request: CreatorMediaRequest;
   spend: CreatorSpendHook;
+  /** A fresh authorization check after asynchronous reservations, immediately before external dispatch. */
+  beforeProviderSubmit?: () => Promise<void>;
 }) {
   const provider = selectCreatorProvider(input.request);
   const providerStatus = provider.status();
@@ -166,6 +168,24 @@ export async function submitCreatorGeneration(input: {
   } catch (error) {
     await input.spend.release();
     throw error;
+  }
+
+  // A consent denial occurs before any provider request; it cannot be an ambiguous/billable submission.
+  // Handle it separately from provider failures so its spend hold is always released.
+  if (input.beforeProviderSubmit) {
+    try {
+      await input.beforeProviderSubmit();
+    } catch (error) {
+      await input.spend.release();
+      await markGenerationFailed({
+        workspaceId: input.workspaceId,
+        creatorProjectId: input.creatorProjectId,
+        generationId,
+        failureClass: "INVALID_REQUEST",
+        errorMessage: errorMessage(error),
+      }).catch(() => undefined);
+      throw error;
+    }
   }
 
   let submission: Awaited<ReturnType<typeof provider.submit>>;
