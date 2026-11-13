@@ -93,6 +93,8 @@ export function createHeygenAvatarProvider(deps: AvatarProviderDeps = {}): Creat
     supports: (request: CreatorMediaRequest) => request.kind === "AVATAR_VIDEO",
     async submit(request: CreatorMediaRequest): Promise<CreatorProviderSubmission> {
       if (request.kind !== "AVATAR_VIDEO") throw new SpeechProviderError("AVATAR_REQUEST_KIND_INVALID", "INVALID_REQUEST", false);
+      // Enforce the billable v3 gate before reading or uploading audio, including calls bypassing the tRPC router.
+      if (request.live !== true) throw new SpeechProviderError("AVATAR_V3_LIVE_APPROVAL_REQUIRED", "INVALID_REQUEST", false);
       if (!request.audio) throw new SpeechProviderError("AVATAR_AUDIO_NOT_RESOLVED", "INVALID_REQUEST", false);
       const { assetId } = await uploadAvatarAudio(Buffer.from(request.audio.data), request.audio.mimeType, {}, deps.heygen);
       const callbackId = request.callbackId ?? `creator-${randomUUID()}`;
