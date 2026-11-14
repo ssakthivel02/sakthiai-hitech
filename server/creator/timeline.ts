@@ -55,64 +55,65 @@ export async function replaceApprovedTimelineItems(input: {
 }) {
   const db = await getDb();
   if (!db) throw new Error("CREATOR_DATABASE_UNAVAILABLE");
-  const [timeline] = await db.select().from(creatorTimelines).where(and(
-    eq(creatorTimelines.id, input.timelineId),
-    eq(creatorTimelines.workspaceId, input.workspaceId),
-    eq(creatorTimelines.creatorProjectId, input.creatorProjectId),
-  )).limit(1);
-  if (!timeline) throw new Error("CREATOR_TIMELINE_NOT_FOUND");
-  if (!timeline.audioMasterAssetId) throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_MISSING");
+  // Serialize timeline validation and replacement with render-intent readers.
+  return db.transaction(async (tx) => {
+    const [timeline] = await tx.select().from(creatorTimelines).where(and(
+      eq(creatorTimelines.id, input.timelineId),
+      eq(creatorTimelines.workspaceId, input.workspaceId),
+      eq(creatorTimelines.creatorProjectId, input.creatorProjectId),
+    )).limit(1).for("update");
+    if (!timeline) throw new Error("CREATOR_TIMELINE_NOT_FOUND");
+    if (!timeline.audioMasterAssetId) throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_MISSING");
 
-  const [audioMaster] = await db.select().from(creatorAssets).where(and(
-    eq(creatorAssets.id, timeline.audioMasterAssetId),
-    eq(creatorAssets.workspaceId, input.workspaceId),
-    eq(creatorAssets.creatorProjectId, input.creatorProjectId),
-  )).limit(1);
-  if (!audioMaster || audioMaster.assetType !== "AUDIO_MASTER" || audioMaster.immutable !== 1 || audioMaster.reviewDecision !== "APPROVED") {
-    throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_INVALID");
-  }
-
-  const normalized = validateTimelineCoverage(input.items, readDurationMs(audioMaster.provenanceJson));
-  const claimedShotIds = requestedTimelineShotIds(normalized);
-  // Scope the lookup to the exact workspace and project before writing any shot provenance.
-  const scopedShots = claimedShotIds.length
-    ? await db.select({ id: creatorShots.id }).from(creatorShots).where(and(
-        eq(creatorShots.workspaceId, input.workspaceId),
-        eq(creatorShots.creatorProjectId, input.creatorProjectId),
-        inArray(creatorShots.id, claimedShotIds),
-      ))
-    : [];
-  const scopedShotIds = new Set(scopedShots.map(shot => shot.id));
-  for (const item of normalized) {
-    const [asset] = await db.select().from(creatorAssets).where(and(
-      eq(creatorAssets.id, item.assetId),
+    const [audioMaster] = await tx.select().from(creatorAssets).where(and(
+      eq(creatorAssets.id, timeline.audioMasterAssetId),
       eq(creatorAssets.workspaceId, input.workspaceId),
       eq(creatorAssets.creatorProjectId, input.creatorProjectId),
     )).limit(1);
-    if (!asset) throw new Error("CREATOR_TIMELINE_ASSET_NOT_FOUND");
-    if (asset.assetType !== "IMAGE" && asset.assetType !== "VIDEO") throw new Error("CREATOR_TIMELINE_ASSET_TYPE_INVALID");
-    if (asset.reviewDecision !== "APPROVED") throw new Error("CREATOR_TIMELINE_ASSET_NOT_APPROVED");
-    assertTimelineShotAttribution(item, asset, scopedShotIds);
-  }
+    if (!audioMaster || audioMaster.assetType !== "AUDIO_MASTER" || audioMaster.immutable !== 1 || audioMaster.reviewDecision !== "APPROVED") {
+      throw new Error("CREATOR_TIMELINE_AUDIO_MASTER_INVALID");
+    }
 
-  await db.transaction(async (tx) => {
+    const normalized = validateTimelineCoverage(input.items, readDurationMs(audioMaster.provenanceJson));
+    const claimedShotIds = requestedTimelineShotIds(normalized);
+    // Scope the lookup to the exact workspace and project before writing any shot provenance.
+    const scopedShots = claimedShotIds.length
+      ? await tx.select({ id: creatorShots.id }).from(creatorShots).where(and(
+          eq(creatorShots.workspaceId, input.workspaceId),
+          eq(creatorShots.creatorProjectId, input.creatorProjectId),
+          inArray(creatorShots.id, claimedShotIds),
+        ))
+      : [];
+    const scopedShotIds = new Set(scopedShots.map(shot => shot.id));
+    for (const item of normalized) {
+      const [asset] = await tx.select().from(creatorAssets).where(and(
+        eq(creatorAssets.id, item.assetId),
+        eq(creatorAssets.workspaceId, input.workspaceId),
+        eq(creatorAssets.creatorProjectId, input.creatorProjectId),
+      )).limit(1);
+      if (!asset) throw new Error("CREATOR_TIMELINE_ASSET_NOT_FOUND");
+      if (asset.assetType !== "IMAGE" && asset.assetType !== "VIDEO") throw new Error("CREATOR_TIMELINE_ASSET_TYPE_INVALID");
+      if (asset.reviewDecision !== "APPROVED") throw new Error("CREATOR_TIMELINE_ASSET_NOT_APPROVED");
+      assertTimelineShotAttribution(item, asset, scopedShotIds);
+    }
+
     await tx.delete(creatorTimelineItems).where(and(
-      eq(creatorTimelineItems.workspaceId, input.workspaceId),
-      eq(creatorTimelineItems.creatorProjectId, input.creatorProjectId),
-      eq(creatorTimelineItems.timelineId, input.timelineId),
-    ));
-    await tx.insert(creatorTimelineItems).values(normalized.map((item) => ({
-      workspaceId: input.workspaceId,
-      creatorProjectId: input.creatorProjectId,
-      timelineId: input.timelineId,
-      assetId: item.assetId,
-      shotId: item.shotId ?? null,
-      track: item.track,
-      sortOrder: item.sortOrder,
-      startMs: item.startMs,
-      endMs: item.endMs,
-    })));
-  });
+        eq(creatorTimelineItems.workspaceId, input.workspaceId),
+        eq(creatorTimelineItems.creatorProjectId, input.creatorProjectId),
+        eq(creatorTimelineItems.timelineId, input.timelineId),
+      ));
+      await tx.insert(creatorTimelineItems).values(normalized.map((item) => ({
+        workspaceId: input.workspaceId,
+        creatorProjectId: input.creatorProjectId,
+        timelineId: input.timelineId,
+        assetId: item.assetId,
+        shotId: item.shotId ?? null,
+        track: item.track,
+        sortOrder: item.sortOrder,
+        startMs: item.startMs,
+        endMs: item.endMs,
+      })));
 
-  return { timelineId: input.timelineId, itemCount: normalized.length, durationMs: readDurationMs(audioMaster.provenanceJson), completeCoverage: true as const };
+    return { timelineId: input.timelineId, itemCount: normalized.length, durationMs: readDurationMs(audioMaster.provenanceJson), completeCoverage: true as const };
+  });
 }

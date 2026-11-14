@@ -1,3 +1,9 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { probeCreatorRenderedOutput } from "./outputProbe";
+import { resolveCreatorCaptionFonts } from "./renderWorker";
 import { describe, expect, it } from "vitest";
 import { buildDeterministicRenderPlan, serializeSrt } from "./renderPlan";
 
@@ -39,6 +45,8 @@ describe("Creator deterministic render plan", () => {
     expect(plan.durationMs).toBe(3000);
     expect(plan.ffmpegArgs).toContain("libx264");
     expect(plan.ffmpegArgs).toContain("320k");
+    expect(plan.ffmpegArgs.slice(plan.ffmpegArgs.indexOf("-r"), plan.ffmpegArgs.indexOf("-r") + 4))
+      .toEqual(["-r", "24", "-fps_mode", "cfr"]);
     expect(plan.ffmpegArgs.at(-1)).toBe("/tmp/master.mp4");
     expect(plan.ffmpegArgs.join(" ")).toContain("concat=n=2:v=1:a=0");
     expect(plan.ffmpegArgs.join(" ")).toContain("subtitles='/tmp/creator-ta.srt':charenc=UTF-8");
@@ -112,4 +120,62 @@ describe("Creator deterministic render plan", () => {
     expect(() => serializeSrt([{ ...captions[0], locked: false }], 3000)).toThrow("CREATOR_RENDER_CAPTION_NOT_LOCKED");
     expect(() => serializeSrt([captions[0], { ...captions[1], startMs: 1400 }], 3000)).toThrow("CREATOR_RENDER_CAPTION_OVERLAP");
   });
+});
+
+/** Actual render-plan acceptance, not a direct FFprobe fixture or provider output. */
+const canProbe = spawnSync("ffmpeg", ["-version"]).status === 0 &&
+  spawnSync("ffprobe", ["-version"]).status === 0;
+if (process.env.CI && !canProbe) throw new Error("CREATOR_REAL_MEDIA_CI_FFMPEG_FFPROBE_REQUIRED");
+describe.skipIf(!canProbe)("Creator real Tamil-captioned FFmpeg CFR acceptance", () => {
+  it("burns locked Tamil cues into a measured 24fps H264/AAC candidate", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "creator-cfr-"));
+    try {
+      const still = join(dir, "still.bmp");
+      const audio = join(dir, "audio.wav");
+      const subtitle = join(dir, "captions.ta.srt");
+      const output = join(dir, "candidate.mp4");
+      execFileSync("ffmpeg", [
+        "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+        "-i", "color=c=blue:s=320x180:r=24", "-frames:v", "1", still,
+      ], { timeout: 15_000 });
+      execFileSync("ffmpeg", [
+        "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+        "-i", "sine=frequency=440:sample_rate=48000:duration=2",
+        "-c:a", "pcm_s16le", audio,
+      ], { timeout: 15_000 });
+      const plan = buildDeterministicRenderPlan({
+        width: 320, height: 180, fps: 24, audioDurationMs: 2000,
+        audioSourceUrl: audio,
+        visualItems: [{
+          assetId: 11, assetType: "IMAGE", sourceUrl: still,
+          startMs: 0, endMs: 2000, track: 1, sortOrder: 0, approved: true,
+        }],
+        captions: [{
+          startMs: 0, endMs: 2000, text: "வேல் முருகா",
+          language: "ta", locked: true,
+        }],
+        subtitlePath: subtitle, outputPath: output,
+        captionFonts: resolveCreatorCaptionFonts(),
+      });
+      writeFileSync(subtitle, plan.srt, "utf8");
+      execFileSync("ffmpeg", plan.ffmpegArgs, { timeout: 45_000 });
+      const evidence = await probeCreatorRenderedOutput(output, {
+        width: 320, height: 180, fps: 24, durationSeconds: 2, hasAudio: true,
+      });
+      expect(evidence).toEqual({
+        width: 320, height: 180, fps: 24, durationSeconds: 2, hasAudio: true,
+      });
+      const metadata = JSON.parse(execFileSync("ffprobe", [
+        "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=nb_frames,avg_frame_rate",
+        "-of", "json", output,
+      ], { encoding: "utf8", timeout: 15_000 })) as {
+        streams: Array<{ nb_frames: string; avg_frame_rate: string }>;
+      };
+      expect(Number(metadata.streams[0].nb_frames)).toBe(48);
+      expect(metadata.streams[0].avg_frame_rate).toBe("24/1");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

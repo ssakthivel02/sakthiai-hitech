@@ -55,21 +55,28 @@ describe("HeyGen avatar provider on the Creator seam", () => {
   const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypmp42"), Buffer.alloc(32)]);
   const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
   const fetchMock = vi.fn(async (url: string) => {
-    if (url === HEYGEN_ENDPOINTS.upload) return json({ code: 100, data: { id: "asset_abc123" } });
+    if (url === HEYGEN_ENDPOINTS.upload) return json({ data: { asset_id: "asset_abc123" } });
     if (url === HEYGEN_ENDPOINTS.generate) return json({ data: { video_id: "vid_abc123" } });
     if (url.startsWith(HEYGEN_ENDPOINTS.status)) return json({ data: { status: "completed", video_url: "https://resource.heygen.ai/v.mp4", duration: 2 } });
     return new Response(new Uint8Array(mp4));
   });
   const provider = createHeygenAvatarProvider({ heygen: { fetch: fetchMock, apiKey: "k" } });
-  const request = { kind: "AVATAR_VIDEO" as const, prompt: "t", avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9, expectedSeconds: 2, callbackId: "11111111-2222-3333-4444-555555555555" };
+  const request = { kind: "AVATAR_VIDEO" as const, prompt: "t", avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9, expectedSeconds: 2, callbackId: "11111111-2222-3333-4444-555555555555", live: true };
 
   it("refuses to submit without server-resolved audio", async () => {
     await expect(provider.submit(request)).rejects.toMatchObject({ code: "AVATAR_AUDIO_NOT_RESOLVED" });
   });
 
-  it("submits in provider test mode by default, polls to an MP4 artifact and has no remote cancel", async () => {
+  it("blocks direct provider free-mode calls before any upload", async () => {
+    fetchMock.mockClear();
+    await expect(provider.submit({ ...request, live: false, audio: { mimeType: "audio/wav", data: new Uint8Array(makePcmWav(500)) } }))
+      .rejects.toMatchObject({ code: "AVATAR_V3_LIVE_APPROVAL_REQUIRED" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("submits a contracted v3 avatar only when explicitly billed, polls to MP4 and has no remote cancel", async () => {
     const submission = await provider.submit({ ...request, audio: { mimeType: "audio/wav", data: new Uint8Array(makePcmWav(500)) } });
-    expect(submission).toMatchObject({ providerJobId: "vid_abc123", state: "SUBMITTED", raw: { testMode: true } });
+    expect(submission).toMatchObject({ providerJobId: "vid_abc123", state: "SUBMITTED", raw: { testMode: false } });
     const poll = await provider.poll("vid_abc123");
     expect(poll.state).toBe("SUCCEEDED");
     expect((await provider.fetchArtifact!(poll.artifacts[0])).mimeType).toBe("video/mp4");
@@ -104,7 +111,7 @@ describe("consent and approved-audio validation", () => {
 describe("pricing, allowlists and asset mapping for the new kinds", () => {
   const env = {
     CREATOR_PAID_GENERATION_ENABLED: "true",
-    CREATOR_MODEL_COSTS: JSON.stringify({ "bulbul:v3": { perThousandChars: 0.5 }, "heygen-v2": { perSecond: 0.1 } }),
+    CREATOR_MODEL_COSTS: JSON.stringify({ "bulbul:v3": { perThousandChars: 0.5 }, "heygen-v3": { perSecond: 0.1 } }),
     CREATOR_GLOBAL_MAX_GENERATIONS_PER_DAY: "1", CREATOR_GLOBAL_MAX_COST_PER_DAY: "1", CREATOR_WORKSPACE_MAX_GENERATIONS_PER_DAY: "1",
     CREATOR_WORKSPACE_MAX_COST_PER_DAY: "1", CREATOR_USER_MAX_GENERATIONS_PER_DAY: "1", CREATOR_USER_MAX_COST_PER_DAY: "1",
     CREATOR_PAID_SPEECH_USERS: "speaker", CREATOR_PAID_AVATAR_USERS: "presenter", CREATOR_PAID_VIDEO_USERS: "videographer",
@@ -113,8 +120,8 @@ describe("pricing, allowlists and asset mapping for the new kinds", () => {
 
   it("prices speech per thousand characters and avatar per (rounded-up) second of driving audio", () => {
     expect(estimateCreatorCost(config, "bulbul:v3", { kind: "SPEECH", prompt: "அ".repeat(2000) })).toBe(1);
-    expect(estimateCreatorCost(config, "heygen-v2", { kind: "AVATAR_VIDEO", prompt: "t", avatarId: "a_bcd", consentId: 1, audioAssetId: 1, expectedSeconds: 12.2 })).toBeCloseTo(1.3, 6);
-    expect(estimateCreatorCost(config, "heygen-v2", { kind: "AVATAR_VIDEO", prompt: "t", avatarId: "a_bcd", consentId: 1, audioAssetId: 1, expectedSeconds: 0 })).toBeUndefined();
+    expect(estimateCreatorCost(config, "heygen-v3", { kind: "AVATAR_VIDEO", prompt: "t", avatarId: "a_bcd", consentId: 1, audioAssetId: 1, expectedSeconds: 12.2 })).toBeCloseTo(1.3, 6);
+    expect(estimateCreatorCost(config, "heygen-v3", { kind: "AVATAR_VIDEO", prompt: "t", avatarId: "a_bcd", consentId: 1, audioAssetId: 1, expectedSeconds: 0 })).toBeUndefined();
     expect(estimateCreatorCost(config, "bulbul:v3", { kind: "IMAGE", prompt: "x" })).toBeUndefined(); // a per-character price never budgets an image
   });
 

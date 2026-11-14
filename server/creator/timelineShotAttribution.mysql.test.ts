@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
 
 /**
@@ -140,7 +141,13 @@ describe.skipIf(skipMysqlSuite())("Creator shot attribution: real MySQL tenant b
         writeSubtitle: async () => undefined,
         readOutput: async () => Buffer.from("synthetic-render"),
         executeFfmpeg: async () => ({ exitCode: 0, stderr: "" }),
+        probeOutput: async (_path, expected) => expected,
         putArtifact: async key => ({ key, url: "/api/storage/synthetic" }),
+        verifyArtifact: async (_key, expectedSize, expectedSha256) => {
+          const stored = Buffer.from("synthetic-render");
+          expect(expectedSize).toBe(stored.byteLength);
+          expect(expectedSha256).toBe(createHash("sha256").update(stored).digest("hex"));
+        },
         captionFonts: { dir: "/fonts", family: "Noto Sans Tamil" },
       },
     );
@@ -157,4 +164,30 @@ describe.skipIf(skipMysqlSuite())("Creator shot attribution: real MySQL tenant b
       timelineId: ids.timeline,
     });
   });
+  it("serializes timeline replacement behind the render-intent timeline row lock", async () => {
+    let release!: () => void;
+    let signalLocked!: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    const locked = new Promise<void>(resolve => { signalLocked = resolve; });
+    const reader = database.db.transaction(async tx => {
+      await tx.execute(sql`SELECT id FROM creatorTimelines WHERE id = ${ids.timeline} FOR UPDATE`);
+      signalLocked();
+      await hold;
+    });
+    await locked;
+    let writerSettled = false;
+    const writer = replaceApprovedTimelineItems(input(ids.montage, ids.shotA))
+      .finally(() => { writerSettled = true; });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      expect(writerSettled).toBe(false);
+      expect(await countItems()).toBe(0);
+    } finally {
+      release();
+      await reader;
+    }
+    await writer;
+    expect(await countItems()).toBe(1);
+  });
+
 });

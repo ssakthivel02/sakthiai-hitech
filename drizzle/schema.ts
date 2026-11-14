@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { bigint, boolean, char, customType, date, datetime, decimal, index, int, mediumtext, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
@@ -255,9 +256,22 @@ export const creatorConsents = mysqlTable("creatorConsents", {
   validUntil: timestamp("validUntil"),
   revokedAt: timestamp("revokedAt"),
   revokedByUserId: int("revokedByUserId"),
+  lastDispatchAdmittedAt: datetime("lastDispatchAdmittedAt", { fsp: 6 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [
   index("creatorConsents_workspace_subject_idx").on(table.workspaceId, table.provider, table.providerSubjectId, table.purpose),
+]);
+
+/** Consent admission is generation-scoped; this does not prove provider acceptance. */
+export const creatorAvatarDispatchAdmissions = mysqlTable("creatorAvatarDispatchAdmissions", {
+  generationId: int("generationId").primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  consentId: int("consentId").notNull(),
+  callbackId: varchar("callbackId", { length: 64 }).notNull(),
+  admittedAt: datetime("admittedAt", { fsp: 6 }).default(sql`CURRENT_TIMESTAMP(6)`).notNull(),
+}, table => [
+  uniqueIndex("creatorAvatarDispatchAdmissions_workspace_callback_uq").on(table.workspaceId, table.callbackId),
+  index("creatorAvatarDispatchAdmissions_consent_idx").on(table.workspaceId, table.consentId),
 ]);
 
 export const creatorProviderJobs = mysqlTable("creatorProviderJobs", {
@@ -276,7 +290,28 @@ export const creatorProviderJobs = mysqlTable("creatorProviderJobs", {
   submittedAt: timestamp("submittedAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   completedAt: timestamp("completedAt"),
-});
+}, table => [
+  // Polling is keyed by workspace + opaque provider job ID; duplicate IDs are unsafe.
+  uniqueIndex("creatorProviderJobs_workspace_job_uq").on(table.workspaceId, table.providerJobId),
+]);
+
+/** Exclusive, recoverable artifact upload lease; provider generation is never re-submitted. */
+export const creatorArtifactLeases = mysqlTable("creatorArtifactLeases", {
+  generationId: int("generationId").primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  providerJobId: varchar("providerJobId", { length: 512 }).notNull(),
+  leaseToken: char("leaseToken", { length: 36 }).notNull(),
+  leaseUntil: datetime("leaseUntil", { fsp: 3 }).notNull(),
+  stagedStorageKey: varchar("stagedStorageKey", { length: 600 }),
+  stagedChecksumSha256: char("stagedChecksumSha256", { length: 64 }),
+  stagedByteSize: int("stagedByteSize"),
+  stagedMimeType: varchar("stagedMimeType", { length: 100 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  index("creatorArtifactLeases_workspace_until_idx").on(table.workspaceId, table.leaseUntil),
+]);
 
 export const creatorTimelines = mysqlTable("creatorTimelines", {
   id: int("id").autoincrement().primaryKey(),
@@ -350,6 +385,25 @@ export const creatorExports = mysqlTable("creatorExports", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   completedAt: timestamp("completedAt"),
 });
+
+/** Immutable provenance for one failed-quality render and its distinct replacement. */
+export const creatorRemediationLineage = mysqlTable("creatorRemediationLineage", {
+  id: int("id").autoincrement().primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  creatorProjectId: int("creatorProjectId").notNull(),
+  timelineId: int("timelineId").notNull(),
+  sourceCandidateAssetId: int("sourceCandidateAssetId").notNull(),
+  sourceQualityReviewId: int("sourceQualityReviewId").notNull(),
+  sourceChecksumSha256: char("sourceChecksumSha256", { length: 64 }).notNull(),
+  replacementCandidateAssetId: int("replacementCandidateAssetId").notNull(),
+  replacementChecksumSha256: char("replacementChecksumSha256", { length: 64 }).notNull(),
+  createdByUserId: int("createdByUserId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  uniqueIndex("creatorRemediationLineage_source_review_uq").on(table.sourceQualityReviewId),
+  uniqueIndex("creatorRemediationLineage_replacement_uq").on(table.replacementCandidateAssetId),
+  index("creatorRemediationLineage_scope_idx").on(table.workspaceId, table.creatorProjectId, table.timelineId),
+]);
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;

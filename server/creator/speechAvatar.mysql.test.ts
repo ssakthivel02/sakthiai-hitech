@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createTestDatabase, migrationStatements, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
 
 /**
@@ -12,7 +12,22 @@ vi.mock("../db", async importOriginal => ({ ...(await importOriginal<typeof impo
 vi.mock("../storage", async importOriginal => ({
   ...(await importOriginal<typeof import("../storage")>()),
   storagePut: async (key: string, data: Buffer | Uint8Array) => { holder.objects.set(key, Buffer.from(data)); return { key, url: `/s/${key}` }; },
+  storagePutCreatorStagedObject: async (key: string, data: Uint8Array) => {
+    if (holder.objects.has(key)) {
+      const error = new Error("PreconditionFailed") as Error & { $metadata?: { httpStatusCode: number } };
+      error.name = "PreconditionFailed"; error.$metadata = { httpStatusCode: 412 };
+      throw error;
+    }
+    holder.objects.set(key, Buffer.from(data));
+  },
   storageRead: async (key: string) => { const v = holder.objects.get(key); if (!v) throw new Error("missing"); return new Uint8Array(v); },
+  storageVerifySha256: async (key: string, expectedSize: number, expectedSha256: string) => {
+    const stored = holder.objects.get(key);
+    if (!stored) throw new Error("CREATOR_STORAGE_READBACK_MISSING_BODY");
+    if (stored.byteLength !== expectedSize || createHash("sha256").update(stored).digest("hex") !== expectedSha256) {
+      throw new Error("CREATOR_STORAGE_READBACK_CHECKSUM_MISMATCH");
+    }
+  },
 }));
 
 import { findActiveConsent, recordConsent, revokeConsent } from "./speech/consentStore";
