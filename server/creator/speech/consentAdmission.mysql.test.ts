@@ -77,7 +77,10 @@ describe.skipIf(skipMysqlSuite())("Creator avatar consent dispatch linearization
       WHERE g.workspaceId = 7
         AND g.idempotencyKey = '00000000-0000-4000-8000-000000000091'
     `) as unknown as [{ status: string; requestKey: string; watermark: Date | null }[]];
-    expect(rows[0]).toMatchObject({ status: "SUBMISSION_UNKNOWN", watermark: expect.any(Date) });
+    expect(rows[0].status).toBe("SUBMISSION_UNKNOWN");
+    // Raw mysql2 DATETIME(6) projection can be a string; assert its timestamp value, not its JS representation.
+    expect(rows[0].watermark).not.toBeNull();
+    expect(Number.isNaN(new Date(String(rows[0].watermark).replace(" ", "T") + "Z").getTime())).toBe(false);
     // No provider job ID and no proof of network acceptance: hold/reconcile,
     // never infer a safe retry from the shared consent timestamp.
     const [jobs] = await fixture.db.execute(sql`
