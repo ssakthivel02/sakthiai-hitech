@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { bigint, boolean, char, customType, date, datetime, decimal, index, int, mediumtext, mysqlEnum, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
@@ -259,6 +260,18 @@ export const creatorConsents = mysqlTable("creatorConsents", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [
   index("creatorConsents_workspace_subject_idx").on(table.workspaceId, table.provider, table.providerSubjectId, table.purpose),
+]);
+
+/** Consent admission is generation-scoped; this does not prove provider acceptance. */
+export const creatorAvatarDispatchAdmissions = mysqlTable("creatorAvatarDispatchAdmissions", {
+  generationId: int("generationId").primaryKey(),
+  workspaceId: int("workspaceId").notNull(),
+  consentId: int("consentId").notNull(),
+  callbackId: varchar("callbackId", { length: 64 }).notNull(),
+  admittedAt: datetime("admittedAt", { fsp: 6 }).default(sql`CURRENT_TIMESTAMP(6)`).notNull(),
+}, table => [
+  uniqueIndex("creatorAvatarDispatchAdmissions_workspace_callback_uq").on(table.workspaceId, table.callbackId),
+  index("creatorAvatarDispatchAdmissions_consent_idx").on(table.workspaceId, table.consentId),
 ]);
 
 export const creatorProviderJobs = mysqlTable("creatorProviderJobs", {

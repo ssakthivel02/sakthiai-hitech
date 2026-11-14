@@ -109,7 +109,7 @@ export async function submitCreatorGeneration(input: {
   request: CreatorMediaRequest;
   spend: CreatorSpendHook;
   /** A fresh authorization check after asynchronous reservations, immediately before external dispatch. */
-  beforeProviderSubmit?: () => Promise<void>;
+  beforeProviderSubmit?: (generationId: number) => Promise<void>;
 }) {
   const provider = selectCreatorProvider(input.request);
   const providerStatus = provider.status();
@@ -174,7 +174,7 @@ export async function submitCreatorGeneration(input: {
   // Handle it separately from provider failures so its spend hold is always released.
   if (input.beforeProviderSubmit) {
     try {
-      await input.beforeProviderSubmit();
+      await input.beforeProviderSubmit(generationId);
     } catch (error) {
       await input.spend.release();
       await markGenerationFailed({

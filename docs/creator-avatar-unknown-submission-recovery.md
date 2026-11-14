@@ -6,12 +6,13 @@ Status: **release HOLD**. Scope: HeyGen v3 avatar generation under migration 002
 
 - `creatorGenerations.status = SUBMISSION_UNKNOWN` is persisted by `beginProviderSubmission()` **before** the consent admission update and before the HTTP request.
 - `creatorConsents.lastDispatchAdmittedAt` serializes with revocation but belongs to the consent, **not** to a generation. It can reflect a different job; it is not a dispatch receipt.
+- Once migration 0026 is applied, `creatorAvatarDispatchAdmissions` records the **generation ID, callback ID, consent ID and admission time** in a transaction serialized with revocation. This is an admission receipt only: it does not prove HeyGen received, accepted or charged for the request. The per-generation record may be absent for older pre-0026 jobs.
 - A missing `creatorProviderJobs` row or provider ID does **not** prove there was no charged request. The application can crash after provider acceptance and before local persistence.
 - Existing idempotency keys are never resubmitted automatically. Treat the spend reservation as potentially consumed until independently reconciled.
 
 ## Read-only investigation
 
-Using a **SELECT-only** account in the correct workspace, obtain the generation id, idempotency key, provider, model, state, timestamps and scoped provider-job row. Retrieve the matching spend-ledger hold status without changing it. Identify the exact consent id from immutable generation parameters, and inspect the consent record separately. Avoid exposing signed audio, credentials or private consent evidence in the report.
+Using a **SELECT-only** account in the correct workspace, obtain the generation id, idempotency key, provider, model, state, timestamps and scoped provider-job row. Retrieve the matching spend-ledger hold status without changing it. Identify the exact consent id from immutable generation parameters, and inspect the consent record separately. For jobs admitted under migration 0026, inspect the generation-scoped admission receipt, matching generation/workspace/callback; treat no receipt as inconclusive for earlier versions and ambiguous pre-transaction crashes. Avoid exposing signed audio, credentials or private consent evidence in the report.
 
 Record a timestamped evidence bundle: workspace/project/generation, consent id, idempotency key/callback id, current state, provider job id if any, hold state, owner, and SHA or checksum of any artifact. Never infer a generation's dispatch from the shared `lastDispatchAdmittedAt` value.
 
@@ -32,4 +33,4 @@ No automatic retry, no new paid HeyGen request, no manual status flip, no hold r
 
 ## Before lifting the HOLD
 
-Require a per-generation durable dispatch identity/protocol (or authoritative provider callback search) plus crash-injection tests across **before admission**, **after admission/before HTTP**, **after remote acceptance/before job persistence**, and **after persistence/before spend settlement**. Include real MySQL and ledger inspection, tenant isolation, and owner approval for any actual billable smoke test.
+Require authoritative provider acceptance/callback reconciliation and crash-injection tests (the migration 0026 admission receipt does not provide provider-acceptance proof) across **before admission**, **after admission/before HTTP**, **after remote acceptance/before job persistence**, and **after persistence/before spend settlement**. Include real MySQL and ledger inspection, tenant isolation, and owner approval for any actual billable smoke test.
