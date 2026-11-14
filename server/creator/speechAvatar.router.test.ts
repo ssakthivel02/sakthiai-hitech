@@ -240,7 +240,7 @@ describe("avatar generation", () => {
     const key = randomUUID();
     m.recordProviderSubmission.mockRejectedValueOnce(new Error("local database write lost"));
     await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key)))
-      .rejects.toMatchObject({ message: "local database write lost" });
+      .rejects.toMatchObject({ code: "BAD_GATEWAY", message: "CREATOR_PROVIDER_REQUEST_FAILED" });
     expect(m.admitAvatarGenerationDispatch).toHaveBeenCalledTimes(1);
     expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
     expect(m.recordProviderSubmission).toHaveBeenCalledTimes(1);
