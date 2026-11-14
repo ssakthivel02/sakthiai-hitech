@@ -34,6 +34,8 @@ const m = vi.hoisted(() => {
     recordConsent: vi.fn(async () => ({ consentId: 42 })),
     resolveAvatarAudio: vi.fn(),
     getGenerationExecutionContext: vi.fn(),
+    recordProviderSubmission: vi.fn(async () => undefined),
+    markGenerationSubmissionUnknown: vi.fn(async () => undefined),
     createQueuedGeneration: vi.fn(async (input: { workspaceId: number; idempotencyKey: string }) => {
       const key = `${input.workspaceId}:${input.idempotencyKey}`;
       const existing = generations.get(key);
@@ -55,9 +57,9 @@ vi.mock("./persistence", () => ({
   createQueuedGeneration: m.createQueuedGeneration,
   getGenerationExecutionContext: m.getGenerationExecutionContext,
   markGenerationFailed: vi.fn(async () => undefined),
-  markGenerationSubmissionUnknown: vi.fn(async () => undefined),
+  markGenerationSubmissionUnknown: m.markGenerationSubmissionUnknown,
   recordProviderPoll: vi.fn(async () => ({ generationState: "RUNNING" })),
-  recordProviderSubmission: vi.fn(async () => undefined),
+  recordProviderSubmission: m.recordProviderSubmission,
 }));
 vi.mock("./providerRegistry", () => {
   const make = (id: string, kind: string, defaultModel: string, submit: unknown) => ({
@@ -214,6 +216,46 @@ describe("avatar generation", () => {
     });
     await caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key));
     expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a database failure during admission prevents HTTP and releases the spend hold", async () => {
+    const key = randomUUID();
+    m.admitAvatarGenerationDispatch.mockRejectedValueOnce(new Error("CREATOR_DATABASE_UNAVAILABLE"));
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key)))
+      .rejects.toMatchObject({ message: "CREATOR_DATABASE_UNAVAILABLE" });
+    expect(m.avatarSubmit).not.toHaveBeenCalled();
+    expect(m.recordProviderSubmission).not.toHaveBeenCalled();
+    expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "RELEASED" })]);
+    expect(m.windows.cost).toBe(0);
+    m.getGenerationExecutionContext.mockResolvedValue({
+      generation: { status: "FAILED", provider: "heygen-avatar", outputAssetId: null },
+      providerJob: null,
+    });
+    const replay = await caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key));
+    expect(replay).toMatchObject({ reused: true, state: "FAILED" });
+    expect(m.avatarSubmit).not.toHaveBeenCalled();
+  });
+
+  it("accepted provider job with failed local persistence keeps committed spend and prevents resubmission", async () => {
+    const key = randomUUID();
+    m.recordProviderSubmission.mockRejectedValueOnce(new Error("local database write lost"));
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key)))
+      .rejects.toMatchObject({ code: "BAD_GATEWAY", message: "CREATOR_PROVIDER_REQUEST_FAILED" });
+    expect(m.admitAvatarGenerationDispatch).toHaveBeenCalledTimes(1);
+    expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
+    expect(m.recordProviderSubmission).toHaveBeenCalledTimes(1);
+    expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "COMMITTED" })]);
+    expect(m.markGenerationSubmissionUnknown).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 7, creatorProjectId: 1, failureClass: "UNKNOWN",
+    }));
+    m.getGenerationExecutionContext.mockResolvedValue({
+      generation: { status: "SUBMISSION_UNKNOWN", provider: "heygen-avatar", outputAssetId: null },
+      providerJob: null,
+    });
+    const replay = await caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key));
+    expect(replay).toMatchObject({ reused: true, state: "SUBMISSION_UNKNOWN" });
+    expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
+    expect(m.recordProviderSubmission).toHaveBeenCalledTimes(1);
   });
 
   it("unapproved audio stops before the ledger and the provider", async () => {
