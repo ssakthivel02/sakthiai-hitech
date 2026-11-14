@@ -119,6 +119,37 @@ describe.skipIf(skipMysqlSuite())("Creator avatar consent dispatch linearization
     expect(Number(after[0].n)).toBe(1);
   });
 
+  it("rolls back the consent watermark when the admission receipt insert fails", async () => {
+    await insert();
+    const callbackId = "00000000-0000-4000-8000-000000000028";
+    await fixture.db.execute(sql`INSERT INTO creatorGenerations
+      (workspaceId, creatorProjectId, idempotencyKey, kind, provider, model, parametersJson, status)
+      VALUES (7, 1, ${callbackId}, 'AVATAR_VIDEO', 'heygen-avatar', 'heygen-v3', '{}', 'SUBMISSION_UNKNOWN')`);
+    const [generations] = await fixture.db.execute(sql`SELECT id FROM creatorGenerations
+      WHERE workspaceId = 7 AND idempotencyKey = ${callbackId}`) as unknown as [{ id: number }[]];
+    const generationId = Number(generations[0].id);
+
+    // Inject a simulated existing receipt. The code must not commit the consent
+    // UPDATE if its INSERT hits the receipt's primary-key uniqueness guard.
+    await fixture.db.execute(sql`INSERT INTO creatorAvatarDispatchAdmissions
+      (generationId, workspaceId, consentId, callbackId)
+      VALUES (${generationId}, 7, ${id}, ${callbackId})`);
+    const [before] = await fixture.db.execute(sql`SELECT lastDispatchAdmittedAt AS stamp
+      FROM creatorConsents WHERE id = ${id}`) as unknown as [{ stamp: Date | string | null }[]];
+    expect(before[0].stamp).toBeNull();
+
+    await expect(admitAvatarGenerationDispatch({ ...input(), generationId, callbackId })).rejects.toThrow();
+
+    const [after] = await fixture.db.execute(sql`SELECT lastDispatchAdmittedAt AS stamp
+      FROM creatorConsents WHERE id = ${id}`) as unknown as [{ stamp: Date | string | null }[]];
+    expect(after[0].stamp).toBeNull();
+    const [receipt] = await fixture.db.execute(sql`SELECT COUNT(*) AS n
+      FROM creatorAvatarDispatchAdmissions WHERE generationId = ${generationId}`) as unknown as [{ n: number }[]];
+    expect(Number(receipt[0].n)).toBe(1);
+    // Admission failure cannot dispatch; an already persisted receipt is not
+    // permission to retry or proof of remote provider acceptance.
+  });
+
   it("does not admit a revoked consent or create an orphan generation receipt", async () => {
     await insert();
     const callbackId = "00000000-0000-4000-8000-000000000027";
