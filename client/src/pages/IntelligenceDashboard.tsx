@@ -3,8 +3,80 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import dashboardData from "@/generated/intelligence-dashboard-data.json";
 import betaCapabilities from "../../../release/beta-capability-contract.json";
+import releaseStatus from "../../../release/release-status.json";
+import { compareCommits, effectiveLayerState, evidenceFreshness, isRuntimeHealthy, RELEASE_STATE_LABELS, shortSha } from "@shared/releaseStatus";
+import { useEffect, useState } from "react";
 import { ArrowLeft, BrainCircuit, CheckCircle2, Database, FileSearch, Gauge, LockKeyhole, Mic2, Network, ShieldCheck, Sparkles } from "lucide-react";
 import { Link } from "wouter";
+
+type ReleaseIdentity = { commit?: string; exactCommitKnown?: boolean; environment?: string };
+
+/** Reads this deployment's own public /releasez (same origin). Any failure is "unknown", never assumed healthy. */
+function useServedCommit() {
+  const [served, setServed] = useState<{ state: "loading" | "known" | "unknown"; commit?: string; environment?: string }>({ state: "loading" });
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/releasez", { headers: { accept: "application/json" } })
+      .then(r => (r.ok ? (r.json() as Promise<ReleaseIdentity>) : Promise.reject(new Error(String(r.status)))))
+      .then(body => { if (!cancelled) setServed(body.exactCommitKnown && body.commit ? { state: "known", commit: body.commit, environment: body.environment } : { state: "unknown" }); })
+      .catch(() => { if (!cancelled) setServed({ state: "unknown" }); });
+    return () => { cancelled = true; };
+  }, []);
+  return served;
+}
+
+function ReleaseStatusCard() {
+  const served = useServedCommit();
+  const now = new Date();
+  const freshness = evidenceFreshness(releaseStatus.observedAt, releaseStatus.freshnessDays, now);
+  const deployFreshness = evidenceFreshness(releaseStatus.deployment.observedAt, releaseStatus.freshnessDays, now);
+  const candidate = releaseStatus.candidate.lastCiVerifiedCommit;
+  const recordedDeploy = deployFreshness.status === "fresh" ? releaseStatus.deployment.observedCommit : "unknown";
+  const recordedVsCandidate = compareCommits(recordedDeploy, candidate);
+  const servedVsCandidate = served.state === "known" ? compareCommits(served.commit, candidate) : "unknown";
+  const freshnessText = freshness.status === "fresh" ? `observed ${freshness.ageDays} day(s) ago` : freshness.status === "stale" ? `STALE: observed more than ${releaseStatus.freshnessDays} days ago, every layer is shown as Unknown` : "observation date unknown";
+  const comparisonText = (c: "match" | "differs" | "unknown") => (c === "match" ? "matches the CI-verified candidate" : c === "differs" ? "differs from the CI-verified candidate" : "cannot be compared (unknown)");
+  return (
+    <Card className="mb-8" aria-labelledby="release-status-title">
+      <CardHeader>
+        <CardTitle id="release-status-title">Release status (verified evidence only)</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5 text-sm">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-lg border p-4"><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Preview verdict</div><div className="mt-1 text-2xl font-bold">{releaseStatus.verdicts.preview === "go" ? "GO" : "NO-GO"}</div></div>
+          <div className="rounded-lg border p-4"><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Production verdict</div><div className="mt-1 text-2xl font-bold">{releaseStatus.verdicts.production === "go" ? "GO" : "NO-GO"}</div></div>
+          <div className="rounded-lg border p-4"><div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Evidence freshness</div><div className="mt-1 font-semibold">{freshnessText}</div><div className="text-xs text-muted-foreground">{releaseStatus.observedAt}</div></div>
+        </div>
+        <dl className="grid gap-2 rounded-lg bg-muted/45 p-4 md:grid-cols-[max-content_1fr] md:gap-x-6">
+          <dt className="font-semibold">CI-verified candidate</dt>
+          <dd><code>{shortSha(candidate)}</code> · {releaseStatus.candidate.ciEvidence} · <a className="underline" href={releaseStatus.candidate.link} rel="noreferrer" target="_blank">{releaseStatus.candidate.label}</a></dd>
+          <dt className="font-semibold">Recorded preview deployment</dt>
+          <dd><code>{shortSha(recordedDeploy)}</code> · {comparisonText(recordedVsCandidate)} · {releaseStatus.deployment.method}</dd>
+          <dt className="font-semibold">This page is served by</dt>
+          <dd aria-live="polite">{served.state === "loading" ? "checking…" : served.state === "known" ? <><code>{shortSha(served.commit)}</code> ({served.environment ?? "unspecified"} tier) · {comparisonText(servedVsCandidate)}</> : "unknown (commit not reported)"}</dd>
+        </dl>
+        <p className="text-muted-foreground">{releaseStatus.candidate.note}</p>
+        <ul className="grid gap-3 md:grid-cols-2" aria-label="Release layers">
+          {releaseStatus.layers.map(layer => {
+            const state = effectiveLayerState(layer.state, freshness);
+            const blocker = "blocker" in layer ? (layer as { blocker?: string }).blocker : undefined;
+            return (
+              <li key={layer.id} className="rounded-lg border p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <strong>{layer.name}</strong>
+                  <Badge variant={isRuntimeHealthy(state) ? "default" : "outline"}>{RELEASE_STATE_LABELS[state]}</Badge>
+                </div>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">{layer.evidence}</p>
+                {blocker ? <p className="mt-2 text-xs leading-5"><strong>Blocked by:</strong> {blocker}</p> : null}
+              </li>
+            );
+          })}
+        </ul>
+        <p className="text-xs text-muted-foreground">Unknown is never shown as healthy. Only “Live verified” or “Deployed” with a dated observation counts as runtime evidence. Source and CI states are not runtime claims. Full history: <a className="underline" href={releaseStatus.dashboardLink} rel="noreferrer" target="_blank">project dashboard issue</a>.</p>
+      </CardContent>
+    </Card>
+  );
+}
 
 const iconByDomain = {
   "SAI-03": Sparkles,
@@ -56,12 +128,14 @@ export default function IntelligenceDashboard() {
           </CardContent>
         </Card>
 
+        <ReleaseStatusCard />
+
         <Card className="mb-8">
           <CardHeader>
             <CardTitle>Controlled-beta capability boundary</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="mb-4 text-sm leading-6 text-muted-foreground">These labels describe user-facing availability. Research lifecycle labels below are separate and must never be interpreted as a live-product claim.</p>
+            <p className="mb-4 text-sm leading-6 text-muted-foreground">These labels describe user-facing availability. Anything not labelled Available is disabled or limited for the reason shown. Research lifecycle labels below are separate and must never be interpreted as a live-product claim.</p>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {betaCapabilities.capabilities.map(capability => (
                 <div key={capability.id} className="rounded-lg border p-4">
