@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
-import { creatorConsents } from "../../../drizzle/schema";
+import { creatorAvatarDispatchAdmissions, creatorConsents, creatorGenerations } from "../../../drizzle/schema";
 import { getDb } from "../../db";
 
 export type ConsentPurpose = "avatar_video" | "custom_voice";
@@ -87,6 +87,47 @@ export async function admitAvatarConsentDispatch(input: {
     ));
   if (Number(result[0].affectedRows) !== 1) throw new Error("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
   return { consentId: input.consentId, admitted: true as const };
+}
+
+/**
+ * Atomic, durable per-generation admission receipt. The row UPDATE serializes
+ * with revocation; the receipt INSERT commits in the SAME transaction.
+ * Admission is NOT proof that the remote provider accepted/billed a request.
+ */
+export async function admitAvatarGenerationDispatch(input: {
+  workspaceId: number; consentId: number; purpose: ConsentPurpose; provider: string;
+  providerSubjectId: string; generationId: number; callbackId: string;
+}) {
+  const db = await requireDb();
+  return db.transaction(async tx => {
+    const [generation] = await tx.select({ id: creatorGenerations.id })
+      .from(creatorGenerations).where(and(
+        eq(creatorGenerations.id, input.generationId),
+        eq(creatorGenerations.workspaceId, input.workspaceId),
+        eq(creatorGenerations.idempotencyKey, input.callbackId),
+        eq(creatorGenerations.kind, "AVATAR_VIDEO"),
+        eq(creatorGenerations.provider, input.provider),
+        eq(creatorGenerations.status, "SUBMISSION_UNKNOWN"),
+      )).limit(1);
+    if (!generation) throw new Error("CREATOR_AVATAR_DISPATCH_GENERATION_MISMATCH");
+    const result = await tx.update(creatorConsents)
+      .set({ lastDispatchAdmittedAt: sql`CURRENT_TIMESTAMP(6)` })
+      .where(and(
+        eq(creatorConsents.id, input.consentId),
+        eq(creatorConsents.workspaceId, input.workspaceId),
+        eq(creatorConsents.purpose, input.purpose),
+        eq(creatorConsents.provider, input.provider),
+        eq(creatorConsents.providerSubjectId, input.providerSubjectId),
+        isNull(creatorConsents.revokedAt),
+        or(isNull(creatorConsents.validUntil), gt(creatorConsents.validUntil, sql`CURRENT_TIMESTAMP(6)`)),
+      ));
+    if (Number(result[0].affectedRows) !== 1) throw new Error("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
+    await tx.insert(creatorAvatarDispatchAdmissions).values({
+      generationId: input.generationId, workspaceId: input.workspaceId,
+      consentId: input.consentId, callbackId: input.callbackId,
+    });
+    return { generationId: input.generationId, consentId: input.consentId, admitted: true as const };
+  });
 }
 
 /** Revocation is permanent and stops new generations; it cannot recall media a provider has already produced. */

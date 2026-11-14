@@ -30,7 +30,7 @@ const m = vi.hoisted(() => {
     getWorkspaceForUser: vi.fn(),
     getWorkspaceRole: vi.fn(),
     findActiveConsent: vi.fn(),
-    admitAvatarConsentDispatch: vi.fn(),
+    admitAvatarGenerationDispatch: vi.fn(),
     recordConsent: vi.fn(async () => ({ consentId: 42 })),
     resolveAvatarAudio: vi.fn(),
     getGenerationExecutionContext: vi.fn(),
@@ -48,7 +48,7 @@ const m = vi.hoisted(() => {
 vi.mock("../db", async importOriginal => ({ ...(await importOriginal<typeof import("../db")>()), getWorkspaceForUser: m.getWorkspaceForUser, getWorkspaceRole: m.getWorkspaceRole }));
 vi.mock("./runtimeAcceptance", () => ({ verifyCreatorRuntimeAcceptance: m.acceptance }));
 vi.mock("./spendLedger", async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), getCreatorSpendLedger: () => m.ledger }));
-vi.mock("./speech/consentStore", async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), findActiveConsent: m.findActiveConsent, admitAvatarConsentDispatch: m.admitAvatarConsentDispatch, recordConsent: m.recordConsent }));
+vi.mock("./speech/consentStore", async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), findActiveConsent: m.findActiveConsent, admitAvatarGenerationDispatch: m.admitAvatarGenerationDispatch, recordConsent: m.recordConsent }));
 vi.mock("./speech/audioAsset", () => ({ resolveAvatarAudio: m.resolveAvatarAudio }));
 vi.mock("./persistence", () => ({
   beginProviderSubmission: vi.fn(async () => undefined),
@@ -116,7 +116,7 @@ beforeEach(() => {
   m.speechSubmit.mockImplementation(async () => ({ providerJobId: `creator/staging/speech/${randomUUID()}.wav`, state: "SUCCEEDED", provider: "sarvam-tts", model: "bulbul:v3", raw: {} }));
   m.avatarSubmit.mockImplementation(async () => ({ providerJobId: "vid_abc123", state: "SUBMITTED", provider: "heygen-avatar", model: "heygen-v3", raw: {} }));
   m.findActiveConsent.mockResolvedValue({ id: 3 });
-  m.admitAvatarConsentDispatch.mockResolvedValue({ consentId: 3, admitted: true });
+  m.admitAvatarGenerationDispatch.mockResolvedValue({ consentId: 3, admitted: true });
   m.resolveAvatarAudio.mockResolvedValue({ assetId: 9, data: new Uint8Array([1, 2, 3]), mimeType: "audio/wav", durationMs: 12_200 });
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -171,7 +171,7 @@ describe("avatar generation", () => {
       .rejects.toMatchObject({ code: "BAD_REQUEST", message: "AVATAR_V3_LIVE_APPROVAL_REQUIRED" });
     expect(m.acceptance).not.toHaveBeenCalled();
     expect(m.findActiveConsent).not.toHaveBeenCalled();
-    expect(m.admitAvatarConsentDispatch).not.toHaveBeenCalled();
+    expect(m.admitAvatarGenerationDispatch).not.toHaveBeenCalled();
     expect(m.resolveAvatarAudio).not.toHaveBeenCalled();
     expect(m.createQueuedGeneration).not.toHaveBeenCalled();
     expect(m.holds.size).toBe(0);
@@ -187,11 +187,12 @@ describe("avatar generation", () => {
   });
 
   it("revocation between initial lookup and provider dispatch releases the spend hold and never invokes HeyGen", async () => {
-    m.admitAvatarConsentDispatch.mockRejectedValueOnce(new Error("CREATOR_CONSENT_REVOKED"));
+    m.admitAvatarGenerationDispatch.mockRejectedValueOnce(new Error("CREATOR_CONSENT_REVOKED"));
     await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar()))
       .rejects.toMatchObject({ code: "BAD_REQUEST", message: "CREATOR_CONSENT_REVOKED" });
     expect(m.findActiveConsent).toHaveBeenCalledTimes(1);
-    expect(m.admitAvatarConsentDispatch).toHaveBeenCalledTimes(1);
+    expect(m.admitAvatarGenerationDispatch).toHaveBeenCalledTimes(1);
+    expect(m.admitAvatarGenerationDispatch.mock.calls[0][0]).toMatchObject({ generationId: expect.any(Number), callbackId: expect.any(String) });
     expect(m.avatarSubmit).not.toHaveBeenCalled();
     expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "RELEASED" })]);
     expect(m.windows.cost).toBe(0);
@@ -202,7 +203,7 @@ describe("avatar generation", () => {
     m.avatarSubmit.mockRejectedValueOnce(new Error("provider reply lost"));
     await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key)))
       .rejects.toMatchObject({ code: "BAD_GATEWAY" });
-    expect(m.admitAvatarConsentDispatch).toHaveBeenCalledTimes(1);
+    expect(m.admitAvatarGenerationDispatch).toHaveBeenCalledTimes(1);
     expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
     expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "HELD" })]);
     expect(m.windows.cost).toBeGreaterThan(0);

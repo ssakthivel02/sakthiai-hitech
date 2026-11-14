@@ -8,7 +8,7 @@ vi.mock("../../db", async importOriginal => ({
   getDb: async () => state.db,
 }));
 
-import { admitAvatarConsentDispatch, revokeConsent } from "./consentStore";
+import { admitAvatarConsentDispatch, admitAvatarGenerationDispatch, revokeConsent } from "./consentStore";
 
 describe.skipIf(skipMysqlSuite())("Creator avatar consent dispatch linearization (disposable MySQL)", { timeout: 60_000 }, () => {
   let fixture: TestDatabase;
@@ -91,6 +91,49 @@ describe.skipIf(skipMysqlSuite())("Creator avatar consent dispatch linearization
       )
     `) as unknown as [{ count: number }[]];
     expect(Number(jobs[0].count)).toBe(0);
+  });
+
+  it("atomically binds an active consent to exactly one generation and callback", async () => {
+    await insert();
+    const callbackId = "00000000-0000-4000-8000-000000000026";
+    await fixture.db.execute(sql`INSERT INTO creatorGenerations
+      (workspaceId, creatorProjectId, idempotencyKey, kind, provider, model, parametersJson, status)
+      VALUES (7, 1, ${callbackId}, 'AVATAR_VIDEO', 'heygen-avatar', 'heygen-v3', '{}', 'SUBMISSION_UNKNOWN')`);
+    const [generations] = await fixture.db.execute(sql`SELECT id FROM creatorGenerations
+      WHERE workspaceId = 7 AND idempotencyKey = ${callbackId}`) as unknown as [{ id: number }[]];
+    const generationId = Number(generations[0].id);
+    const request = { ...input(), generationId, callbackId };
+    await expect(admitAvatarGenerationDispatch({ ...request, callbackId: "wrong-callback" }))
+      .rejects.toThrow("CREATOR_AVATAR_DISPATCH_GENERATION_MISMATCH");
+    const [before] = await fixture.db.execute(sql`SELECT COUNT(*) AS n FROM creatorAvatarDispatchAdmissions
+      WHERE generationId = ${generationId}`) as unknown as [{ n: number }[]];
+    expect(Number(before[0].n)).toBe(0);
+    await expect(admitAvatarGenerationDispatch(request))
+      .resolves.toMatchObject({ generationId, consentId: id, admitted: true });
+    const [receipts] = await fixture.db.execute(sql`SELECT callbackId, consentId FROM creatorAvatarDispatchAdmissions
+      WHERE generationId = ${generationId}`) as unknown as [{ callbackId: string; consentId: number }[]];
+    expect(receipts).toEqual([{ callbackId, consentId: id }]);
+    await expect(admitAvatarGenerationDispatch(request)).rejects.toThrow();
+    const [after] = await fixture.db.execute(sql`SELECT COUNT(*) AS n FROM creatorAvatarDispatchAdmissions
+      WHERE generationId = ${generationId}`) as unknown as [{ n: number }[]];
+    expect(Number(after[0].n)).toBe(1);
+  });
+
+  it("does not admit a revoked consent or create an orphan generation receipt", async () => {
+    await insert();
+    const callbackId = "00000000-0000-4000-8000-000000000027";
+    await fixture.db.execute(sql`INSERT INTO creatorGenerations
+      (workspaceId, creatorProjectId, idempotencyKey, kind, provider, model, parametersJson, status)
+      VALUES (7, 1, ${callbackId}, 'AVATAR_VIDEO', 'heygen-avatar', 'heygen-v3', '{}', 'SUBMISSION_UNKNOWN')`);
+    const [rows] = await fixture.db.execute(sql`SELECT id FROM creatorGenerations
+      WHERE workspaceId = 7 AND idempotencyKey = ${callbackId}`) as unknown as [{ id: number }[]];
+    const generationId = Number(rows[0].id);
+    await revokeConsent({ workspaceId: 7, userId: 1, consentId: id });
+    await expect(admitAvatarGenerationDispatch({ ...input(), generationId, callbackId }))
+      .rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
+    const [receipts] = await fixture.db.execute(sql`SELECT COUNT(*) AS n FROM creatorAvatarDispatchAdmissions
+      WHERE generationId = ${generationId}`) as unknown as [{ n: number }[]];
+    expect(Number(receipts[0].n)).toBe(0);
   });
 
   it("serializes a revocation held in another transaction against admission on another connection", async () => {
