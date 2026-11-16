@@ -167,33 +167,43 @@ describe.skipIf(skipMysqlSuite())("Creator avatar consent dispatch linearization
     expect(Number(receipts[0].n)).toBe(0);
   });
 
-  it("serializes a revocation held in another transaction against admission on another connection", async () => {
+  it("serializes a pending generation admission behind revocation and leaves no receipt", async () => {
     await insert();
+    const callbackId = `00000000-0000-4000-8000-${String(id).padStart(12, "0")}`;
+    await fixture.db.execute(sql`INSERT INTO creatorGenerations
+      (workspaceId, creatorProjectId, idempotencyKey, kind, provider, model, parametersJson, status)
+      VALUES (7, 1, ${callbackId}, 'AVATAR_VIDEO', 'heygen-avatar', 'heygen-v3', '{}', 'SUBMISSION_UNKNOWN')`);
+    const [generations] = await fixture.db.execute(sql`SELECT id FROM creatorGenerations
+      WHERE workspaceId = 7 AND idempotencyKey = ${callbackId}`) as unknown as [{ id: number }[]];
+    const generationId = Number(generations[0].id);
     const locked = await fixture.pool.promise().getConnection();
-    let release!: () => void;
-    let resolveStarted!: () => void;
-    const started = new Promise<void>(resolve => { resolveStarted = resolve; });
-    const gate = new Promise<void>(resolve => { release = resolve; });
+    let settled = false;
     try {
       await locked.beginTransaction();
       await locked.query("UPDATE creatorConsents SET revokedAt = CURRENT_TIMESTAMP, revokedByUserId = 1 WHERE id = ?", [id]);
-      let settled = false;
+
       const admission = (async () => {
-        resolveStarted();
-        try { return await admitAvatarConsentDispatch(input()); }
-        finally { settled = true; }
+        try {
+          return await admitAvatarGenerationDispatch({ ...input(), generationId, callbackId });
+        } finally {
+          settled = true;
+        }
       })();
-      // Register the rejection observer immediately: under fast MySQL scheduling,
-      // the UPDATE can reject before control reaches an assertion after commit.
-      // A late .rejects handler is reported by Vitest as an unhandled rejection.
+      // Install the rejection handler before releasing the lock; Vitest must
+      // never see a transient unhandled rejection under fast MySQL scheduling.
       const admissionRejected = expect(admission).rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
-      await started;
-      // Releasing the lock commits revocation; the waiting UPDATE must then see revokedAt.
+
+      // Give the second connection a bounded opportunity to reach the locked
+      // UPDATE. Pending before commit is a regression guard, not independent
+      // proof of a particular MySQL performance_schema lock-wait event.
+      await new Promise(resolve => setTimeout(resolve, 200));
+      expect(settled).toBe(false);
       await locked.commit();
-      release();
-      await gate;
       await admissionRejected;
       expect(settled).toBe(true);
+      const [receipts] = await fixture.db.execute(sql`SELECT COUNT(*) AS n FROM creatorAvatarDispatchAdmissions
+        WHERE generationId = ${generationId}`) as unknown as [{ n: number }[]];
+      expect(Number(receipts[0].n)).toBe(0);
     } finally {
       await locked.rollback().catch(() => undefined);
       locked.release();
