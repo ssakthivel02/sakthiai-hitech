@@ -65,7 +65,11 @@ No backup is complete merely because an Aiven dashboard shows a timestamp.
 
 On the approved operator machine, use a mode-0600 MySQL options file such as `/private/path/source.cnf`, with verified host, user, password, port, `ssl-mode=VERIFY_IDENTITY` and `ssl-ca`. Check the selected MySQL client supports the options and the Aiven endpoint certificate matches the actual host before connecting. Do not echo or commit the file.
 
-In a private terminal, after independently verifying the target is **source preview only**:
+**Mandatory plaintext-staging gate (STOP if unverified):** The sample below writes a *compressed but unencrypted* SQL dump before a later encryption step. A pathname containing `encrypted-workspace` is **not** evidence of encryption. Before executing it, the operator must independently verify that `OUT_DIR` resides on an approved **encrypted-at-rest, unlocked and access-controlled volume**, record that verification privately, and confirm that plaintext staging and filesystem snapshots are excluded from unapproved cloud sync, automatic backup, swap and temporary-file locations. If that cannot be proven, **do not run the example**. Instead obtain security review of a vetted streaming-encryption pipeline that writes only ciphertext to disk (with separately retained keys and authenticated-encryption integrity); do not invent a one-off shell encryption command. The operator must also define post-copy plaintext-staging cleanup and retention controls, understanding that deleting a local file is not proof that its blocks, replicas or snapshots are securely erased.
+
+Keep permissions restricted (`umask 077`, protected client configuration, no shell tracing), do not expose credentials/dump contents in logs, and never store private hashes, dumps, decryption keys or account data in GitHub or public CI. Verify an independently stored encrypted copy and complete an approved **decrypt-plus-isolated-restore** test before checking off recoverability. A checksum or provider-managed backup alone does not meet this requirement.
+
+In a private terminal, after independently verifying the target is **source preview only** **and** the mandatory plaintext-staging gate above:
 
 ```bash
 set -euo pipefail
