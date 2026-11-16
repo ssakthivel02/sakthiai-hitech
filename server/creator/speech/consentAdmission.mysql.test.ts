@@ -193,13 +193,45 @@ describe.skipIf(skipMysqlSuite())("Creator avatar consent dispatch linearization
       // never see a transient unhandled rejection under fast MySQL scheduling.
       const admissionRejected = expect(admission).rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
 
-      // Give the second connection a bounded opportunity to reach the locked
-      // UPDATE. Pending before commit is a regression guard, not independent
-      // proof of a particular MySQL performance_schema lock-wait event.
-      await new Promise(resolve => setTimeout(resolve, 200));
-      expect(settled).toBe(false);
+      // Verify that MySQL itself reports the second transaction waiting on
+      // THIS connection's consent-row lock. A timer-only pending assertion
+      // cannot prove the admission UPDATE reached the contended row.
+      const [lockOwnerRows] = await locked.query("SELECT CONNECTION_ID() AS id") as [{ id: number }[], unknown];
+      const lockOwnerId = Number(lockOwnerRows[0].id);
+      let lockWaitObserved = false;
+      let lockWaitInspectionError: unknown;
+      const deadline = Date.now() + 3000;
+      try {
+        while (Date.now() < deadline) {
+          const [waitRows] = await fixture.pool.promise().query(
+            `SELECT COUNT(*) AS n
+               FROM performance_schema.data_lock_waits w
+               JOIN performance_schema.threads owner
+                 ON owner.THREAD_ID = w.BLOCKING_THREAD_ID
+               JOIN performance_schema.data_locks requested
+                 ON requested.ENGINE_LOCK_ID = w.REQUESTING_ENGINE_LOCK_ID
+              WHERE owner.PROCESSLIST_ID = ?
+                AND requested.OBJECT_SCHEMA = ?
+                AND requested.OBJECT_NAME = 'creatorConsents'`,
+            [lockOwnerId, fixture.name],
+          ) as [{ n: number }[], unknown];
+          if (Number(waitRows[0].n) > 0) {
+            lockWaitObserved = true;
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      } catch (error) {
+        // Preserve the observability failure, but still release the lock
+        // before awaiting the already-registered rejection assertion.
+        lockWaitInspectionError = error;
+      }
+      const pendingBeforeCommit = !settled;
       await locked.commit();
       await admissionRejected;
+      if (lockWaitInspectionError) throw lockWaitInspectionError;
+      expect(lockWaitObserved).toBe(true);
+      expect(pendingBeforeCommit).toBe(true);
       expect(settled).toBe(true);
       const [receipts] = await fixture.db.execute(sql`SELECT COUNT(*) AS n FROM creatorAvatarDispatchAdmissions
         WHERE generationId = ${generationId}`) as unknown as [{ n: number }[]];
