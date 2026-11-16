@@ -183,12 +183,16 @@ describe.skipIf(skipMysqlSuite())("Creator avatar consent dispatch linearization
         try { return await admitAvatarConsentDispatch(input()); }
         finally { settled = true; }
       })();
+      // Register the rejection observer immediately: under fast MySQL scheduling,
+      // the UPDATE can reject before control reaches an assertion after commit.
+      // A late .rejects handler is reported by Vitest as an unhandled rejection.
+      const admissionRejected = expect(admission).rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
       await started;
       // Releasing the lock commits revocation; the waiting UPDATE must then see revokedAt.
       await locked.commit();
       release();
       await gate;
-      await expect(admission).rejects.toThrow("CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE");
+      await admissionRejected;
       expect(settled).toBe(true);
     } finally {
       await locked.rollback().catch(() => undefined);
