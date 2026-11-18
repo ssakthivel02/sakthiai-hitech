@@ -13,7 +13,7 @@ export async function runCreatorFfprobe(path: string): Promise<string> {
   try {
     const { stdout } = await execFileAsync(process.env.FFPROBE_PATH?.trim() || "ffprobe", [
       "-v", "error", "-show_entries",
-      "format=format_name,duration:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate",
+      "format=format_name,duration:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,nb_frames,duration",
       "-of", "json", path,
     ], { timeout: PROBE_TIMEOUT_MS, maxBuffer: PROBE_MAX_BYTES, windowsHide: true });
     return stdout;
@@ -47,7 +47,7 @@ export async function probeCreatorRenderedOutput(
   if (!parsed || !Array.isArray(parsed.streams)) throw new Error("CREATOR_RENDER_FFPROBE_STREAMS_INVALID");
   const streams = parsed.streams as Array<{
     codec_type?: unknown; codec_name?: unknown; width?: unknown; height?: unknown;
-    avg_frame_rate?: unknown; r_frame_rate?: unknown;
+    avg_frame_rate?: unknown; r_frame_rate?: unknown; nb_frames?: unknown; duration?: unknown;
   }>;
   const containerTokens = typeof parsed.format?.format_name === "string"
     ? parsed.format.format_name.toLowerCase().split(",").map(token => token.trim())
@@ -66,12 +66,20 @@ export async function probeCreatorRenderedOutput(
   }
   const fpsAverage = rationalFps(video.avg_frame_rate);
   const fpsNominal = rationalFps(video.r_frame_rate);
+  // Full-length audio can mask missing video frames in MP4 container duration.
+  const frameText = video.nb_frames;
+  const videoFrames = typeof frameText === "string" && /^[1-9][0-9]*$/.test(frameText)
+    ? Number(frameText) : NaN;
+  const videoDuration = video.duration === undefined ? NaN : Number(video.duration);
   const durationSeconds = Number(parsed.format?.duration);
   if (!Number.isSafeInteger(video.width) || !Number.isSafeInteger(video.height) ||
       !Number.isFinite(fpsAverage) || fpsAverage <= 0 ||
       !Number.isFinite(fpsNominal) || fpsNominal <= 0 ||
       !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
     throw new Error("CREATOR_RENDER_FFPROBE_METADATA_INVALID");
+  }
+  if (!Number.isSafeInteger(videoFrames) || videoFrames <= 0) {
+    throw new Error("CREATOR_RENDER_FFPROBE_VIDEO_FRAMES_INVALID");
   }
   const actual: CreatorOutputEvidence = {
     width: video.width as number,
@@ -85,6 +93,9 @@ export async function probeCreatorRenderedOutput(
   if (actual.height !== target.height) failures.push("height");
   if (Math.abs(actual.fps - target.fps) > 0.01 || Math.abs(fpsNominal - target.fps) > 0.01) failures.push("fps");
   if (Math.abs(actual.durationSeconds - target.durationSeconds) > 0.1) failures.push("duration");
+  if (videoFrames !== Math.round(target.durationSeconds * target.fps)) failures.push("frames");
+  if (Number.isFinite(videoDuration) && videoDuration > 0 &&
+      Math.abs(videoDuration - target.durationSeconds) > Math.max(0.02, 0.5 / target.fps)) failures.push("video_duration");
   if (!actual.hasAudio) failures.push("audio");
   if (failures.length) throw new Error(`CREATOR_RENDER_OUTPUT_NONCONFORMANT:${failures.join(",")}`);
   return actual;
