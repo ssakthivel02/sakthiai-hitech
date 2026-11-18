@@ -9,7 +9,7 @@ const target = { width: 320, height: 180, fps: 24, durationSeconds: 2, hasAudio:
 const probeJson = (overrides: Record<string, unknown> = {}) => JSON.stringify({
   format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration: "2.000000" },
   streams: [
-    { codec_type: "video", codec_name: "h264", width: 320, height: 180, avg_frame_rate: "24/1", r_frame_rate: "24/1" },
+    { codec_type: "video", codec_name: "h264", width: 320, height: 180, avg_frame_rate: "24/1", r_frame_rate: "24/1", nb_frames: "48", duration: "2.000000" },
     { codec_type: "audio", codec_name: "aac" },
   ],
   ...overrides,
@@ -67,6 +67,18 @@ describe("Creator real-output technical evidence", () => {
       await expect(probeCreatorRenderedOutput("x", target, run(probeJson(testCase.overrides)),))
         .rejects.toThrow(testCase.error);
     }
+  });
+  it("rejects a truncated video stream masked by full-length audio/container metadata", async () => {
+    await expect(probeCreatorRenderedOutput("x", target, run(probeJson({ streams: [
+      { codec_type: "video", codec_name: "h264", width: 320, height: 180,
+        avg_frame_rate: "24/1", r_frame_rate: "24/1", nb_frames: "46", duration: "1.916667" },
+      { codec_type: "audio", codec_name: "aac" },
+    ] })))).rejects.toThrow("CREATOR_RENDER_OUTPUT_NONCONFORMANT:frames,video_duration");
+    await expect(probeCreatorRenderedOutput("x", target, run(probeJson({ streams: [
+      { codec_type: "video", codec_name: "h264", width: 320, height: 180,
+        avg_frame_rate: "24/1", r_frame_rate: "24/1", duration: "2.000000" },
+      { codec_type: "audio", codec_name: "aac" },
+    ] })))).rejects.toThrow("CREATOR_RENDER_FFPROBE_VIDEO_FRAMES_INVALID");
   });
   it("rejects wrong codecs, container and divergent CFR evidence", async () => {
     await expect(probeCreatorRenderedOutput("x", target, run(probeJson({
