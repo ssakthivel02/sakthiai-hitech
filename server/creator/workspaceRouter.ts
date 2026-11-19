@@ -8,6 +8,7 @@ import {
   creatorGenerations,
   creatorProjects,
   creatorProviderJobs,
+  creatorRemediationLineage,
   creatorReferences,
   creatorReviews,
   creatorScenes,
@@ -69,7 +70,7 @@ export const creatorWorkspaceRouter = router({
     const { db, project } = await requireProject(ctx.user.id, input.workspaceId, input.creatorProjectId);
     const scope = and(eq(creatorProjects.workspaceId, input.workspaceId), eq(creatorProjects.id, input.creatorProjectId));
     void scope;
-    const [scenes, shots, assets, references, generations, providerJobs, timelines, timelineItems, captionCues, reviews, exports] = await Promise.all([
+    const [scenes, shots, assets, references, generations, providerJobs, timelines, timelineItems, captionCues, reviews, exports, remediationLineage] = await Promise.all([
       db.select().from(creatorScenes).where(and(eq(creatorScenes.workspaceId, input.workspaceId), eq(creatorScenes.creatorProjectId, input.creatorProjectId))).orderBy(asc(creatorScenes.sceneIndex)),
       db.select().from(creatorShots).where(and(eq(creatorShots.workspaceId, input.workspaceId), eq(creatorShots.creatorProjectId, input.creatorProjectId))).orderBy(asc(creatorShots.sceneId), asc(creatorShots.shotIndex)),
       db.select().from(creatorAssets).where(and(eq(creatorAssets.workspaceId, input.workspaceId), eq(creatorAssets.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorAssets.createdAt)),
@@ -81,8 +82,9 @@ export const creatorWorkspaceRouter = router({
       db.select().from(creatorCaptionCues).where(and(eq(creatorCaptionCues.workspaceId, input.workspaceId), eq(creatorCaptionCues.creatorProjectId, input.creatorProjectId))).orderBy(asc(creatorCaptionCues.timelineId), asc(creatorCaptionCues.startMs)),
       db.select().from(creatorReviews).where(and(eq(creatorReviews.workspaceId, input.workspaceId), eq(creatorReviews.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorReviews.createdAt)),
       db.select().from(creatorExports).where(and(eq(creatorExports.workspaceId, input.workspaceId), eq(creatorExports.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorExports.createdAt)),
+      db.select().from(creatorRemediationLineage).where(and(eq(creatorRemediationLineage.workspaceId, input.workspaceId), eq(creatorRemediationLineage.creatorProjectId, input.creatorProjectId))).orderBy(desc(creatorRemediationLineage.createdAt)),
     ]);
-    return { project, scenes, shots, assets, references, generations, providerJobs, timelines, timelineItems, captionCues, reviews, exports };
+    return { project, scenes, shots, assets, references, generations, providerJobs, timelines, timelineItems, captionCues, reviews, exports, remediationLineage };
   }),
 
   createScene: protectedProcedure

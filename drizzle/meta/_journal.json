@@ -148,6 +148,48 @@
       "when": 1794359200000,
       "tag": "0020_creator_murugan_shot_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1794445600000,
+      "tag": "0021_creator_provider_job_uniqueness",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1794532000000,
+      "tag": "0022_creator_artifact_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1794535600000,
+      "tag": "0023_creator_staged_artifact_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1794539200000,
+      "tag": "0024_creator_remediation_lineage",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1794571200000,
+      "tag": "0025_creator_consent_dispatch_admission",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "5",
+      "when": 1794657600000,
+      "tag": "0026_creator_avatar_dispatch_receipts",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { createTestDatabase, skipMysqlSuite, type TestDatabase } from "../testing/mysqlTestDb";
 
 const holder = vi.hoisted(() => ({ db: undefined as unknown, roles: new Map<number, "owner" | "member">() }));
@@ -38,7 +39,13 @@ describe.skipIf(skipMysqlSuite())("9:16 delivery derivative and export manifest 
     writeSubtitle: async () => undefined,
     readOutput: async () => Buffer.from("fake-mp4-output"),
     executeFfmpeg: async (args: string[]) => { ffmpegArgs.push(args); return { exitCode: 0, stderr: "" }; },
+    probeOutput: async (_path: string, expected: { width: number; height: number; fps: number; durationSeconds: number; hasAudio: boolean }) => expected,
     putArtifact: async (key: string) => ({ key, url: `/api/storage/${key}` }),
+    verifyArtifact: async (_key: string, expectedSize: number, expectedSha256: string) => {
+      const stored = Buffer.from("fake-mp4-output");
+      expect(expectedSize).toBe(stored.byteLength);
+      expect(expectedSha256).toBe(createHash("sha256").update(stored).digest("hex"));
+    },
     captionFonts: { dir: "/fonts", family: "Noto Sans Tamil" },
   };
 

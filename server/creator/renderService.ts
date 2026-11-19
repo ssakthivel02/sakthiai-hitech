@@ -228,6 +228,7 @@ export async function executeCreatorTimelineExport(input: {
       visualAssetIds: rendered.visualAssetIds,
       durationMs: rendered.durationMs,
       frameCount: rendered.frameCount,
+      outputEvidence: rendered.outputEvidence,
       width: rendered.width,
       height: rendered.height,
       fps: rendered.fps,

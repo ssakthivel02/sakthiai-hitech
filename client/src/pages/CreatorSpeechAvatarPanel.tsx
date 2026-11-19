@@ -88,7 +88,7 @@ export default function CreatorSpeechAvatarPanel(props: {
   }
 
   function sendAvatar() {
-    if (!selectedConsent || !avatarAudioId || !avatarShotId) return;
+    if (!avatarLive || !selectedConsent || !avatarAudioId || !avatarShotId) return;
     const payload = { workspaceId, creatorProjectId, shotId: avatarShotId, avatarId: selectedConsent.providerSubjectId, consentId: selectedConsent.id, audioAssetId: avatarAudioId, live: avatarLive };
     submitAvatar.mutate({ ...payload, idempotencyKey: keyFor("avatar", payload) });
   }
@@ -160,8 +160,8 @@ export default function CreatorSpeechAvatarPanel(props: {
             <label style={{ display: "grid", gap: 3 }}><small>Approved audio</small><select value={avatarAudioId ?? ""} onChange={e => setAvatarAudioId(e.target.value ? Number(e.target.value) : undefined)}><option value="">Choose</option>{drivingAudio.map(a => <option key={a.id} value={a.id}>{a.id === audioMasterAssetId ? "Audio master" : "Reviewed speech"} · asset {a.id}</option>)}</select></label>
             <label style={{ display: "grid", gap: 3 }}><small>Shot</small><select value={avatarShotId ?? ""} onChange={e => setAvatarShotId(e.target.value ? Number(e.target.value) : undefined)}><option value="">Choose a shot</option>{shots.map(shot => <option key={shot.id} value={shot.id}>{shot.title} · shot {shot.id}</option>)}</select></label>
           </div>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={avatarLive} onChange={e => setAvatarLive(e.target.checked)}/> Live render (billed). Leave unticked for the provider's free, watermarked test render.</label>
-          <Button disabled={!selectedConsent || !avatarAudioId || !avatarShotId || submitAvatar.isPending} onClick={sendAvatar}><Video size={16}/> Generate avatar video</Button>
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={avatarLive} onChange={e => setAvatarLive(e.target.checked)}/> Billed HeyGen v3 generation. A free preview is not documented; selecting this explicitly requests a billed render, subject to owner consent and spend limits.</label>
+          <Button disabled={!avatarLive || !selectedConsent || !avatarAudioId || !avatarShotId || submitAvatar.isPending} onClick={sendAvatar}><Video size={16}/> Generate avatar video</Button>
           {!activeConsents.length && <small>No active avatar consent in this workspace yet.</small>}
           {!drivingAudio.length && <small>No approved, locked audio yet: lock the audio master or pass a speech review first.</small>}
           <small>Repeating the same consent, audio, shot and render mode reuses the original request, without a second charge.</small>

@@ -89,15 +89,17 @@ export function createHeygenAvatarProvider(deps: AvatarProviderDeps = {}): Creat
   const configured = deps.apiKeyPresent ?? (() => Boolean(process.env.CREATOR_AVATAR_HEYGEN_API_KEY?.trim()));
   return {
     id: "heygen-avatar",
-    status: () => ({ provider: "heygen-avatar", configured: configured(), defaultModel: "heygen-v2", capabilities: { avatarVideo: true } }),
+    status: () => ({ provider: "heygen-avatar", configured: configured(), defaultModel: "heygen-v3", capabilities: { avatarVideo: true } }),
     supports: (request: CreatorMediaRequest) => request.kind === "AVATAR_VIDEO",
     async submit(request: CreatorMediaRequest): Promise<CreatorProviderSubmission> {
       if (request.kind !== "AVATAR_VIDEO") throw new SpeechProviderError("AVATAR_REQUEST_KIND_INVALID", "INVALID_REQUEST", false);
+      // Enforce the billable v3 gate before reading or uploading audio, including calls bypassing the tRPC router.
+      if (request.live !== true) throw new SpeechProviderError("AVATAR_V3_LIVE_APPROVAL_REQUIRED", "INVALID_REQUEST", false);
       if (!request.audio) throw new SpeechProviderError("AVATAR_AUDIO_NOT_RESOLVED", "INVALID_REQUEST", false);
       const { assetId } = await uploadAvatarAudio(Buffer.from(request.audio.data), request.audio.mimeType, {}, deps.heygen);
       const callbackId = request.callbackId ?? `creator-${randomUUID()}`;
       const { videoId, testMode } = await submitAvatarVideo({ avatarId: request.avatarId, audioAssetId: assetId, callbackId, live: request.live, title: request.prompt }, {}, deps.heygen);
-      return { providerJobId: videoId, state: "SUBMITTED", provider: "heygen-avatar", model: request.model ?? "heygen-v2", raw: { uploadedAudioAssetId: assetId, testMode, callbackId } };
+      return { providerJobId: videoId, state: "SUBMITTED", provider: "heygen-avatar", model: request.model ?? "heygen-v3", raw: { uploadedAudioAssetId: assetId, testMode, callbackId } };
     },
     async poll(providerJobId: string): Promise<CreatorProviderPoll> {
       const poll = await pollAvatarVideo(providerJobId, {}, deps.heygen);

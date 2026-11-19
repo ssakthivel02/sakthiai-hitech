@@ -8,9 +8,13 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 function scriptedFetch(statuses: string[]) {
   let poll = 0;
   return vi.fn(async (url: string, init?: RequestInit) => {
-    if (url === HEYGEN_ENDPOINTS.upload) return json({ code: 100, data: { id: "asset_abc123" } });
+    if (url === HEYGEN_ENDPOINTS.upload) {
+      expect(init?.body).toBeInstanceOf(FormData);
+      expect((init?.headers as Record<string, string>)["content-type"]).toBeUndefined();
+      return json({ data: { asset_id: "asset_abc123" } });
+    }
     if (url === HEYGEN_ENDPOINTS.generate) return json({ code: 100, data: { video_id: "vid_abc123" } });
-    if (url.startsWith(HEYGEN_ENDPOINTS.status)) {
+    if (url.startsWith(HEYGEN_ENDPOINTS.status + "/")) {
       const status = statuses[Math.min(poll++, statuses.length - 1)];
       return json({ code: 100, data: { status, video_url: status === "completed" ? "https://resource.heygen.ai/v.mp4" : null, duration: 3.2 } });
     }
@@ -19,24 +23,41 @@ function scriptedFetch(statuses: string[]) {
   });
 }
 
-const base = { audio: makePcmWav(800), audioContentType: "audio/wav" as const, avatarId: "avatar_consented_01", callbackId: "creator-idem-0001" };
+const base = { audio: makePcmWav(800), audioContentType: "audio/wav" as const, avatarId: "avatar_consented_01", callbackId: "creator-idem-0001", live: true };
 
 describe("HeyGen avatar adapter (contract-tested; no live call)", () => {
-  it("defaults to provider test mode and only goes live when asked", () => {
+  it("only builds documented v3 payloads in explicitly approved live mode", () => {
     const common = { avatarId: "avatar_consented_01", audioAssetId: "asset_abc123", callbackId: "creator-idem-0001" };
-    expect(buildAvatarGeneratePayload(common).test).toBe(true);
-    expect(buildAvatarGeneratePayload({ ...common, live: true }).test).toBe(false);
-    expect(buildAvatarGeneratePayload(common).video_inputs[0].voice).toEqual({ type: "audio", audio_asset_id: "asset_abc123" });
-    expect(() => buildAvatarGeneratePayload({ ...common, avatarId: "bad id!" })).toThrow("AVATAR_ID_INVALID");
-    expect(() => buildAvatarGeneratePayload({ ...common, width: 100 })).toThrow("AVATAR_DIMENSION_INVALID");
+    expect(() => buildAvatarGeneratePayload(common)).toThrow("AVATAR_V3_LIVE_APPROVAL_REQUIRED");
+    const body = buildAvatarGeneratePayload({ ...common, live: true });
+    expect(body).toMatchObject({ type: "avatar", avatar_id: "avatar_consented_01", audio_asset_id: "asset_abc123", aspect_ratio: "auto", resolution: "1080p" });
+    expect(body).not.toHaveProperty("test");
+    expect(body).not.toHaveProperty("video_inputs");
+    expect(() => buildAvatarGeneratePayload({ ...common, live: true, avatarId: "bad id!" })).toThrow("AVATAR_ID_INVALID");
+    expect(() => buildAvatarGeneratePayload({ ...common, live: true, width: 100 })).toThrow("AVATAR_DIMENSION_INVALID");
+  });
+
+  it("rejects preview before any provider network call", async () => {
+    const mock = vi.fn();
+    await expect(runAvatarVideo({ ...base, live: false }, {}, { fetch: mock, apiKey: "k" }))
+      .rejects.toMatchObject({ code: "AVATAR_V3_LIVE_APPROVAL_REQUIRED" });
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("refuses oversized v3 audio without uploading", async () => {
+    const { uploadAvatarAudio } = await import("./heygenAvatar");
+    const mock = vi.fn();
+    await expect(uploadAvatarAudio(Buffer.alloc(32 * 1024 * 1024 + 1), "audio/wav", {}, { fetch: mock, apiKey: "k" }))
+      .rejects.toMatchObject({ code: "AVATAR_AUDIO_V3_UPLOAD_TOO_LARGE" });
+    expect(mock).not.toHaveBeenCalled();
   });
 
   it("runs upload -> submit -> poll -> download, persisting the provider job id before polling", async () => {
     const fetchMock = scriptedFetch(["pending", "processing", "completed"]);
     const order: string[] = [];
     const result = await runAvatarVideo(base, { onProviderJob: job => { order.push(`job:${job.videoId}:${job.testMode}`); } }, { fetch: fetchMock, apiKey: "k", sleep: async () => { order.push("sleep"); }, pollIntervalMs: 1 });
-    expect(result).toMatchObject({ state: "SUCCEEDED", videoId: "vid_abc123", testMode: true, durationSeconds: 3.2 });
-    expect(order[0]).toBe("job:vid_abc123:true"); // before any poll-sleep
+    expect(result).toMatchObject({ state: "SUCCEEDED", videoId: "vid_abc123", testMode: false, durationSeconds: 3.2 });
+    expect(order[0]).toBe("job:vid_abc123:false"); // before any poll-sleep
     expect(order.filter(entry => entry === "sleep")).toHaveLength(2);
     const submitBody = JSON.parse(fetchMock.mock.calls.find(call => call[0] === HEYGEN_ENDPOINTS.generate)![1]!.body as string);
     expect(submitBody.callback_id).toBe("creator-idem-0001");
@@ -74,6 +95,65 @@ describe("HeyGen avatar adapter (contract-tested; no live call)", () => {
     expect((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].redirect).toBe("error");
     const html = vi.fn(async () => new Response("<html>login</html>-padding-padding", { status: 200 }));
     await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, { fetch: html })).rejects.toMatchObject({ code: "AVATAR_DOWNLOAD_NOT_MP4" });
+  });
+
+  it("streams an MP4 with unknown length without using Response.arrayBuffer", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(mp4.subarray(0, 6)));
+        controller.enqueue(new Uint8Array(mp4.subarray(6)));
+        controller.close();
+      },
+    });
+    const response = new Response(body, { status: 200 });
+    const arraySpy = vi.spyOn(response, "arrayBuffer");
+    const fetchMock = vi.fn(async () => response);
+    const output = await downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, { fetch: fetchMock });
+    expect(output.data.equals(mp4)).toBe(true);
+    expect(arraySpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a declared oversized video and cancels without buffering", async () => {
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({ cancel }), {
+      status: 200,
+      headers: { "Content-Length": String(512 * 1024 * 1024 + 1) },
+    });
+    const fetchMock = vi.fn(async () => response);
+    await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, { fetch: fetchMock }))
+      .rejects.toMatchObject({ code: "AVATAR_DOWNLOAD_TOO_LARGE" });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unknown-length oversized chunks before allocation", async () => {
+    const oversized = new Uint8Array([1, 2, 3]);
+    Object.defineProperty(oversized, "byteLength", { get: () => 512 * 1024 * 1024 + 1 });
+    const cancel = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(oversized); },
+      cancel,
+    }));
+    await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, {
+      fetch: vi.fn(async () => response),
+    })).rejects.toMatchObject({ code: "AVATAR_DOWNLOAD_TOO_LARGE" });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses bogus Content-Length and cancels error bodies", async () => {
+    const oversized = new Response(new ReadableStream<Uint8Array>({ cancel: vi.fn() }), {
+      headers: { "Content-Length": "NaN" },
+    });
+    await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, {
+      fetch: vi.fn(async () => oversized),
+    })).rejects.toMatchObject({ code: "AVATAR_DOWNLOAD_LENGTH_INVALID" });
+    const cancel = vi.fn();
+    const denied = new Response(new ReadableStream<Uint8Array>({ cancel }), { status: 503 });
+    const arraySpy = vi.spyOn(denied, "arrayBuffer");
+    await expect(downloadAvatarVideo("https://resource.heygen.ai/v.mp4", {}, {
+      fetch: vi.fn(async () => denied),
+    })).rejects.toMatchObject({ code: "AVATAR_PROVIDER_HTTP_503" });
+    expect(arraySpy).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed without a dedicated key and classifies provider HTTP errors", async () => {

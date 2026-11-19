@@ -7,7 +7,7 @@ import { createCreatorSpendHook, requireCreatorWorkspaceOwner, requirePaidCreato
 import { creatorError, requirePaidGenerationReady } from "./routerGuards";
 import { resolveAvatarAudio } from "./speech/audioAsset";
 import { reviewGeneratedSpeech } from "./speech/speechReview";
-import { findActiveConsent, listConsents, PROVIDER_SUBJECT_ID, recordConsent, revokeConsent } from "./speech/consentStore";
+import { admitAvatarGenerationDispatch, findActiveConsent, listConsents, PROVIDER_SUBJECT_ID, recordConsent, revokeConsent } from "./speech/consentStore";
 
 /**
  * Speech (TTS) and avatar-video generation for Creator, plus the consent records avatar video requires.
@@ -95,10 +95,11 @@ export const creatorSpeechAvatarRouter = router({
       consentId: z.number().int().positive(),
       audioAssetId: z.number().int().positive(),
       title: z.string().trim().min(1).max(120).default("SakthiAI avatar video"),
-      /** false (default) = provider test mode: watermarked, not billed. */
+      /** HeyGen v3: no documented free preview; only explicit billed mode may proceed. */
       live: z.boolean().default(false),
     }))
     .mutation(async ({ ctx, input }) => {
+      if (input.live !== true) throw new TRPCError({ code: "BAD_REQUEST", message: "AVATAR_V3_LIVE_APPROVAL_REQUIRED" });
       const paidConfig = await requirePaidCreatorAccess(ctx.user, input.workspaceId, "AVATAR_VIDEO");
       await requirePaidGenerationReady();
       try {
@@ -121,6 +122,9 @@ export const creatorSpeechAvatarRouter = router({
             audio: { mimeType: audio.mimeType, data: audio.data },
             callbackId: input.idempotencyKey,
             live: input.live,
+          },
+          beforeProviderSubmit: async (generationId) => {
+            await admitAvatarGenerationDispatch({ workspaceId: input.workspaceId, consentId: input.consentId, purpose: "avatar_video", provider: "heygen-avatar", providerSubjectId: input.avatarId, generationId, callbackId: input.idempotencyKey });
           },
         });
       } catch (error) { creatorError(error); }

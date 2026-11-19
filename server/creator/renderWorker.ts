@@ -5,7 +5,8 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { buildDeterministicRenderPlan, captionsNeedTamilFont, type CaptionFonts, type DeterministicRenderPlanInput } from "./renderPlan";
-import { storagePut } from "../storage";
+import { storagePut, storageVerifySha256 } from "../storage";
+import { probeCreatorRenderedOutput } from "./outputProbe";
 
 export type FfmpegExecution = {
   exitCode: number;
@@ -13,11 +14,14 @@ export type FfmpegExecution = {
 };
 
 export type RenderWorkerDependencies = {
-  executeFfmpeg?: (args: string[]) => Promise<FfmpegExecution>;
+  executeFfmpeg?: (args: string[], signal?: AbortSignal) => Promise<FfmpegExecution>;
+  abortSignal?: AbortSignal;
   putArtifact?: (key: string, data: Buffer, contentType: string) => Promise<{ key: string; url: string }>;
+  verifyArtifact?: (key: string, size: number, checksumSha256: string) => Promise<void>;
   createTempDir?: () => Promise<string>;
   cleanupTempDir?: (path: string) => Promise<void>;
   readOutput?: (path: string) => Promise<Buffer>;
+  probeOutput?: typeof probeCreatorRenderedOutput;
   writeSubtitle?: (path: string, content: string) => Promise<void>;
   captionFonts?: CaptionFonts;
 };
@@ -41,34 +45,47 @@ export function resolveCreatorCaptionFonts(
 const DEFAULT_RENDER_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_RENDER_BYTES = 1024 * 1024 * 1024;
 
-export async function executeFfmpegBounded(args: string[]): Promise<FfmpegExecution> {
+export async function executeFfmpegBounded(args: string[], signal?: AbortSignal): Promise<FfmpegExecution> {
+  if (signal?.aborted) throw new Error("CREATOR_FFMPEG_ABORTED");
   const executable = process.env.FFMPEG_PATH?.trim() || "ffmpeg";
   const timeoutMsRaw = Number(process.env.CREATOR_FFMPEG_TIMEOUT_MS || DEFAULT_RENDER_TIMEOUT_MS);
-  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.min(timeoutMsRaw, DEFAULT_RENDER_TIMEOUT_MS) : DEFAULT_RENDER_TIMEOUT_MS;
+  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+    ? Math.min(timeoutMsRaw, DEFAULT_RENDER_TIMEOUT_MS) : DEFAULT_RENDER_TIMEOUT_MS;
 
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { shell: false, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     let settled = false;
-    const finish = (callback: () => void) => {
+    let termination: "ABORTED" | "TIMEOUT" | null = null;
+    const kill = (reason: "ABORTED" | "TIMEOUT") => {
+      if (settled || termination) return;
+      termination = reason;
+      // Wait for close before resolving the promise: the child must not keep
+      // writing a candidate after the lease has been fenced.
+      child.kill("SIGKILL");
+    };
+    const onAbort = () => kill("ABORTED");
+    const timer = setTimeout(() => kill("TIMEOUT"), timeoutMs);
+    timer.unref?.();
+    const finish = (code: number | null, error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      callback();
+      signal?.removeEventListener("abort", onAbort);
+      if (termination === "ABORTED") reject(new Error("CREATOR_FFMPEG_ABORTED"));
+      else if (termination === "TIMEOUT") reject(new Error("CREATOR_FFMPEG_TIMEOUT"));
+      else if (error) reject(new Error("CREATOR_FFMPEG_SPAWN_FAILED"));
+      else resolve({ exitCode: code ?? -1, stderr });
     };
-
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();
       if (stderr.length > 32_000) stderr = stderr.slice(-32_000);
     });
-    child.on("error", (error) => finish(() => reject(new Error(`CREATOR_FFMPEG_SPAWN_FAILED:${error.message}`))));
-    child.on("close", (code) => finish(() => resolve({ exitCode: code ?? -1, stderr })));
-
-    const timer = setTimeout(() => {
-      if (!settled) child.kill("SIGKILL");
-      finish(() => reject(new Error("CREATOR_FFMPEG_TIMEOUT")));
-    }, timeoutMs);
-    timer.unref?.();
+    child.once("error", error => finish(null, error));
+    child.once("close", code => finish(code));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    // Close the race between the pre-spawn check and listener registration.
+    if (signal?.aborted) onAbort();
   });
 }
 
@@ -82,12 +99,18 @@ export async function runCreatorRenderWorker(input: Omit<DeterministicRenderPlan
     throw new Error("CREATOR_RENDER_ID_INVALID");
   }
 
+  const assertActive = () => {
+    if (deps.abortSignal?.aborted) throw new Error("CREATOR_FFMPEG_ABORTED");
+  };
+  assertActive();
   const createTempDir = deps.createTempDir ?? (() => mkdtemp(join(tmpdir(), "sakthiai-creator-")));
   const cleanupTempDir = deps.cleanupTempDir ?? ((path) => rm(path, { recursive: true, force: true }));
   const writeSubtitle = deps.writeSubtitle ?? ((path, content) => writeFile(path, content, { encoding: "utf8", flag: "wx" }));
   const readOutput = deps.readOutput ?? readFile;
+  const probeOutput = deps.probeOutput ?? probeCreatorRenderedOutput;
   const execute = deps.executeFfmpeg ?? executeFfmpegBounded;
   const putArtifact = deps.putArtifact ?? storagePut;
+  const verifyArtifact = deps.verifyArtifact ?? storageVerifySha256;
 
   const tempDir = await createTempDir();
   const subtitlePath = join(tempDir, "captions.ta.srt");
@@ -98,20 +121,32 @@ export async function runCreatorRenderWorker(input: Omit<DeterministicRenderPlan
       ?? (captionsNeedTamilFont(input.captions) ? resolveCreatorCaptionFonts() : undefined);
     const plan = buildDeterministicRenderPlan({ ...input, subtitlePath, outputPath, captionFonts });
     await writeSubtitle(subtitlePath, plan.srt);
+    assertActive();
 
-    const execution = await execute(plan.ffmpegArgs);
+    const execution = await execute(plan.ffmpegArgs, deps.abortSignal);
+    assertActive();
     if (execution.exitCode !== 0) {
       const detail = execution.stderr.trim().slice(-4000);
       throw new Error(`CREATOR_FFMPEG_FAILED:${execution.exitCode}${detail ? `:${detail}` : ""}`);
     }
 
+    // Reject wrong resolution/FPS/duration or missing audio before any upload.
+    const outputEvidence = await probeOutput(outputPath, {
+      width: input.width, height: input.height, fps: input.fps,
+      durationSeconds: input.audioDurationMs / 1000, hasAudio: true,
+    });
     const output = await readOutput(outputPath);
+    assertActive();
     if (!output.length) throw new Error("CREATOR_RENDER_EMPTY_OUTPUT");
     if (output.byteLength > MAX_RENDER_BYTES) throw new Error("CREATOR_RENDER_OUTPUT_TOO_LARGE");
 
     const checksumSha256 = createHash("sha256").update(output).digest("hex");
     const storageKey = `creator/${input.workspaceId}/${input.creatorProjectId}/renders/timeline-${input.timelineId}/export-${input.exportId}.mp4`;
+    assertActive();
     const stored = await putArtifact(storageKey, output, "video/mp4");
+    assertActive();
+    await verifyArtifact(stored.key, output.byteLength, checksumSha256);
+    assertActive();
 
     return {
       storageKey: stored.key,
@@ -122,6 +157,7 @@ export async function runCreatorRenderWorker(input: Omit<DeterministicRenderPlan
       frameCount: plan.frameCount,
       visualAssetIds: plan.visualAssetIds,
       renderer: "ffmpeg" as const,
+      outputEvidence,
       width: input.width,
       height: input.height,
       fps: input.fps,

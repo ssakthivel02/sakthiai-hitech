@@ -23,6 +23,7 @@ export function describeCreatorError(raw: string | null | undefined): CreatorErr
     case "CREATOR_CONSENT_PURPOSE_MISMATCH":
     case "CREATOR_CONSENT_SUBJECT_MISMATCH":
       return { code, kind: "blocked", title: "No matching consent record", detail: "Avatar video needs an active consent record in this workspace for exactly this avatar and purpose. Nothing was submitted or charged.", action: "Ask the workspace owner to record the consent evidence first." };
+    case "CREATOR_CONSENT_REVOKED_OR_NOT_ACTIVE":
     case "CREATOR_CONSENT_REVOKED":
       return { code, kind: "blocked", title: "Consent was revoked", detail: "The consent for this avatar has been revoked, so no new video can be generated with it. Nothing was submitted or charged." };
     case "CREATOR_CONSENT_EXPIRED":

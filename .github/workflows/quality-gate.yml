@@ -117,6 +117,15 @@ jobs:
       - name: Production source neutrality guard
         run: node scripts/validate-source-neutrality.mjs
 
+      - name: Install FFmpeg and FFprobe for real Creator media tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
       - name: Typecheck
         run: pnpm check
 
@@ -147,6 +156,133 @@ jobs:
             reports/evals/eval-report.json
             reports/evals/golden-benchmark.json
           if-no-files-found: warn
+
+
+  minio-storage-acceptance:
+    # Real S3-compatible storage + MySQL + FFmpeg, all disposable.
+    # Does not deploy, delete production data, or enable paid generation.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-root-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Start disposable loopback MinIO
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Registry throttling is external to the Creator code. Try the exact
+          # pinned image from two registries with bounded backoff; never use
+          # :latest or skip the real MinIO acceptance when pulls fail.
+          minio_image=""
+          for candidate in \
+            public.ecr.aws/y9w4h2u9/minio:RELEASE.2025-09-07T16-13-09Z \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z; do
+            for attempt in 1 2 3; do
+              if docker pull "$candidate"; then
+                minio_image="$candidate"
+                break
+              fi
+              echo "MinIO registry pull failed (attempt $attempt); retrying with bounded delay"
+              sleep "$((attempt * 3))"
+            done
+            if [ -n "$minio_image" ]; then break; fi
+          done
+          if [ -z "$minio_image" ]; then
+            echo "MinIO pinned image unavailable from both registries; failing closed"
+            exit 1
+          fi
+          docker run --pull=never --rm -d --name sakthiai-creator-minio \
+            -p 127.0.0.1:9000:9000 \
+            -e MINIO_ROOT_USER=ci-minio-user \
+            -e MINIO_ROOT_PASSWORD=ci-minio-secret-only \
+            "$minio_image" server /data
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null; then
+              echo "Disposable MinIO is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs sakthiai-creator-minio
+          exit 1
+
+      - name: Install FFmpeg and FFprobe for integrated Creator acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
+      - name: Real MinIO render storage and reconciliation acceptance
+        env:
+          CREATOR_MINIO_TEST_ACK: disposable-local-only
+          STORAGE_ENDPOINT: http://127.0.0.1:9000
+          STORAGE_REGION: us-east-1
+          STORAGE_BUCKET: creator-minio-ci
+          STORAGE_ACCESS_KEY_ID: ci-minio-user
+          STORAGE_SECRET_ACCESS_KEY: ci-minio-secret-only
+          STORAGE_FORCE_PATH_STYLE: "true"
+        run: |
+          pnpm exec vitest run server/storage.minio.test.ts --reporter=verbose
+          pnpm exec vitest run server/creator/creatorMuruganVerticalSlice.minio.test.ts --reporter=verbose
+
+      - name: Real MySQL + FFmpeg + MinIO fenced Creator export
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+          MYSQL_REQUIRED: "1"
+          CREATOR_MINIO_TEST_ACK: disposable-local-only
+          STORAGE_ENDPOINT: http://127.0.0.1:9000
+          STORAGE_REGION: us-east-1
+          STORAGE_BUCKET: creator-minio-ci
+          STORAGE_ACCESS_KEY_ID: ci-minio-user
+          STORAGE_SECRET_ACCESS_KEY: ci-minio-secret-only
+          STORAGE_FORCE_PATH_STYLE: "true"
+        run: pnpm exec vitest run server/creator/fencedRenderRealMedia.mysql.test.ts --reporter=verbose
+
+      - name: Real MinIO + MySQL candidate quality and human-review fail-closed acceptance
+        env:
+          TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
+          MYSQL_REQUIRED: "1"
+          CREATOR_MINIO_TEST_ACK: disposable-local-only
+          STORAGE_ENDPOINT: http://127.0.0.1:9000
+          STORAGE_REGION: us-east-1
+          STORAGE_BUCKET: creator-minio-ci
+          STORAGE_ACCESS_KEY_ID: ci-minio-user
+          STORAGE_SECRET_ACCESS_KEY: ci-minio-secret-only
+          STORAGE_FORCE_PATH_STYLE: "true"
+        run: pnpm exec vitest run server/creator/creatorQualityReviewRealMinio.mysql.test.ts --reporter=verbose
+
+      - name: Stop disposable MinIO
+        if: always()
+        run: docker rm -f sakthiai-creator-minio || true
 
   mysql-integration:
     # Real MySQL 8 qualification: migrations vs schema, session revocation, tenancy, upload/scanner protocol,
@@ -182,6 +318,15 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install FFmpeg and FFprobe for fenced Creator media integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
 
       - name: Real-MySQL integration tests
         env:
@@ -253,6 +398,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install FFmpeg and FFprobe for fenced Creator media integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
+
       - name: Real-MySQL integration tests
         env:
           TEST_DATABASE_URL: mysql://root:ci-only-root-password@127.0.0.1:3306
@@ -288,10 +442,11 @@ jobs:
           if-no-files-found: warn
 
   e2e:
+    # Pin a supported Playwright 1.56 Chromium OS: ubuntu-latest currently resolves to unsupported ubuntu26.04.
     # Browser-level production-shaped qualification: the real BUILT server + client against a disposable MySQL 8 service
     # container, with in-process fakes for OIDC, the local LLM, an "external" LLM (must never be contacted), S3 and clamd.
     # No paid API, hosted database or deployment is ever contacted.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     services:
       mysql:
@@ -324,6 +479,14 @@ jobs:
 
       - name: Install Chromium for Playwright
         run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install FFmpeg and FFprobe for real Creator browser candidate acceptance
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
 
       - name: Playwright E2E
         env:

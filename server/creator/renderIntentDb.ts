@@ -7,6 +7,7 @@ import {
   creatorTimelines,
 } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { ExistingRenderClaim, MysqlCreatorRenderClaims, type CreatorRenderQueuedResult, type CreatorRenderSqlTransaction } from "./renderClaims";
 import {
   creatorRenderIntentFingerprint,
   type CreatorRenderIntentInput,
@@ -18,11 +19,9 @@ import {
  * No caller-controlled media checksums, Tamil text, reference identity, signed
  * URLs or approval flags are accepted. This is a read-only, review-only helper.
  *
- * Important limitation: the timeline row is locked HERE, but current timeline
- * writers are not yet required to lock that same row. The resulting intent
- * therefore MUST NOT be passed to claimAndQueueExport in production until
- * timeline/caption writers, snapshot reservation and worker dispatch share a
- * reviewed transaction/locking protocol.
+ * The read-only API remains available. The source-derived reservation API
+ * performs the read and durable claim/export insertion under ONE row lock.
+ * Neither API starts a worker; fenced dispatch and crash recovery are separate gates.
  */
 type DbProvider = typeof getDb;
 type StoredMedia = { checksumSha256: string; id: number; immutable: number; reviewDecision: string; assetType: string };
@@ -76,11 +75,17 @@ function validateScope(input: CreatorDbRenderIntentInput): void {
   }
 }
 
-export async function readCreatorRenderIntentFromDatabase(
+/**
+ * Source snapshot and caller's operation execute in ONE MySQL transaction.
+ * The timeline row lock is held through the caller's callback, including
+ * any claim/export insertion. No signed URL or worker dispatch is permitted.
+ */
+export async function withCreatorRenderIntentTransaction<T>(
   input: CreatorDbRenderIntentInput,
   trustedConfig: TrustedCreatorRendererConfig,
+  onLockedSnapshot: (tx: CreatorRenderSqlTransaction, snapshot: { intent: CreatorRenderIntentInput; fingerprint: string }) => Promise<T>,
   dbProvider: DbProvider = getDb,
-): Promise<{ intent: CreatorRenderIntentInput; fingerprint: string }> {
+): Promise<T> {
   validateScope(input);
   if (!trustedConfig || typeof trustedConfig.rendererVersion !== "string" ||
       !trustedConfig.rendererVersion.trim() || typeof trustedConfig.fontFamily !== "string" ||
@@ -100,11 +105,16 @@ export async function readCreatorRenderIntentFromDatabase(
     if (timeline.width !== 1920 || timeline.height !== 1080 || !positive(timeline.fps) ||
         !timeline.audioMasterAssetId) throw new Error("CREATOR_RENDER_INTENT_MASTER_PROFILE_INVALID");
 
+    // Lock every source approval/identity row in the same transaction as the
+    // timeline, caption snapshot, claim reservation and finalizer. A concurrent
+    // asset rejection or shot reassignment must either finish before our read
+    // (and be rejected) or wait until this transaction commits; a plain SELECT
+    // at REPEATABLE READ could accept a stale approved-source snapshot.
     const [audio] = await tx.select().from(creatorAssets).where(and(
       eq(creatorAssets.id, timeline.audioMasterAssetId),
       eq(creatorAssets.workspaceId, input.workspaceId),
       eq(creatorAssets.creatorProjectId, input.creatorProjectId),
-    )).limit(1);
+    )).limit(1).for("update");
     immutableApproved(audio, "audio");
     if (audio.assetType !== "AUDIO_MASTER") throw new Error("CREATOR_RENDER_INTENT_AUDIO_TYPE_INVALID");
 
@@ -121,7 +131,7 @@ export async function readCreatorRenderIntentFromDatabase(
       eq(creatorShots.workspaceId, input.workspaceId),
       eq(creatorShots.creatorProjectId, input.creatorProjectId),
       inArray(creatorShots.id, shotIds),
-    )) : [];
+    )).for("update") : [];
     const validShotIds = new Set(shots.map(row => row.id));
     if (validShotIds.size !== shotIds.length) throw new Error("CREATOR_RENDER_INTENT_FOREIGN_SHOT");
 
@@ -131,7 +141,7 @@ export async function readCreatorRenderIntentFromDatabase(
         eq(creatorAssets.id, item.assetId),
         eq(creatorAssets.workspaceId, input.workspaceId),
         eq(creatorAssets.creatorProjectId, input.creatorProjectId),
-      )).limit(1);
+      )).limit(1).for("update");
       immutableApproved(asset, "visual");
       if (asset.assetType !== "IMAGE" && asset.assetType !== "VIDEO") {
         throw new Error("CREATOR_RENDER_INTENT_VISUAL_TYPE_INVALID");
@@ -163,7 +173,7 @@ export async function readCreatorRenderIntentFromDatabase(
         eq(creatorAssets.id, input.verticalDerivativeOf),
         eq(creatorAssets.workspaceId, input.workspaceId),
         eq(creatorAssets.creatorProjectId, input.creatorProjectId),
-      )).limit(1);
+      )).limit(1).for("update");
       if (!parent) throw new Error("CREATOR_RENDER_INTENT_DERIVATIVE_MASTER_NOT_FOUND");
       approvedMasterProvenance(parent, input.timelineId, visuals.map(row => row.assetId), audio.checksumSha256);
       derivativeOf = { assetId: parent.id, checksumSha256: parent.checksumSha256 };
@@ -187,6 +197,45 @@ export async function readCreatorRenderIntentFromDatabase(
       derivativeOf,
     };
     const { fingerprint } = creatorRenderIntentFingerprint(intent);
-    return { intent, fingerprint };
+    return onLockedSnapshot(tx, { intent, fingerprint });
   });
+}
+
+/** Retain the existing read-only API; callers cannot reserve outside its lock. */
+export async function readCreatorRenderIntentFromDatabase(
+  input: CreatorDbRenderIntentInput,
+  trustedConfig: TrustedCreatorRendererConfig,
+  dbProvider: DbProvider = getDb,
+): Promise<{ intent: CreatorRenderIntentInput; fingerprint: string }> {
+  return withCreatorRenderIntentTransaction(input, trustedConfig, async (_tx, snapshot) => snapshot, dbProvider);
+}
+
+/**
+ * Atomic source-derived render reservation. This is NOT worker activation.
+ * A duplicate returns the existing claim only after the lock/insert
+ * transaction resolves; no lease token is exposed to duplicate callers.
+ */
+export async function reserveCreatorRenderIntentFromDatabase(
+  input: CreatorDbRenderIntentInput,
+  trustedConfig: TrustedCreatorRendererConfig,
+  dbProvider: DbProvider = getDb,
+  leaseSeconds = 1800,
+): Promise<CreatorRenderQueuedResult> {
+  const claims = new MysqlCreatorRenderClaims(dbProvider);
+  let duplicateScope: { workspaceId: number; creatorProjectId: number; timelineId: number; mode: CreatorRenderIntentInput["mode"]; fingerprint: string } | undefined;
+  try {
+    return await withCreatorRenderIntentTransaction(input, trustedConfig, async (tx, snapshot) => {
+      duplicateScope = {
+        workspaceId: snapshot.intent.workspaceId,
+        creatorProjectId: snapshot.intent.creatorProjectId,
+        timelineId: snapshot.intent.timelineId,
+        mode: snapshot.intent.mode,
+        fingerprint: snapshot.fingerprint,
+      };
+      return claims.reserveInsideTransaction(tx, snapshot.intent, leaseSeconds);
+    }, dbProvider);
+  } catch (error) {
+    if (!(error instanceof ExistingRenderClaim) || !duplicateScope) throw error;
+    return claims.resolveDuplicate(duplicateScope);
+  }
 }

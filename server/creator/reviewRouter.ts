@@ -2,6 +2,8 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { requireCreatorWorkspaceOwner } from "./paidGeneration";
+import { reviewCreatorGeneratedAsset } from "./generatedAssetReview";
+import { linkCreatorRemediationReplacement } from "./remediationLineage";
 import {
   finalizeCreatorMaster,
   recordCreatorHumanReview,
@@ -44,6 +46,23 @@ function creatorReviewError(error: unknown): never {
 }
 
 export const creatorReviewRouter = router({
+  /** Review a completed, immutable generated IMAGE/VIDEO before it can enter a timeline.
+   * No generation submission, publishing or master promotion occurs here.
+   */
+  reviewGeneratedAsset: protectedProcedure.input(workspaceProjectAsset.extend({
+    expectedChecksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    decision: z.enum(["APPROVE", "REJECT"]),
+    notes: z.string().trim().min(8).max(5000),
+    confirmAssetReviewed: z.literal(true),
+  })).mutation(async ({ ctx, input }) => {
+    await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
+    try {
+      return await reviewCreatorGeneratedAsset({ ...input, reviewerUserId: ctx.user.id });
+    } catch (error) {
+      creatorReviewError(error);
+    }
+  }),
+
   quality: protectedProcedure.input(workspaceProjectAsset.extend({
     reviewerType: z.enum(["HUMAN", "ASSISTED_HUMAN"]),
     sourcePromptOrStoryboard: z.string().trim().min(1).max(20_000),
@@ -78,6 +97,25 @@ export const creatorReviewRouter = router({
     await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
     try {
       return await recordCreatorHumanReview({ ...input, reviewerUserId: ctx.user.id, reviewType: "HUMAN_VISUAL" });
+    } catch (error) {
+      creatorReviewError(error);
+    }
+  }),
+
+  /** Owner-only, append-only link from failed quality evidence to a distinct completed render. */
+  linkRemediation: protectedProcedure.input(z.object({
+    workspaceId: z.number().int().positive(),
+    creatorProjectId: z.number().int().positive(),
+    sourceCandidateAssetId: z.number().int().positive(),
+    sourceQualityReviewId: z.number().int().positive(),
+    replacementCandidateAssetId: z.number().int().positive(),
+    expectedSourceChecksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    expectedReplacementChecksumSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    confirmReplacementLineage: z.literal(true),
+  })).mutation(async ({ ctx, input }) => {
+    await requireCreatorWorkspaceOwner(ctx.user.id, input.workspaceId);
+    try {
+      return await linkCreatorRemediationReplacement({ ...input, reviewerUserId: ctx.user.id });
     } catch (error) {
       creatorReviewError(error);
     }

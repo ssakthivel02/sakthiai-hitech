@@ -2,6 +2,43 @@ import { describe, expect, it, vi } from "vitest";
 import { storageRoundTripProbe } from "./storage";
 
 describe("storageRoundTripProbe", () => {
+  it("uses exact ranged SHA-256 verification for runtime readiness and deletes the canary", async () => {
+    const payloads = new Map<string, Buffer>();
+    const verify = vi.fn(async (key: string, size: number, checksum: string) => {
+      const bytes = payloads.get(key);
+      expect(bytes).toBeDefined();
+      expect(size).toBe(bytes!.byteLength);
+      expect(checksum).toMatch(/^[0-9a-f]{64}$/);
+      const { createHash } = await import("node:crypto");
+      expect(checksum).toBe(createHash("sha256").update(bytes!).digest("hex"));
+    });
+    const remove = vi.fn(async (key: string) => { payloads.delete(key); });
+    const result = await storageRoundTripProbe({
+      put: async (_key, data) => {
+        const key = "creator/runtime-probes/storage-canary_verified.txt";
+        payloads.set(key, Buffer.from(data));
+        return { key, url: `/api/storage/${key}` };
+      },
+      verify,
+      delete: remove,
+    });
+    expect(result.pass).toBe(true);
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(payloads.size).toBe(0);
+  });
+
+  it("fails readiness and still deletes the canary when ranged verification fails", async () => {
+    const remove = vi.fn(async () => undefined);
+    const result = await storageRoundTripProbe({
+      put: async () => ({ key: "creator/runtime-probes/failing.txt", url: "/u" }),
+      verify: async () => { throw new Error("CREATOR_STORAGE_RANGE_NOT_HONORED"); },
+      delete: remove,
+    });
+    expect(result).toEqual({ pass: false, detail: "Storage write/read round-trip failed." });
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
   it("requires write, read, byte equality and delete", async () => {
     const payloads = new Map<string, Uint8Array>();
     const remove = vi.fn(async (key: string) => { payloads.delete(key); });
@@ -15,7 +52,7 @@ describe("storageRoundTripProbe", () => {
       delete: remove,
     });
 
-    expect(result.pass).toBe(true);
+    expect(result).toEqual({ pass: true, detail: "Storage write/verified-read/delete round-trip succeeded; canary SHA-256 matched." });
     expect(remove).toHaveBeenCalledTimes(1);
   });
 

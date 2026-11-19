@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
-import { creatorAssets, creatorGenerations, creatorShots } from "../../drizzle/schema";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import { creatorArtifactLeases, creatorAssets, creatorGenerations, creatorProviderJobs, creatorShots } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { storagePut } from "../storage";
+import { isCreatorStagedObjectAlreadyExists, isCreatorStagedObjectMissing,
+  storagePutCreatorStagedObject, storageVerifySha256 } from "../storage";
+import { CREATOR_STORED_MEDIA_MAX_BYTES } from "./storageIntegrity";
+import { assertCreatorArtifactJobOwnership } from "./artifactJobOwnership";
+import { acquireCreatorArtifactLease, assertCreatorArtifactLeaseActive,
+  readCreatorArtifactStage, recordCreatorArtifactStage, releaseCreatorArtifactLease } from "./artifactLease";
+import { assertCreatorStagedArtifactMatches, creatorArtifactStageKey, type CreatorStagedArtifact } from "./artifactStage";
 import {
   assertCreatorJobTransition,
   canTransitionCreatorJob,
@@ -54,6 +60,24 @@ async function requireDb() {
   return db;
 }
 
+type ExpectedArtifactJob = {
+  workspaceId: number;
+  creatorProjectId: number;
+  generationId: number;
+  provider: string;
+  providerJobId: string;
+};
+
+async function assertLatestCreatorArtifactJob(
+  db: Awaited<ReturnType<typeof requireDb>>,
+  expected: ExpectedArtifactJob,
+): Promise<void> {
+  const [job] = await db.select().from(creatorProviderJobs)
+    .where(and(eq(creatorProviderJobs.workspaceId, expected.workspaceId), eq(creatorProviderJobs.generationId, expected.generationId)))
+    .orderBy(desc(creatorProviderJobs.id)).limit(1);
+  assertCreatorArtifactJobOwnership({ ...expected, job: job ?? null });
+}
+
 export async function persistCreatorGenerationArtifact(input: {
   workspaceId: number;
   generationId: number;
@@ -69,32 +93,81 @@ export async function persistCreatorGenerationArtifact(input: {
     .limit(1);
   if (!generation) throw new Error("CREATOR_GENERATION_NOT_FOUND");
 
+  if (generation.provider !== input.provider.id) throw new Error("CREATOR_ARTIFACT_PROVIDER_MISMATCH");
+
+  const expectedJob = {
+    workspaceId: input.workspaceId,
+    creatorProjectId: generation.creatorProjectId,
+    generationId: generation.id,
+    provider: generation.provider,
+    providerJobId: input.providerJobId,
+  };
+  // Check the latest provider job before replay, retrieval, or storage mutation.
+  await assertLatestCreatorArtifactJob(db, expectedJob);
+
   if (generation.outputAssetId) {
     const [existing] = await db
       .select()
       .from(creatorAssets)
-      .where(and(eq(creatorAssets.id, generation.outputAssetId), eq(creatorAssets.workspaceId, input.workspaceId)))
+      .where(and(eq(creatorAssets.id, generation.outputAssetId), eq(creatorAssets.workspaceId, input.workspaceId), eq(creatorAssets.creatorProjectId, generation.creatorProjectId)))
       .limit(1);
     if (!existing) throw new Error("CREATOR_GENERATION_OUTPUT_ASSET_MISSING");
+    if (generation.status !== "SUCCEEDED") throw new Error("CREATOR_GENERATION_OUTPUT_STATE_INVALID");
+    if (typeof existing.byteSize !== "number" || !Number.isSafeInteger(existing.byteSize) || existing.byteSize < 1) {
+      throw new Error("CREATOR_GENERATION_OUTPUT_SIZE_INVALID");
+    }
+    // Replays must not report success for missing or corrupted stored bytes.
+    await storageVerifySha256(existing.storageKey, existing.byteSize, existing.checksumSha256);
     return { assetId: existing.id, storageKey: existing.storageKey, checksumSha256: existing.checksumSha256, reused: true };
   }
 
-  if (generation.provider !== input.provider.id) throw new Error("CREATOR_ARTIFACT_PROVIDER_MISMATCH");
-  if (!input.provider.fetchArtifact) throw new Error("CREATOR_PROVIDER_ARTIFACT_FETCH_UNSUPPORTED");
   assertCreatorJobTransition(generation.status as CreatorJobState, "SUCCEEDED");
 
-  const fetched = await input.provider.fetchArtifact(input.artifact);
-  const data = Buffer.from(fetched.data);
-  if (!data.byteLength) throw new Error("CREATOR_ARTIFACT_EMPTY");
-  const mimeType = fetched.mimeType.split(";", 1)[0].trim().toLowerCase();
-  const extension = extensionForCreatorMimeType(mimeType);
-  const checksumSha256 = createHash("sha256").update(data).digest("hex");
+  const leaseToken = await acquireCreatorArtifactLease(expectedJob);
+  try {
+  let staged = await readCreatorArtifactStage(expectedJob, leaseToken);
+  let needsUpload = !staged;
+  if (staged) {
+    try {
+      await storageVerifySha256(staged.storageKey, staged.byteSize, staged.checksumSha256);
+    } catch (error) {
+      if (!isCreatorStagedObjectMissing(error)) throw error;
+      needsUpload = true;
+    }
+  }
+  if (needsUpload) {
+    if (!input.provider.fetchArtifact) throw new Error("CREATOR_PROVIDER_ARTIFACT_FETCH_UNSUPPORTED");
+    const fetched = await input.provider.fetchArtifact(input.artifact);
+    const data = Buffer.from(fetched.data);
+    if (!data.byteLength) throw new Error("CREATOR_ARTIFACT_EMPTY");
+    if (data.byteLength > CREATOR_STORED_MEDIA_MAX_BYTES) throw new Error("CREATOR_ARTIFACT_TOO_LARGE");
+    const mimeType = fetched.mimeType.split(";", 1)[0].trim().toLowerCase();
+    const extension = extensionForCreatorMimeType(mimeType);
+    const checksumSha256 = createHash("sha256").update(data).digest("hex");
+    const candidate: CreatorStagedArtifact = {
+      storageKey: creatorArtifactStageKey({
+        workspaceId: input.workspaceId, creatorProjectId: generation.creatorProjectId,
+        generationId: generation.id, provider: generation.provider,
+        providerJobId: input.providerJobId, checksumSha256, extension,
+      }),
+      checksumSha256, byteSize: data.byteLength, mimeType,
+    };
+    if (staged) assertCreatorStagedArtifactMatches(staged, candidate);
+    await assertLatestCreatorArtifactJob(db, expectedJob);
+    staged = await recordCreatorArtifactStage(expectedJob, leaseToken, candidate);
+    await assertCreatorArtifactLeaseActive(expectedJob, leaseToken);
+    try {
+      await storagePutCreatorStagedObject(staged.storageKey, data, mimeType);
+    } catch (error) {
+      if (!isCreatorStagedObjectAlreadyExists(error)) throw error;
+      // Another expired worker may have stored these bytes. Verify, never overwrite.
+    }
+    await storageVerifySha256(staged.storageKey, staged.byteSize, staged.checksumSha256);
+  }
+  if (!staged) throw new Error("CREATOR_ARTIFACT_STAGE_MISSING");
+  const { storageKey, checksumSha256, byteSize, mimeType } = staged;
   const persistedAt = new Date();
-  const storage = await storagePut(
-    `creator/${generation.creatorProjectId}/shots/${generation.shotId ?? "unbound"}/generation-${generation.id}.${extension}`,
-    data,
-    mimeType,
-  );
+  await assertCreatorArtifactLeaseActive(expectedJob, leaseToken);
 
   const provenance = {
     schemaVersion: 1,
@@ -112,58 +185,122 @@ export async function persistCreatorGenerationArtifact(input: {
     checksumSha256,
   };
 
-  let assetId = 0;
-  await db.transaction(async tx => {
+  // Serialize finalization with submission and polling on the generation row.
+  const finalized = await db.transaction(async tx => {
+    const [currentGeneration] = await tx.select().from(creatorGenerations)
+      .where(and(
+        eq(creatorGenerations.id, generation.id),
+        eq(creatorGenerations.workspaceId, input.workspaceId),
+        eq(creatorGenerations.creatorProjectId, generation.creatorProjectId),
+      )).limit(1).for("update");
+    if (!currentGeneration) throw new Error("CREATOR_GENERATION_NOT_FOUND");
+    if (currentGeneration.provider !== expectedJob.provider) {
+      throw new Error("CREATOR_ARTIFACT_PROVIDER_JOB_MISMATCH");
+    }
+
+    const [currentJob] = await tx.select().from(creatorProviderJobs)
+      .where(and(
+        eq(creatorProviderJobs.workspaceId, expectedJob.workspaceId),
+        eq(creatorProviderJobs.creatorProjectId, expectedJob.creatorProjectId),
+        eq(creatorProviderJobs.generationId, expectedJob.generationId),
+      )).orderBy(desc(creatorProviderJobs.id)).limit(1).for("update");
+    assertCreatorArtifactJobOwnership({ ...expectedJob, job: currentJob ?? null });
+
+    // The same generation-row lock serializes claim takeover and finalization.
+    const [activeLease] = await tx.select().from(creatorArtifactLeases)
+      .where(and(
+        eq(creatorArtifactLeases.generationId, generation.id),
+        eq(creatorArtifactLeases.workspaceId, input.workspaceId),
+        eq(creatorArtifactLeases.creatorProjectId, generation.creatorProjectId),
+      )).limit(1).for("update");
+    if (!activeLease || activeLease.leaseToken !== leaseToken ||
+        activeLease.providerJobId !== input.providerJobId ||
+        activeLease.stagedStorageKey !== storageKey ||
+        activeLease.stagedChecksumSha256 !== checksumSha256 ||
+        activeLease.stagedByteSize !== byteSize ||
+        activeLease.stagedMimeType !== mimeType ||
+        new Date(activeLease.leaseUntil).getTime() <= Date.now()) {
+      throw new Error("CREATOR_ARTIFACT_LEASE_LOST");
+    }
+
+    // A competing poller can finalize while provider bytes are being fetched.
+    // Reuse its committed asset rather than creating another database asset.
+    if (currentGeneration.outputAssetId !== null) {
+      if (currentGeneration.status !== "SUCCEEDED") throw new Error("CREATOR_GENERATION_OUTPUT_STATE_INVALID");
+      const [existing] = await tx.select().from(creatorAssets)
+        .where(and(
+          eq(creatorAssets.id, currentGeneration.outputAssetId),
+          eq(creatorAssets.workspaceId, input.workspaceId),
+          eq(creatorAssets.creatorProjectId, generation.creatorProjectId),
+        )).limit(1);
+      if (!existing) throw new Error("CREATOR_GENERATION_OUTPUT_ASSET_MISSING");
+      if (typeof existing.byteSize !== "number" || !Number.isSafeInteger(existing.byteSize) || existing.byteSize < 1) {
+        throw new Error("CREATOR_GENERATION_OUTPUT_SIZE_INVALID");
+      }
+      return { assetId: existing.id, storageKey: existing.storageKey, checksumSha256: existing.checksumSha256,
+        byteSize: existing.byteSize, reused: true as const };
+    }
+
+    assertCreatorJobTransition(currentGeneration.status as CreatorJobState, "SUCCEEDED");
     const assetResult = await tx.insert(creatorAssets).values({
       workspaceId: input.workspaceId,
-      creatorProjectId: generation.creatorProjectId,
-      sceneId: generation.sceneId,
-      shotId: generation.shotId,
-      assetType: assetTypeForGeneration(generation.kind),
+      creatorProjectId: currentGeneration.creatorProjectId,
+      sceneId: currentGeneration.sceneId,
+      shotId: currentGeneration.shotId,
+      assetType: assetTypeForGeneration(currentGeneration.kind),
       mimeType,
-      storageKey: storage.key,
+      storageKey,
       checksumSha256,
-      byteSize: data.byteLength,
+      byteSize,
       immutable: 0,
       provenanceJson: JSON.stringify(provenance),
       reviewDecision: "PENDING",
     });
-    assetId = Number(assetResult[0].insertId);
+    const assetId = Number(assetResult[0].insertId);
     if (!assetId) throw new Error("CREATOR_ASSET_CREATE_FAILED");
 
-    const updateResult = await tx
-      .update(creatorGenerations)
-      .set({
-        outputAssetId: assetId,
-        status: "SUCCEEDED",
-        failureClass: null,
-        errorMessage: null,
-        completedAt: persistedAt,
-      })
-      .where(
-        and(
-          eq(creatorGenerations.id, generation.id),
-          eq(creatorGenerations.workspaceId, input.workspaceId),
-          eq(creatorGenerations.status, generation.status),
-        ),
-      );
+    const updateResult = await tx.update(creatorGenerations).set({
+      outputAssetId: assetId,
+      status: "SUCCEEDED",
+      failureClass: null,
+      errorMessage: null,
+      completedAt: persistedAt,
+    }).where(and(
+      eq(creatorGenerations.id, currentGeneration.id),
+      eq(creatorGenerations.workspaceId, input.workspaceId),
+      eq(creatorGenerations.creatorProjectId, currentGeneration.creatorProjectId),
+      eq(creatorGenerations.status, currentGeneration.status),
+      isNull(creatorGenerations.outputAssetId),
+    ));
     if (Number(updateResult[0].affectedRows) !== 1) throw new Error("CREATOR_GENERATION_ARTIFACT_RACE");
 
-    if (generation.shotId) {
-      await tx
-        .update(creatorShots)
-        .set({ status: "READY" })
-        .where(
-          and(
-            eq(creatorShots.id, generation.shotId),
-            eq(creatorShots.workspaceId, input.workspaceId),
-            eq(creatorShots.creatorProjectId, generation.creatorProjectId),
-          ),
-        );
+    if (currentGeneration.shotId) {
+      await tx.update(creatorShots).set({ status: "READY" }).where(and(
+        eq(creatorShots.id, currentGeneration.shotId),
+        eq(creatorShots.workspaceId, input.workspaceId),
+        eq(creatorShots.creatorProjectId, currentGeneration.creatorProjectId),
+      ));
     }
+    // Claim release commits atomically with the generation output pointer.
+    await tx.delete(creatorArtifactLeases).where(and(
+      eq(creatorArtifactLeases.generationId, generation.id),
+      eq(creatorArtifactLeases.leaseToken, leaseToken),
+    ));
+    return { assetId, storageKey, checksumSha256, byteSize, reused: false as const };
   });
 
-  return { assetId, storageKey: storage.key, checksumSha256, reused: false };
+  // Never report replay success for missing or corrupted persisted bytes.
+  // Storage readback occurs after releasing the InnoDB generation-row lock.
+  if (finalized.reused) {
+    await storageVerifySha256(finalized.storageKey, finalized.byteSize, finalized.checksumSha256);
+  }
+  return { assetId: finalized.assetId, storageKey: finalized.storageKey,
+    checksumSha256: finalized.checksumSha256, reused: finalized.reused };
+  } finally {
+    // On storage/provider failure release only our own token. A crashed worker
+    // leaves an expiring claim for reconciliation, never a paid re-submission.
+    await releaseCreatorArtifactLease(expectedJob, leaseToken).catch(() => undefined);
+  }
 }
 
 export async function markCreatorArtifactRetryable(input: {

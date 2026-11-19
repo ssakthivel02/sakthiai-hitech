@@ -63,7 +63,7 @@ export function creatorRenderIntentFingerprint(input: CreatorRenderIntentInput):
   const fps = positiveSafeInt(output.fps, "fps");
   if (typeof output.rendererVersion !== "string" || !output.rendererVersion.trim()) invalid("rendererVersion");
   if (typeof output.fontFamily !== "string" || !output.fontFamily.trim()) invalid("fontFamily");
-  if ((mode === "MASTER_CANDIDATE" && (width !== 1920 || height !== 1080 || output.fit !== "pad")) ||
+  if ((mode === "MASTER_CANDIDATE" && (width !== 1920 || height !== 1080 || fps !== 24 || output.fit !== "pad")) ||
       (mode === "VERTICAL_DERIVATIVE" && (width !== 1080 || height !== 1920 || output.fit !== "cover"))) invalid("outputProfile");
   const derivativeOf = input.derivativeOf;
   if ((mode === "VERTICAL_DERIVATIVE") !== Boolean(derivativeOf)) invalid("derivativeOf");

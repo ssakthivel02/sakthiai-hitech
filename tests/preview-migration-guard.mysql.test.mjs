@@ -17,7 +17,7 @@ const BASELINE = "0004_creator_spend_control";
 describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { timeout: 60_000 }, () => {
   const base = mysqlTestUrl();
   const cleanup = [];
-  afterAll(async () => { for (const fn of cleanup.reverse()) await fn(); });
+  afterAll(async () => { for (const fn of cleanup.reverse()) await fn(); }, 60_000); // many disposable DB drops after migration 0022
 
   const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8"));
   /** A migrations folder holding the journal up to `tag` (inclusive), for drizzle's own migrator. */
@@ -303,7 +303,7 @@ describe.skipIf(skipMysqlSuite())("preview migration guard on real MySQL", { tim
     await exec(db.url, "INSERT INTO rateLimitWindows (bucketKey, windowStart, count, expiresAt) VALUES ('chat:1', 1, 3, 9999999999999)");
     const pre = await db.guard("pre");
     expect(pre.problems).toEqual([]);
-    expect(pre.report.pendingTags).toEqual(["0014_workspace_artifacts", "0015_artifact_file_references", "0016_creator_speech_avatar_consent", "0017_creator_render_claims", "0018_creator_murugan_bible_approvals", "0019_creator_murugan_shot_plans", "0020_creator_murugan_shot_locks"]);
+    expect(pre.report.pendingTags).toEqual(journal.entries.slice(journal.entries.findIndex(e => e.tag === "0014_workspace_artifacts")).map(e => e.tag));
     expect(pre.report.classification).toMatchObject({ state: "CONSISTENT_PREFIX", orphanPending: [], missingApplied: [] });
     await drizzleMigrate(db.url, path.join(root, "drizzle"));
     const post = await db.guard("post");

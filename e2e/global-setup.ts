@@ -16,6 +16,9 @@ export default async function globalSetup() {
   mkdirSync("reports/e2e", { recursive: true });
 
   const database: TestDatabase = await createTestDatabase();
+  // Expose ONLY the freshly migrated disposable database to browser test fixtures.
+  // Never point synthetic Creator seeding at DATABASE_URL or a managed service.
+  process.env.E2E_CREATOR_DATABASE_URL = database.url;
   const fakes: Closeable[] = [];
   fakes.push(await startFakeOidc(PORTS.oidc), await startFakeLlm(PORTS.local, "local"), await startFakeLlm(PORTS.external, "external"), await startFakeS3(PORTS.s3), await startFakeClamd(PORTS.clamd));
 

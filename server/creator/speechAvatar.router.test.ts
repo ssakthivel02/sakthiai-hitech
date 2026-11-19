@@ -30,9 +30,12 @@ const m = vi.hoisted(() => {
     getWorkspaceForUser: vi.fn(),
     getWorkspaceRole: vi.fn(),
     findActiveConsent: vi.fn(),
+    admitAvatarGenerationDispatch: vi.fn(),
     recordConsent: vi.fn(async () => ({ consentId: 42 })),
     resolveAvatarAudio: vi.fn(),
     getGenerationExecutionContext: vi.fn(),
+    recordProviderSubmission: vi.fn(async () => undefined),
+    markGenerationSubmissionUnknown: vi.fn(async () => undefined),
     createQueuedGeneration: vi.fn(async (input: { workspaceId: number; idempotencyKey: string }) => {
       const key = `${input.workspaceId}:${input.idempotencyKey}`;
       const existing = generations.get(key);
@@ -47,16 +50,16 @@ const m = vi.hoisted(() => {
 vi.mock("../db", async importOriginal => ({ ...(await importOriginal<typeof import("../db")>()), getWorkspaceForUser: m.getWorkspaceForUser, getWorkspaceRole: m.getWorkspaceRole }));
 vi.mock("./runtimeAcceptance", () => ({ verifyCreatorRuntimeAcceptance: m.acceptance }));
 vi.mock("./spendLedger", async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), getCreatorSpendLedger: () => m.ledger }));
-vi.mock("./speech/consentStore", async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), findActiveConsent: m.findActiveConsent, recordConsent: m.recordConsent }));
+vi.mock("./speech/consentStore", async importOriginal => ({ ...(await importOriginal<Record<string, unknown>>()), findActiveConsent: m.findActiveConsent, admitAvatarGenerationDispatch: m.admitAvatarGenerationDispatch, recordConsent: m.recordConsent }));
 vi.mock("./speech/audioAsset", () => ({ resolveAvatarAudio: m.resolveAvatarAudio }));
 vi.mock("./persistence", () => ({
   beginProviderSubmission: vi.fn(async () => undefined),
   createQueuedGeneration: m.createQueuedGeneration,
   getGenerationExecutionContext: m.getGenerationExecutionContext,
   markGenerationFailed: vi.fn(async () => undefined),
-  markGenerationSubmissionUnknown: vi.fn(async () => undefined),
+  markGenerationSubmissionUnknown: m.markGenerationSubmissionUnknown,
   recordProviderPoll: vi.fn(async () => ({ generationState: "RUNNING" })),
-  recordProviderSubmission: vi.fn(async () => undefined),
+  recordProviderSubmission: m.recordProviderSubmission,
 }));
 vi.mock("./providerRegistry", () => {
   const make = (id: string, kind: string, defaultModel: string, submit: unknown) => ({
@@ -65,7 +68,7 @@ vi.mock("./providerRegistry", () => {
     supports: (request: { kind: string }) => request.kind === kind,
     submit, poll: vi.fn(), classifyFailure: () => "UNKNOWN",
   });
-  const providers = [make("sarvam-tts", "SPEECH", "bulbul:v3", m.speechSubmit), make("heygen-avatar", "AVATAR_VIDEO", "heygen-v2", m.avatarSubmit)];
+  const providers = [make("sarvam-tts", "SPEECH", "bulbul:v3", m.speechSubmit), make("heygen-avatar", "AVATAR_VIDEO", "heygen-v3", m.avatarSubmit)];
   return {
     listCreatorProviderStatuses: () => providers.map(p => p.status()),
     getCreatorProvider: (id: string) => providers.find(p => p.id === id),
@@ -85,7 +88,7 @@ const ENV: Record<string, string> = {
   CREATOR_PAID_GENERATION_ENABLED: "true",
   CREATOR_PAID_SPEECH_USERS: "speaker",
   CREATOR_PAID_AVATAR_USERS: "presenter",
-  CREATOR_MODEL_COSTS: JSON.stringify({ "bulbul:v3": { perThousandChars: 0.5 }, "heygen-v2": { perSecond: 0.1 } }),
+  CREATOR_MODEL_COSTS: JSON.stringify({ "bulbul:v3": { perThousandChars: 0.5 }, "heygen-v3": { perSecond: 0.1 } }),
   CREATOR_GLOBAL_MAX_GENERATIONS_PER_DAY: "100", CREATOR_GLOBAL_MAX_COST_PER_DAY: "100",
   CREATOR_WORKSPACE_MAX_GENERATIONS_PER_DAY: "100", CREATOR_WORKSPACE_MAX_COST_PER_DAY: "100",
   CREATOR_USER_MAX_GENERATIONS_PER_DAY: "100", CREATOR_USER_MAX_COST_PER_DAY: "100",
@@ -105,7 +108,7 @@ function caller(openId: string, role: "owner" | "member" = "owner") {
 
 const target = (idempotencyKey: string = randomUUID()) => ({ workspaceId: 7, creatorProjectId: 1, shotId: 1, idempotencyKey });
 const speech = (key?: string) => ({ ...target(key), text: "முருகா வேல் வேல் — Vetrivel" });
-const avatar = (key?: string) => ({ ...target(key), avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9 });
+const avatar = (key?: string) => ({ ...target(key), avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9, live: true });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -113,8 +116,9 @@ beforeEach(() => {
   for (const [k, v] of Object.entries(ENV)) vi.stubEnv(k, v);
   m.acceptance.mockResolvedValue({ readyForPaidGeneration: true, checks: [] });
   m.speechSubmit.mockImplementation(async () => ({ providerJobId: `creator/staging/speech/${randomUUID()}.wav`, state: "SUCCEEDED", provider: "sarvam-tts", model: "bulbul:v3", raw: {} }));
-  m.avatarSubmit.mockImplementation(async () => ({ providerJobId: "vid_abc123", state: "SUBMITTED", provider: "heygen-avatar", model: "heygen-v2", raw: {} }));
+  m.avatarSubmit.mockImplementation(async () => ({ providerJobId: "vid_abc123", state: "SUBMITTED", provider: "heygen-avatar", model: "heygen-v3", raw: {} }));
   m.findActiveConsent.mockResolvedValue({ id: 3 });
+  m.admitAvatarGenerationDispatch.mockResolvedValue({ consentId: 3, admitted: true });
   m.resolveAvatarAudio.mockResolvedValue({ assetId: 9, data: new Uint8Array([1, 2, 3]), mimeType: "audio/wav", durationMs: 12_200 });
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -164,12 +168,94 @@ describe("speech generation", () => {
 });
 
 describe("avatar generation", () => {
+  it("rejects undocumented free preview before access checks, readiness, consent, audio, ledger and provider", async () => {
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo({ ...avatar(), live: false }))
+      .rejects.toMatchObject({ code: "BAD_REQUEST", message: "AVATAR_V3_LIVE_APPROVAL_REQUIRED" });
+    expect(m.acceptance).not.toHaveBeenCalled();
+    expect(m.findActiveConsent).not.toHaveBeenCalled();
+    expect(m.admitAvatarGenerationDispatch).not.toHaveBeenCalled();
+    expect(m.resolveAvatarAudio).not.toHaveBeenCalled();
+    expect(m.createQueuedGeneration).not.toHaveBeenCalled();
+    expect(m.holds.size).toBe(0);
+    expect(m.avatarSubmit).not.toHaveBeenCalled();
+  });
+
   it("revoked/absent consent stops before the audio read, the ledger and the provider", async () => {
     m.findActiveConsent.mockRejectedValue(new Error("CREATOR_CONSENT_REVOKED"));
     await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar())).rejects.toMatchObject({ code: "BAD_REQUEST", message: "CREATOR_CONSENT_REVOKED" });
     expect(m.resolveAvatarAudio).not.toHaveBeenCalled();
     expect(m.holds.size).toBe(0);
     expect(m.avatarSubmit).not.toHaveBeenCalled();
+  });
+
+  it("revocation between initial lookup and provider dispatch releases the spend hold and never invokes HeyGen", async () => {
+    m.admitAvatarGenerationDispatch.mockRejectedValueOnce(new Error("CREATOR_CONSENT_REVOKED"));
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar()))
+      .rejects.toMatchObject({ code: "BAD_REQUEST", message: "CREATOR_CONSENT_REVOKED" });
+    expect(m.findActiveConsent).toHaveBeenCalledTimes(1);
+    expect(m.admitAvatarGenerationDispatch).toHaveBeenCalledTimes(1);
+    expect(m.admitAvatarGenerationDispatch.mock.calls[0][0]).toMatchObject({ generationId: expect.any(Number), callbackId: expect.any(String) });
+    expect(m.avatarSubmit).not.toHaveBeenCalled();
+    expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "RELEASED" })]);
+    expect(m.windows.cost).toBe(0);
+  });
+
+  it("never retries an ambiguous provider submission after admission, retaining the spend hold", async () => {
+    const key = randomUUID();
+    m.avatarSubmit.mockRejectedValueOnce(new Error("provider reply lost"));
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key)))
+      .rejects.toMatchObject({ code: "BAD_GATEWAY" });
+    expect(m.admitAvatarGenerationDispatch).toHaveBeenCalledTimes(1);
+    expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
+    expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "HELD" })]);
+    expect(m.windows.cost).toBeGreaterThan(0);
+    // Same idempotency key cannot resubmit the ambiguous (possibly billed) job.
+    m.getGenerationExecutionContext.mockResolvedValue({
+      generation: { status: "RUNNING", provider: "heygen-avatar", outputAssetId: null },
+      providerJob: { status: "SUBMITTED" },
+    });
+    await caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key));
+    expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("a database failure during admission prevents HTTP and releases the spend hold", async () => {
+    const key = randomUUID();
+    m.admitAvatarGenerationDispatch.mockRejectedValueOnce(new Error("CREATOR_DATABASE_UNAVAILABLE"));
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key)))
+      .rejects.toMatchObject({ message: "CREATOR_DATABASE_UNAVAILABLE" });
+    expect(m.avatarSubmit).not.toHaveBeenCalled();
+    expect(m.recordProviderSubmission).not.toHaveBeenCalled();
+    expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "RELEASED" })]);
+    expect(m.windows.cost).toBe(0);
+    m.getGenerationExecutionContext.mockResolvedValue({
+      generation: { status: "FAILED", provider: "heygen-avatar", outputAssetId: null },
+      providerJob: null,
+    });
+    const replay = await caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key));
+    expect(replay).toMatchObject({ reused: true, state: "FAILED" });
+    expect(m.avatarSubmit).not.toHaveBeenCalled();
+  });
+
+  it("accepted provider job with failed local persistence keeps committed spend and prevents resubmission", async () => {
+    const key = randomUUID();
+    m.recordProviderSubmission.mockRejectedValueOnce(new Error("local database write lost"));
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key)))
+      .rejects.toMatchObject({ code: "BAD_GATEWAY", message: "CREATOR_PROVIDER_REQUEST_FAILED" });
+    expect(m.admitAvatarGenerationDispatch).toHaveBeenCalledTimes(1);
+    expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
+    expect(m.recordProviderSubmission).toHaveBeenCalledTimes(1);
+    expect([...m.holds.values()]).toEqual([expect.objectContaining({ state: "COMMITTED" })]);
+    expect(m.markGenerationSubmissionUnknown).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 7, creatorProjectId: 1, failureClass: "UNKNOWN",
+    }));
+    m.getGenerationExecutionContext.mockResolvedValue({
+      generation: { status: "SUBMISSION_UNKNOWN", provider: "heygen-avatar", outputAssetId: null },
+      providerJob: null,
+    });
+    const replay = await caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key));
+    expect(replay).toMatchObject({ reused: true, state: "SUBMISSION_UNKNOWN" });
+    expect(m.avatarSubmit).toHaveBeenCalledTimes(1);
+    expect(m.recordProviderSubmission).toHaveBeenCalledTimes(1);
   });
 
   it("unapproved audio stops before the ledger and the provider", async () => {
@@ -179,19 +265,19 @@ describe("avatar generation", () => {
     expect(m.avatarSubmit).not.toHaveBeenCalled();
   });
 
-  it("passes server-resolved audio, binds consent, defaults to provider test mode, and budgets the rounded-up audio seconds", async () => {
+  it("passes server-resolved audio, binds consent, requires paid mode, and budgets the rounded-up audio seconds", async () => {
     const key = randomUUID();
     await caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar(key));
     expect(m.findActiveConsent).toHaveBeenCalledWith({ workspaceId: 7, consentId: 3, purpose: "avatar_video", provider: "heygen-avatar", providerSubjectId: "avatar_ok_01" });
     const request = m.avatarSubmit.mock.calls[0][0];
-    expect(request).toMatchObject({ kind: "AVATAR_VIDEO", avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9, expectedSeconds: 12.2, callbackId: key, live: false });
+    expect(request).toMatchObject({ kind: "AVATAR_VIDEO", avatarId: "avatar_ok_01", consentId: 3, audioAssetId: 9, expectedSeconds: 12.2, callbackId: key, live: true });
     expect(Array.from(request.audio.data)).toEqual([1, 2, 3]);
     expect([...m.holds.values()][0].cost).toBeCloseTo(1.3, 6);
   });
 
   it("an unpriced avatar model is refused before any generation row", async () => {
     vi.stubEnv("CREATOR_MODEL_COSTS", JSON.stringify({ "bulbul:v3": { perThousandChars: 0.5 } }));
-    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar())).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: "CREATOR_MODEL_NOT_PRICED:heygen-v2" });
+    await expect(caller("presenter").creator.speechAvatar.submitAvatarVideo(avatar())).rejects.toMatchObject({ code: "PRECONDITION_FAILED", message: "CREATOR_MODEL_NOT_PRICED:heygen-v3" });
     expect(m.createQueuedGeneration).not.toHaveBeenCalled();
   });
 

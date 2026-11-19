@@ -1,0 +1,254 @@
+import { and, eq } from "drizzle-orm";
+import { creatorAssets } from "../../drizzle/schema";
+import { getDb } from "../db";
+import { storageGetSignedUrl, storageVerifySha256 } from "../storage";
+import { MysqlCreatorRenderClaims, type CreatorRenderClaimScope, type CreatorRenderQueuedResult } from "./renderClaims";
+import {
+  readCreatorRenderIntentFromDatabase,
+  reserveCreatorRenderIntentFromDatabase,
+  type CreatorDbRenderIntentInput,
+  type TrustedCreatorRendererConfig,
+} from "./renderIntentDb";
+import type { CreatorRenderIntentInput } from "./renderIntent";
+import type { RenderVisualItem } from "./renderPlan";
+import { CREATOR_CAPTION_FONT_FAMILY, runCreatorRenderWorker, type RenderWorkerDependencies } from "./renderWorker";
+
+/**
+ * Owner-gated synchronous candidate dispatch. The same single-use MySQL
+ * acquisition fence MUST be used by any future background worker. A reservation
+ * alone never authorizes FFmpeg, and a losing dispatcher cannot launch media.
+ * No automatic retry or publish approval.
+ */
+type TrustedMedia = { audioSourceUrl: string; visualItems: RenderVisualItem[] };
+type Worker = typeof runCreatorRenderWorker;
+type Claims = Pick<MysqlCreatorRenderClaims,
+  "acquireQueuedExport" | "heartbeat" | "finalizeVerifiedExport" | "markUnknown">;
+export type CreatorRenderDispatchDependencies = {
+  reserve?: typeof reserveCreatorRenderIntentFromDatabase;
+  read?: typeof readCreatorRenderIntentFromDatabase;
+  claims?: Claims;
+  resolveMedia?: (intent: CreatorRenderIntentInput) => Promise<TrustedMedia>;
+  render?: Worker;
+  workerDependencies?: RenderWorkerDependencies;
+  heartbeatIntervalMs?: number;
+  leaseSeconds?: number;
+  /** Process-supervisor shutdown; never interpreted as permission to retry. */
+  abortSignal?: AbortSignal;
+};
+
+function renderScope(intent: CreatorRenderIntentInput, fingerprint: string): CreatorRenderClaimScope {
+  return {
+    workspaceId: intent.workspaceId,
+    creatorProjectId: intent.creatorProjectId,
+    timelineId: intent.timelineId,
+    mode: intent.mode,
+    fingerprint,
+  };
+}
+
+/** Every URL is resolved from a scoped DB row, never from a caller-supplied key. */
+export async function resolveTrustedCreatorRenderMedia(intent: CreatorRenderIntentInput): Promise<TrustedMedia> {
+  const db = await getDb();
+  if (!db) throw new Error("CREATOR_RENDER_DISPATCH_DATABASE_UNAVAILABLE");
+  const resolveAsset = async (assetId: number, sha256: string, expectedType: string) => {
+    const [asset] = await db.select().from(creatorAssets).where(and(
+      eq(creatorAssets.id, assetId),
+      eq(creatorAssets.workspaceId, intent.workspaceId),
+      eq(creatorAssets.creatorProjectId, intent.creatorProjectId),
+    )).limit(1);
+    if (!asset || asset.assetType !== expectedType || asset.immutable !== 1 ||
+        asset.reviewDecision !== "APPROVED" ||
+        asset.checksumSha256.toLowerCase() !== sha256.toLowerCase() ||
+        typeof asset.byteSize !== "number" || !Number.isSafeInteger(asset.byteSize) || asset.byteSize <= 0) {
+      throw new Error("CREATOR_RENDER_DISPATCH_SOURCE_DRIFT");
+    }
+    await storageVerifySha256(asset.storageKey, asset.byteSize, sha256.toLowerCase());
+    return storageGetSignedUrl(asset.storageKey);
+  };
+  const audioSourceUrl = await resolveAsset(
+    intent.audioMaster.assetId, intent.audioMaster.checksumSha256, "AUDIO_MASTER",
+  );
+  const visualItems: RenderVisualItem[] = [];
+  for (const item of intent.visuals) {
+    visualItems.push({
+      assetId: item.assetId,
+      shotId: item.shotId,
+      assetType: item.assetType,
+      sourceUrl: await resolveAsset(item.assetId, item.checksumSha256, item.assetType),
+      startMs: item.startMs,
+      endMs: item.endMs,
+      track: item.track,
+      sortOrder: item.sortOrder,
+      approved: true,
+    });
+  }
+  return { audioSourceUrl, visualItems };
+}
+
+/** A queued claim ID is sufficient to attempt atomic acquisition; no reservation token is needed. */
+export type CreatorQueuedRenderReservation = Pick<
+  Extract<CreatorRenderQueuedResult, { created: true }>,
+  "claimId" | "exportId" | "fingerprint"
+>;
+
+export async function dispatchReservedCreatorRender(
+  input: CreatorDbRenderIntentInput,
+  trustedConfig: TrustedCreatorRendererConfig,
+  deps: CreatorRenderDispatchDependencies = {},
+) {
+  if (deps.abortSignal?.aborted) throw new Error("CREATOR_RENDER_DISPATCH_SHUTDOWN_REQUESTED");
+  if (trustedConfig.fontFamily !== CREATOR_CAPTION_FONT_FAMILY) {
+    throw new Error("CREATOR_RENDER_DISPATCH_FONT_IDENTITY_INVALID");
+  }
+  const reserve = deps.reserve ?? reserveCreatorRenderIntentFromDatabase;
+  const reservation = await reserve(input, trustedConfig, getDb, deps.leaseSeconds ?? 1800);
+  if (!reservation.created) return { ...reservation, dispatched: false as const };
+  return dispatchQueuedCreatorRender(input, trustedConfig, reservation, deps);
+}
+
+/**
+ * Shared execution path for the synchronous acceptance route and a bounded
+ * background worker. The database acquisition fence, not the caller, grants
+ * permission to run FFmpeg. A stale or cancelled queued claim cannot run.
+ */
+export async function dispatchQueuedCreatorRender(
+  input: CreatorDbRenderIntentInput,
+  trustedConfig: TrustedCreatorRendererConfig,
+  reservation: CreatorQueuedRenderReservation,
+  deps: CreatorRenderDispatchDependencies = {},
+) {
+  if (trustedConfig.fontFamily !== CREATOR_CAPTION_FONT_FAMILY) {
+    throw new Error("CREATOR_RENDER_DISPATCH_FONT_IDENTITY_INVALID");
+  }
+  if (!Number.isSafeInteger(reservation.claimId) || reservation.claimId <= 0 ||
+      !Number.isSafeInteger(reservation.exportId) || reservation.exportId <= 0 ||
+      !/^[a-f0-9]{64}$/.test(reservation.fingerprint)) {
+    throw new Error("CREATOR_RENDER_DISPATCH_QUEUED_IDENTITY_INVALID");
+  }
+  if (deps.abortSignal?.aborted) throw new Error("CREATOR_RENDER_DISPATCH_SHUTDOWN_REQUESTED");
+  const leaseSeconds = deps.leaseSeconds ?? 1800;
+  const intervalMs = deps.heartbeatIntervalMs ?? 30_000;
+  if (!Number.isSafeInteger(leaseSeconds) || leaseSeconds < 1 || leaseSeconds > 1800 ||
+      !Number.isSafeInteger(intervalMs) || intervalMs < 100 || intervalMs >= leaseSeconds * 1000) {
+    throw new Error("CREATOR_RENDER_DISPATCH_HEARTBEAT_CONFIG_INVALID");
+  }
+  const read = deps.read ?? readCreatorRenderIntentFromDatabase;
+  const claims = deps.claims ?? new MysqlCreatorRenderClaims();
+  // A newly reserved QUEUED export is NOT permission to run FFmpeg. Rotate
+  // the reservation token and atomically claim the export first. This is the
+  // exact same acquisition primitive required of any later async worker.
+  const acquired = await claims.acquireQueuedExport({
+    workspaceId: input.workspaceId,
+    creatorProjectId: input.creatorProjectId,
+    timelineId: input.timelineId,
+    claimId: reservation.claimId,
+  }, leaseSeconds);
+  if (!acquired) {
+    // Another worker may own the lease, or the reservation may have expired.
+    // We do not possess its worker token and must not quarantine or retry it.
+    throw new Error("CREATOR_RENDER_DISPATCH_WORKER_NOT_ACQUIRED");
+  }
+  const expectedScope: CreatorRenderClaimScope = {
+    workspaceId: input.workspaceId,
+    creatorProjectId: input.creatorProjectId,
+    timelineId: input.timelineId,
+    mode: input.verticalDerivativeOf === undefined ? "MASTER_CANDIDATE" : "VERTICAL_DERIVATIVE",
+    fingerprint: reservation.fingerprint,
+  };
+  if (acquired.claimId !== reservation.claimId ||
+      acquired.exportId !== reservation.exportId ||
+      JSON.stringify(acquired.scope) !== JSON.stringify(expectedScope)) {
+    // Fail closed. Never use a token whose DB claim/export/scope differs
+    // from the source-derived reservation.
+    await claims.markUnknown(acquired.scope, acquired.leaseToken);
+    throw new Error("CREATOR_RENDER_DISPATCH_ACQUISITION_SCOPE_DRIFT");
+  }
+  const scope = acquired.scope;
+  const workerLeaseToken = acquired.leaseToken;
+  let lostLease = false;
+  const renderAbort = new AbortController();
+  const onShutdown = () => renderAbort.abort();
+  deps.abortSignal?.addEventListener("abort", onShutdown, { once: true });
+  if (deps.abortSignal?.aborted) onShutdown();
+  let heartbeatInFlight: Promise<void> | undefined;
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  const heartbeat = async () => {
+    if (heartbeatInFlight) return heartbeatInFlight;
+    heartbeatInFlight = (async () => {
+      try {
+        if (!await claims.heartbeat(scope, workerLeaseToken, leaseSeconds)) {
+          lostLease = true;
+          renderAbort.abort();
+        }
+      } catch {
+        lostLease = true;
+        renderAbort.abort();
+      }
+    })();
+    try { await heartbeatInFlight; }
+    finally { heartbeatInFlight = undefined; }
+  };
+  const stopHeartbeat = async () => {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = undefined;
+    if (heartbeatInFlight) await heartbeatInFlight;
+  };
+  const assertLease = () => {
+    if (lostLease) throw new Error("CREATOR_RENDER_DISPATCH_LEASE_LOST");
+    if (renderAbort.signal.aborted) throw new Error("CREATOR_RENDER_DISPATCH_SHUTDOWN_REQUESTED");
+  };
+
+  try {
+    const snapshot = await read(input, trustedConfig);
+    if (snapshot.fingerprint !== reservation.fingerprint ||
+        JSON.stringify(renderScope(snapshot.intent, snapshot.fingerprint)) !== JSON.stringify(scope)) {
+      throw new Error("CREATOR_RENDER_DISPATCH_SOURCE_CHANGED");
+    }
+    const media = await (deps.resolveMedia ?? resolveTrustedCreatorRenderMedia)(snapshot.intent);
+    await heartbeat();
+    assertLease();
+    heartbeatTimer = setInterval(() => { void heartbeat(); }, intervalMs);
+    heartbeatTimer.unref?.();
+
+    const intent = snapshot.intent;
+    const rendered = await (deps.render ?? runCreatorRenderWorker)({
+      workspaceId: intent.workspaceId,
+      creatorProjectId: intent.creatorProjectId,
+      timelineId: intent.timelineId,
+      exportId: reservation.exportId,
+      width: intent.output.width,
+      height: intent.output.height,
+      fps: intent.output.fps,
+      fit: intent.output.fit,
+      audioDurationMs: intent.audioMaster.durationMs,
+      audioSourceUrl: media.audioSourceUrl,
+      visualItems: media.visualItems,
+      captions: [...intent.captions],
+    }, { ...deps.workerDependencies, abortSignal: renderAbort.signal });
+
+    await stopHeartbeat();
+    assertLease();
+    // Recheck before finalization; finalization must additionally enforce the
+    // source row lock to eliminate the remaining post-check write race.
+    const latest = await read(input, trustedConfig);
+    if (latest.fingerprint !== reservation.fingerprint) {
+      throw new Error("CREATOR_RENDER_DISPATCH_SOURCE_CHANGED");
+    }
+    await heartbeat();
+    assertLease();
+    const finalized = await claims.finalizeVerifiedExport(
+      scope, workerLeaseToken, acquired.exportId, rendered,
+      input, trustedConfig, deps.workerDependencies?.verifyArtifact,
+    );
+    return { ...finalized, claimId: reservation.claimId, dispatched: true as const };
+  } catch (error) {
+    // An uploaded artifact or timed-out process is ambiguous. Never requeue.
+    try { await claims.markUnknown(scope, workerLeaseToken); }
+    catch { throw new Error("CREATOR_RENDER_DISPATCH_QUARANTINE_FAILED", { cause: error }); }
+    throw error;
+  } finally {
+    deps.abortSignal?.removeEventListener("abort", onShutdown);
+    renderAbort.abort();
+    await stopHeartbeat();
+  }
+}

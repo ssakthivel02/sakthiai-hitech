@@ -1,4 +1,5 @@
 import { markCreatorArtifactRetryable, persistCreatorGenerationArtifact } from "./artifactPersistence";
+import { isCreatorArtifactJobOwnershipError } from "./artifactJobOwnership";
 import { requireCreatorRemoteCancel, resolveCreatorRetryMode } from "./jobControl";
 import {
   beginProviderSubmission,
@@ -107,6 +108,8 @@ export async function submitCreatorGeneration(input: {
   idempotencyKey: string;
   request: CreatorMediaRequest;
   spend: CreatorSpendHook;
+  /** A fresh authorization check after asynchronous reservations, immediately before external dispatch. */
+  beforeProviderSubmit?: (generationId: number) => Promise<void>;
 }) {
   const provider = selectCreatorProvider(input.request);
   const providerStatus = provider.status();
@@ -165,6 +168,24 @@ export async function submitCreatorGeneration(input: {
   } catch (error) {
     await input.spend.release();
     throw error;
+  }
+
+  // A consent denial occurs before any provider request; it cannot be an ambiguous/billable submission.
+  // Handle it separately from provider failures so its spend hold is always released.
+  if (input.beforeProviderSubmit) {
+    try {
+      await input.beforeProviderSubmit(generationId);
+    } catch (error) {
+      await input.spend.release();
+      await markGenerationFailed({
+        workspaceId: input.workspaceId,
+        creatorProjectId: input.creatorProjectId,
+        generationId,
+        failureClass: "INVALID_REQUEST",
+        errorMessage: errorMessage(error),
+      }).catch(() => undefined);
+      throw error;
+    }
   }
 
   let submission: Awaited<ReturnType<typeof provider.submit>>;
@@ -305,6 +326,7 @@ export async function pollCreatorGeneration(input: { workspaceId: number; genera
         productionApproved: false,
       };
     } catch (artifactError) {
+      if (isCreatorArtifactJobOwnershipError(artifactError)) throw artifactError;
       await markCreatorArtifactRetryable({
         workspaceId: input.workspaceId,
         generationId: generation.id,
@@ -322,6 +344,7 @@ export async function pollCreatorGeneration(input: { workspaceId: number; genera
       };
     }
   } catch (error) {
+    if (isCreatorArtifactJobOwnershipError(error)) throw error;
     const failureClass = provider.classifyFailure(error);
     if (providerJob.status === "SUCCEEDED") {
       await markCreatorArtifactRetryable({ workspaceId: input.workspaceId, generationId: generation.id, error }).catch(() => undefined);
