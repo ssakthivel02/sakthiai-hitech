@@ -13,13 +13,20 @@ export async function runCreatorFfprobe(path: string): Promise<string> {
   try {
     const { stdout } = await execFileAsync(process.env.FFPROBE_PATH?.trim() || "ffprobe", [
       "-v", "error", "-show_entries",
-      "format=format_name,duration:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate",
+      "format=format_name,duration:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,nb_frames,duration",
       "-of", "json", path,
     ], { timeout: PROBE_TIMEOUT_MS, maxBuffer: PROBE_MAX_BYTES, windowsHide: true });
     return stdout;
   } catch {
     throw new Error("CREATOR_RENDER_FFPROBE_FAILED");
   }
+}
+
+/** ffprobe prints "N/A" (or omits the field) when a stream value is unknown; only finite, non-negative numbers are evidence. */
+function numericProbeValue(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : NaN;
+  if (typeof value !== "string" || !/^\d+(?:\.\d+)?$/.test(value.trim())) return NaN;
+  return Number(value);
 }
 
 function rationalFps(value: unknown): number {
@@ -47,7 +54,7 @@ export async function probeCreatorRenderedOutput(
   if (!parsed || !Array.isArray(parsed.streams)) throw new Error("CREATOR_RENDER_FFPROBE_STREAMS_INVALID");
   const streams = parsed.streams as Array<{
     codec_type?: unknown; codec_name?: unknown; width?: unknown; height?: unknown;
-    avg_frame_rate?: unknown; r_frame_rate?: unknown;
+    avg_frame_rate?: unknown; r_frame_rate?: unknown; nb_frames?: unknown; duration?: unknown;
   }>;
   const containerTokens = typeof parsed.format?.format_name === "string"
     ? parsed.format.format_name.toLowerCase().split(",").map(token => token.trim())
@@ -86,6 +93,16 @@ export async function probeCreatorRenderedOutput(
   if (Math.abs(actual.fps - target.fps) > 0.01 || Math.abs(fpsNominal - target.fps) > 0.01) failures.push("fps");
   if (Math.abs(actual.durationSeconds - target.durationSeconds) > 0.1) failures.push("duration");
   if (!actual.hasAudio) failures.push("audio");
+  // Container duration is the longest stream, so full-length audio can hide a truncated video stream.
+  // Check the video stream itself: exact frame count when ffprobe reports it, else stream duration. Unknown values are not evidence.
+  const videoFrames = numericProbeValue(video.nb_frames);
+  const videoDuration = numericProbeValue(video.duration);
+  if (Number.isSafeInteger(videoFrames)) {
+    const expectedFrames = Math.round((Math.round(target.durationSeconds * 1000) * target.fps) / 1000);
+    if (videoFrames !== expectedFrames) failures.push("video_frames");
+  } else if (Number.isFinite(videoDuration) && target.durationSeconds - videoDuration > 1 / target.fps + 0.001) {
+    failures.push("video_duration");
+  }
   if (failures.length) throw new Error(`CREATOR_RENDER_OUTPUT_NONCONFORMANT:${failures.join(",")}`);
   return actual;
 }

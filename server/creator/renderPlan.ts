@@ -56,6 +56,15 @@ export type DeterministicRenderPlan = {
   durationMs: number;
   visualAssetIds: number[];
   frameCount: number;
+  /** Visual segments on the global frame grid (frame indices, end exclusive). Zero-frame segments are listed but not rendered. */
+  frameSegments: RenderFrameSegment[];
+};
+
+export type RenderFrameSegment = {
+  assetId: number;
+  startFrame: number;
+  endFrame: number;
+  frameCount: number;
 };
 
 function assertPositiveInt(value: number, code: string) {
@@ -130,6 +139,28 @@ function escapeSubtitlePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
 
+/** Single rounding rule for every boundary: one global frame grid, never per-segment decimal-second rounding. */
+export function frameAtMs(ms: number, fps: number): number {
+  return Math.round((ms * fps) / 1000);
+}
+
+function planFrameSegments(visuals: RenderVisualItem[], fps: number, durationMs: number): { segments: RenderFrameSegment[]; totalFrames: number } {
+  const totalFrames = frameAtMs(durationMs, fps);
+  if (totalFrames < 1) throw new Error("CREATOR_RENDER_DURATION_TOO_SHORT_FOR_FPS");
+  const segments = visuals.map((item) => {
+    const startFrame = frameAtMs(item.startMs, fps);
+    const endFrame = frameAtMs(item.endMs, fps);
+    return { assetId: item.assetId, startFrame, endFrame, frameCount: endFrame - startFrame };
+  });
+  // Defensive: validateVisualItems already guarantees ms contiguity, so a failure here means the grid logic is broken.
+  const tiled = segments[0].startFrame === 0 &&
+    segments.every((seg, index) => seg.frameCount >= 0 && (index === 0 || seg.startFrame === segments[index - 1].endFrame)) &&
+    segments[segments.length - 1].endFrame === totalFrames &&
+    segments.reduce((sum, seg) => sum + seg.frameCount, 0) === totalFrames;
+  if (!tiled) throw new Error("CREATOR_RENDER_FRAME_GRID_INVALID");
+  return { segments, totalFrames };
+}
+
 export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput): DeterministicRenderPlan {
   assertPositiveInt(input.width, "CREATOR_RENDER_WIDTH_INVALID");
   assertPositiveInt(input.height, "CREATOR_RENDER_HEIGHT_INVALID");
@@ -150,23 +181,30 @@ export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput
   const args: string[] = ["-hide_banner", "-nostdin", "-y"];
   const filters: string[] = [];
 
-  visuals.forEach((item, index) => {
-    const durationSeconds = ((item.endMs - item.startMs) / 1000).toFixed(3);
-    if (item.assetType === "IMAGE") args.push("-loop", "1", "-t", durationSeconds, "-i", item.sourceUrl);
-    else args.push("-t", durationSeconds, "-i", item.sourceUrl);
+  const { segments: frameSegments, totalFrames } = planFrameSegments(visuals, input.fps, input.audioDurationMs);
+  // A segment shorter than one frame occupies no frame on the grid, so it contributes no FFmpeg input.
+  const rendered = visuals.map((item, index) => ({ item, frames: frameSegments[index].frameCount })).filter(entry => entry.frames > 0);
+
+  rendered.forEach(({ item, frames }, index) => {
+    // Generous input window; the exact length is enforced by trim=end_frame on the global frame grid.
+    const inputSeconds = ((frames + 2) / input.fps).toFixed(6);
+    if (item.assetType === "IMAGE") args.push("-loop", "1", "-t", inputSeconds, "-i", item.sourceUrl);
+    else args.push("-t", inputSeconds, "-i", item.sourceUrl);
     const frame = fit === "cover"
       ? `scale=${input.width}:${input.height}:force_original_aspect_ratio=increase,crop=${input.width}:${input.height}`
       : `scale=${input.width}:${input.height}:force_original_aspect_ratio=decrease,pad=${input.width}:${input.height}:(ow-iw)/2:(oh-ih)/2`;
     filters.push(
       `[${index}:v]${frame},setsar=1,fps=${input.fps},` +
-      `trim=duration=${durationSeconds},setpts=PTS-STARTPTS[v${index}]`,
+      `trim=end_frame=${frames},setpts=PTS-STARTPTS[v${index}]`,
     );
   });
 
-  const audioIndex = visuals.length;
+  const audioIndex = rendered.length;
   args.push("-i", input.audioSourceUrl);
-  const concatInputs = visuals.map((_, index) => `[v${index}]`).join("");
-  filters.push(`${concatInputs}concat=n=${visuals.length}:v=1:a=0[vc]`);
+  const concatInputs = rendered.map((_, index) => `[v${index}]`).join("");
+  // concat infers each segment's length from frame timing, which collides timestamps for consecutive 1-frame segments.
+  // Re-numbering on the global grid makes every frame's PTS exactly index/fps, independent of that inference.
+  filters.push(`${concatInputs}concat=n=${rendered.length}:v=1:a=0,setpts=N/(${input.fps}*TB)[vc]`);
   filters.push(`[vc]subtitles='${escapeSubtitlePath(input.subtitlePath)}':charenc=UTF-8${subtitleStyle}[vout]`);
 
   args.push(
@@ -194,6 +232,7 @@ export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput
     srt,
     durationMs: input.audioDurationMs,
     visualAssetIds: visuals.map((item) => item.assetId),
-    frameCount: Math.round((input.audioDurationMs / 1000) * input.fps),
+    frameCount: totalFrames,
+    frameSegments,
   };
 }
