@@ -313,6 +313,6 @@ describe.skipIf(!canProbe)("Creator real FFmpeg frame-count acceptance (global f
     const { plan, decoded, probeError } = await renderGrid([0, 1337, 3000], 24, { 1: 1 });
     expect(plan.frameCount).toBe(72);
     expect(decoded).toBeLessThan(plan.frameCount);
-    expect(probeError).toBe("CREATOR_RENDER_OUTPUT_NONCONFORMANT:video_frames");
+    expect(probeError).toBe("CREATOR_RENDER_OUTPUT_NONCONFORMANT:frames,video_duration");
   }, 120_000);
 });
