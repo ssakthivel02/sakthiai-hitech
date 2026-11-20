@@ -114,11 +114,14 @@ export class Broker {
     if (out.kind !== "ok") return out;
     const fail = (reason: string): BackendOutcome => { this.violations.push({ tool: req.tool, target: req.target, reason }); return { kind: "error", virtual_ms: ERROR_VMS, code: CONTRACT_VIOLATION }; };
     if (!Array.isArray(out.obs) || typeof out.virtual_ms !== "number" || !(out.virtual_ms >= 0)) return fail("malformed-outcome");
+    const observationIds = new Set(this.results.flatMap((r) => r.records.map((x) => x.obs_id)));
     for (const ob of out.obs) {
       if (!ob || typeof ob !== "object") return fail("malformed-observation");
       if (ob.tenant !== this.c.tenant) return fail("foreign-tenant-observation");
       if (ob.tool !== req.tool || ob.target !== req.target) return fail("observation-for-other-tool-or-target");
       if (typeof ob.obs_id !== "string" || typeof ob.source_system !== "string" || !Array.isArray(ob.records)) return fail("malformed-observation");
+      if (observationIds.has(ob.obs_id)) return fail("reused-observation-id");
+      observationIds.add(ob.obs_id);
       for (const r of ob.records) if (!r || typeof r.text !== "string" || typeof r.ts !== "string" || typeof r.level !== "string") return fail("malformed-record");
     }
     return out;
@@ -230,6 +233,7 @@ export class Broker {
    */
   restore(results: ToolResult[]): void {
     if (this.results.length > 0 || this.seq > 0) throw new RestoreError("BROKER_NOT_EMPTY");
+    const observationIds = new Set<string>();
     const stats = freshStats(); const seen = new Map<string, ToolResult>(); const evidence = new Map<string, EvidenceItem>();
     const maxAttempts = this.c.limits.max_retries_per_call + 1;
     results.forEach((r, i) => {
@@ -267,13 +271,20 @@ export class Broker {
       else if (r.status === "OK" || r.status === "NO_DATA") {
         if ((r.status === "OK") !== (r.records.length > 0)) throw new RestoreError("STATUS_RECORDS", at);
         const qids = new Set(r.quarantined.map((q) => q.rid));
+        const recordIds = new Set<string>();
         for (const rec of r.records) {
           if (typeof rec.rid !== "string" || typeof rec.text !== "string" || typeof rec.obs_id !== "string" || !rec.rid.startsWith(rec.obs_id + "#")) throw new RestoreError("RECORD_SHAPE", `${at} ${String(rec.rid)}`);
+          if (recordIds.has(rec.rid)) throw new RestoreError("DUPLICATE_RECORD_ID", at);
+          recordIds.add(rec.rid);
           if (rec.quarantined) { if (!qids.has(rec.rid) || !rec.text.startsWith("[QUARANTINED:")) throw new RestoreError("QUARANTINE_MISMATCH", `${at} ${rec.rid}`); }
           else if (qids.has(rec.rid)) throw new RestoreError("QUARANTINE_MISMATCH", `${at} ${rec.rid}`);
           else if (rec.text.length > MAX_LINE + 12) throw new RestoreError("RECORD_TOO_LONG", `${at} ${rec.rid}`);
           else if (injectionHit(rec.text)) throw new RestoreError("UNSANITISED_RECORD", `${at} ${rec.rid}`); // poisoned checkpoint: instruction-like text presented as clean evidence
           evidence.set(rec.rid, { ...rec, tool: req.tool, target: req.target });
+        }
+        for (const id of new Set(r.records.map((rec) => rec.obs_id))) {
+          if (observationIds.has(id)) throw new RestoreError("REUSED_OBSERVATION_ID", at);
+          observationIds.add(id);
         }
         if (r.records.length > MAX_RECORDS) throw new RestoreError("TOO_MANY_RECORDS", at);
         stats.quarantined_records += r.quarantined.length;

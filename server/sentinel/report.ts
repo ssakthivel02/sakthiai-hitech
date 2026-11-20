@@ -20,7 +20,7 @@ export interface InvestigationReport {
   /** API-level lifecycle audit (who created / cancelled / exported). Execution itself is evidenced by the hash-chained trace and the connector audit log. */
   audit: Array<{ action: string; actorUserId: number; detail: string | null; createdAt: string }>;
   nextSafeSteps: string[];
-  verification: null | { passed: boolean; note: string; rejectedChecks: string[]; ledgerWarnings: string[] };
+  verification: null | { passed: boolean; semanticValidation: "NOT_PERFORMED"; sourceAuthenticity: "NOT_ATTESTED"; note: string; rejectedChecks: string[]; ledgerWarnings: string[] };
   integrity: { chainOk: boolean; complete: boolean; head: string | null; eventCount: number };
   disclosures: string[];
 }
@@ -28,8 +28,9 @@ export interface InvestigationReport {
 export const REPORT_DISCLOSURES = [
   "Sentinel is read-only. It has no write capability and executed no remediation; any remediation shown is a proposal that requires human approval.",
   "The conclusion is an AI-generated hypothesis supported by the cited records. 'Verified' means structural evidence checks passed, not that the root cause is proven.",
+  "Distinct tool names and observation IDs do not attest independent underlying sources; structural checks do not establish causal correctness or timestamp authenticity.",
   "Only the cited records support the conclusion; other collected records are listed in the tool activity but are not asserted as causes.",
-  "Evidence text is untrusted output from diagnostic systems and is shown as data; instruction-like text is quarantined before any model sees it.",
+  "Evidence text is untrusted output from diagnostic systems and is shown as data; recognized instruction-like patterns are quarantined; all tool content remains untrusted.",
 ];
 
 export const RUNTIME_NOTE = "Model calls go through the SakthiAI Provider Gateway. Provider/model identity is recorded only when the gateway reported it for the call; otherwise it is UNVERIFIED. No credentials, endpoints or prompts are recorded; prompt and response hashes are in the trace.";
@@ -70,7 +71,7 @@ export function buildReport(v: InvestigationView, now: Date = new Date(), audit:
     remediation: v.final ? { proposal: v.final.remediation.text, status: v.final.remediation.status, requiresApproval: true, executed: false, approval: "NONE_RECORDED" as const } : null,
     audit: audit.slice(0, 50).map((a) => ({ action: a.action, actorUserId: a.actorUserId, detail: a.detail, createdAt: a.createdAt })),
     nextSafeSteps: v.final?.nextSafeSteps ?? [],
-    verification: v.verification ? { passed: v.verification.passed, note: v.verification.note, rejectedChecks: v.verification.rejectedChecks, ledgerWarnings: v.verification.ledgerWarnings } : null,
+    verification: v.verification ? { passed: v.verification.passed, semanticValidation: "NOT_PERFORMED", sourceAuthenticity: "NOT_ATTESTED", note: v.verification.note, rejectedChecks: v.verification.rejectedChecks, ledgerWarnings: v.verification.ledgerWarnings } : null,
     integrity: { chainOk: v.integrity.chainOk, complete: v.integrity.complete, head: v.integrity.head, eventCount: v.integrity.eventCount },
     disclosures: REPORT_DISCLOSURES,
   };

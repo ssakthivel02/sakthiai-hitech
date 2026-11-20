@@ -5,7 +5,7 @@ import { Broker } from "./broker";
 import type { BrokerStats } from "./broker";
 import { TraceBuilder, verifyTrace } from "./trace";
 import type { TraceEvent } from "./trace";
-import { verifyFinal } from "./verifier";
+import { verifyFinal, VERIFICATION_POLICY_VERSION, DEFAULT_EVIDENCE_WINDOW } from "./verifier";
 import type { VerifyOptions, VerifyResult } from "./verifier";
 import { hashOf } from "./canon";
 import { CheckpointError } from "./checkpoint";
@@ -65,7 +65,7 @@ export class Investigation {
 
   start(): void {
     this.trace.add("run_start", 0, { case_id: this.c.case_id, policy_id: this.meta.policy_id, policy_kind: this.meta.policy_kind, limits: this.c.limits, objective: this.c.objective,
-      allowed_tools: this.c.allowed_tools, writes_enabled: false, note: this.meta.note ?? (this.meta.policy_kind === "deterministic_stub" ? "Rule-based stub policy: decisions are not LLM reasoning." : "LLM policy") });
+      allowed_tools: this.c.allowed_tools, writes_enabled: false, verification_policy: VERIFICATION_POLICY_VERSION, note: this.meta.note ?? (this.meta.policy_kind === "deterministic_stub" ? "Rule-based stub policy: decisions are not LLM reasoning." : "LLM policy") });
   }
 
   private end(final: FinalAnswer, stop: string): void { this.final = final; this.stop = stop; }
@@ -157,7 +157,11 @@ export class Investigation {
       }
     }
     const final = this.final!;
-    const v = verifyFinal(final, c, b.evidence, this.meta.taxonomy, this.meta.verify ?? { requireSignatureSupport: true });
+    const verify = this.meta.verify ?? { requireSignatureSupport: true };
+    const window = verify.evidenceWindow ?? DEFAULT_EVIDENCE_WINDOW;
+    const evidenceWindow = { ...window, asOfMs: "asOfMs" in window && window.asOfMs !== undefined ? window.asOfMs : Date.now() };
+    trace.add("verification_context", this.vt, { policy: VERIFICATION_POLICY_VERSION, evidence_window: evidenceWindow, alert_fired_at: c.alert.fired_at });
+    const v = verifyFinal(final, c, b.evidence, this.meta.taxonomy, { ...verify, evidenceWindow });
     let out: FinalAnswer = v.sanitized;
     if (!v.ok) {
       trace.add("verifier_reject", this.vt, { fatal: v.fatal, rejected_outcome: final.outcome, rejected_label: final.label });

@@ -57,7 +57,7 @@ function harness(opts: { enabled?: boolean; worker?: boolean; members?: Record<n
 }
 
 const base = {
-  workspaceId: WS, title: "Write failures on orders-db", severity: "high" as const, service: "orders-db", description: "Writes fail intermittently since 09:50", hosts: ["db-1"],
+  workspaceId: WS, firedAt: "2026-10-01T10:00:00Z", title: "Write failures on orders-db", severity: "high" as const, service: "orders-db", description: "Writes fail intermittently since 09:50", hosts: ["db-1"],
   bindings: [
     { tool: "logs.search" as const, connectorId: CONNECTOR, mcpTool: "search_logs", targetParam: "service", queryParam: "q" },
     { tool: "metrics.query" as const, connectorId: CONNECTOR, mcpTool: "query_metrics", targetParam: "host" },
@@ -331,6 +331,7 @@ describe("sentinel report v2 and model readiness", () => {
     expect(js.timestamps).toMatchObject({ createdAt: expect.any(String), finishedAt: expect.any(String) });
     expect(js.runtime).toMatchObject({ providerIdentityCaptured: false, modelCalls: expect.any(Number) });
     expect(js.runtime.note).toMatch(/UNVERIFIED/); expect(js.runtime.modelIdentity.status).toBe("UNVERIFIED");
+    expect(js.verification).toMatchObject({ semanticValidation: "NOT_PERFORMED", sourceAuthenticity: "NOT_ATTESTED" });
     expect(js.hypothesisHistory.length).toBeGreaterThanOrEqual(3);
     expect(js.citations.every((c: { source: string | null }) => c.source === "fake")).toBe(true);
     expect(js.toolActivity.map((t: { source: string }) => t.source)).toEqual(["fake", "fake"]);
