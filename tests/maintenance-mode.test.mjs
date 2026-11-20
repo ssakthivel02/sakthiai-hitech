@@ -25,10 +25,37 @@ async function start(mode) {
   if (mode !== undefined) env.SAKTHIAI_MAINTENANCE_MODE = mode;
   const child = spawn("node", ["dist/index.js"], { cwd: workDir, env, stdio: ["ignore", "pipe", "pipe"] });
   children.push(child);
-  let log = ""; child.stdout.on("data", d => { log += d; }); child.stderr.on("data", d => { log += d; });
+  let log = "";
+  let earlyExit;
+  let spawnFailure;
+  child.stdout.on("data", d => { log += d; }); child.stderr.on("data", d => { log += d; });
+  child.once("exit", (code, signal) => { earlyExit = { code, signal }; });
+  child.once("error", error => { spawnFailure = error; });
   const base = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 100; i++) { try { if ((await fetch(`${base}/healthz`)).status === 200) break; } catch { /* starting */ } await new Promise(r => setTimeout(r, 100)); }
-  return { child, base, log: () => log };
+
+  // CI load can delay ESM startup. Never return an unready child.
+  // Keep the bounded startup budget below the individual 30s test cap.
+  const deadline = Date.now() + 20_000;
+  let lastFailure = "healthz not yet reachable";
+  while (Date.now() < deadline) {
+    if (earlyExit || spawnFailure) break;
+    try {
+      const health = await fetch(`${base}/healthz`, { signal: AbortSignal.timeout(1000) });
+      if (health.status === 200) return { child, base, log: () => log };
+      lastFailure = `healthz HTTP ${health.status}`;
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : "healthz fetch failed";
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+
+  // A failed child startup is a test failure, never successful setup.
+  // Bounded child diagnostics distinguish a crash from startup contention.
+  const failure = `MAINTENANCE_TEST_SERVER_NOT_READY: ${lastFailure}; ` +
+    `exit=${JSON.stringify(earlyExit ?? null)}; spawnError=${spawnFailure?.message ?? "none"}; ` +
+    `childLogTail=${JSON.stringify(log.slice(-1500))}`;
+  if (child.exitCode === null && !child.killed) child.kill("SIGKILL");
+  throw new Error(failure);
 }
 
 beforeAll(() => { try { fs.symlinkSync(path.join(root, "node_modules"), path.join(workDir, "node_modules"), "dir"); } catch { /* exists */ } });
