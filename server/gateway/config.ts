@@ -129,6 +129,7 @@ export function loadGatewayConfig(env: EnvLike): GatewayConfig {
         billingMode: "local_compute",
         baseUrl: localUrl,
         model: env.LOCAL_LLM_MODEL!.trim(),
+        ...(env.LOCAL_LLM_JSON_MODE?.trim().toLowerCase() === "true" ? { jsonMode: true } : {}),
         apiKey: env.LOCAL_LLM_API_KEY?.trim() || undefined,
         timeoutMs,
         // A name (not an IP literal) must resolve only to loopback/private addresses at request time; redirects are never followed for the local slot.

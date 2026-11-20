@@ -99,6 +99,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
             baseUrl: binding.baseUrl,
             endpointProfile: binding.endpointProfile,
             apiKey: binding.apiKey,
+            jsonMode: binding.jsonMode,
             timeoutMs: binding.timeoutMs,
             // The local slot dials only through the pinned fetch: the address policy runs inside the socket's own lookup, so a name cannot pass a check and then
             // connect somewhere else (DNS rebinding), and link-local / cloud-metadata addresses are refused as a terminal bad_request. The early guard stays as a cheap pre-check.
@@ -211,10 +212,10 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
   }
 
   /** The policy-permitted candidates for a request, in routing order. Shared by invoke() and readiness(). */
-  function routedProfiles(request: Pick<GatewayRequest, "intents" | "requiredCapabilities" | "optionalCapabilities">): ModelProfile[] {
+  function routedProfiles(request: Pick<GatewayRequest, "intents" | "requiredCapabilities" | "optionalCapabilities" | "responseFormat">): ModelProfile[] {
     const routing: RoutingRequest = {
       intents: request.intents ?? ["conversation"],
-      requiredCapabilities: request.requiredCapabilities ?? ["chat"],
+      requiredCapabilities: request.responseFormat ? [...new Set([...(request.requiredCapabilities ?? ["chat" as const]), "structured_output" as const])] : request.requiredCapabilities ?? ["chat"],
       optionalCapabilities: request.optionalCapabilities ?? ["multilingual"],
       allowExternalProviders: config.policy.allowExternal,
       allowMeteredBilling: config.policy.allowMetered,
@@ -280,6 +281,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     const failed = (reason: Extract<GatewayOutcome, { status: "failed" }>["reason"]): GatewayOutcome =>
       finish({ status: "failed", reason, attempts, latencyMs: now() - startedAt });
 
+    if (request.responseFormat !== undefined && request.responseFormat !== "json_object") return failed("bad_request");
     const ordered = routedProfiles(request);
     if (!ordered.length) return failed("no_eligible_provider");
 
@@ -292,6 +294,11 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
       const binding = bindingByProfile.get(profile.id);
       if (!binding || tried.has(binding.providerId)) continue; // never revisit a provider: no fallback loops
       tried.add(binding.providerId);
+      if (request.responseFormat && !binding.jsonMode) {
+        attempts.push({ providerId: binding.providerId, outcome: "skipped:policy:json_mode_not_enabled" });
+        lastFailure = "policy_denied";
+        continue;
+      }
 
       // External/metered providers need an explicit per-workspace opt-in (resolved once per request).
       if (binding.kind === "external") {
@@ -320,7 +327,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
 
       const callStarted = now();
       try {
-        const success = await adapterFor(binding).complete({ messages: request.messages, maxOutputTokens, model: binding.model });
+        const success = await adapterFor(binding).complete({ messages: request.messages, maxOutputTokens, model: binding.model, ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}) });
         await breaker.recordSuccess(binding.providerId);
         const usage = usageFrom(binding, success, estimatedTokens);
         if (gate.reservation && budgetStore) {

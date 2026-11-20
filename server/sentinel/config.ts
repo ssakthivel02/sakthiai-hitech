@@ -13,6 +13,8 @@ export const sentinelEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =
 const int = (v: string | undefined, d: number, lo: number, hi: number): number => { const n = Number(v); return Number.isInteger(n) && n >= lo && n <= hi ? n : d; };
 
 export interface SentinelRuntimeConfig {
+  /** Request JSON-object mode only when the endpoint is also explicitly enabled for it. */
+  jsonMode?: boolean;
   /** wall-clock limit for one model decision */ policyTimeoutMs: number;
   /** wall-clock limit for one diagnostic tool attempt */ toolAttemptTimeoutMs: number;
   /** hard cap on model calls per investigation attempt chain (including format retries) */ maxModelCalls: number;
@@ -20,6 +22,7 @@ export interface SentinelRuntimeConfig {
   /** how often the cancel flag of the durable task is polled while a call is in flight */ cancelPollMs: number;
 }
 export const sentinelRuntimeConfig = (env: NodeJS.ProcessEnv = process.env): SentinelRuntimeConfig => ({
+  jsonMode: env.SENTINEL_JSON_MODE === "true",
   policyTimeoutMs: int(env.SENTINEL_POLICY_TIMEOUT_MS, 120_000, 1000, 900_000),
   toolAttemptTimeoutMs: int(env.SENTINEL_TOOL_TIMEOUT_MS, 20_000, 500, 120_000),
   maxModelCalls: int(env.SENTINEL_MAX_MODEL_CALLS, 24, 1, 100),

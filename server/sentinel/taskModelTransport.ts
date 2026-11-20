@@ -13,11 +13,12 @@ import type { ModelCallMeta } from "../gateway/provenance";
 export class TaskModelTransport implements ModelTransport {
   readonly id = "gateway"; readonly kind = "remote" as const;
   lastError: TaskRetryableError | TaskFatalError | null = null;
-  constructor(private readonly ctx: Pick<TaskContext, "invokeModel" | "throwIfCancelled"> & Partial<Pick<TaskContext, "invokeModelDetailed">>) {}
+  constructor(private readonly ctx: Pick<TaskContext, "invokeModel" | "throwIfCancelled"> & Partial<Pick<TaskContext, "invokeModelDetailed">>, private readonly options: { jsonMode?: boolean } = {}) {}
   async complete(req: ModelRequest): Promise<ModelResponse> {
     this.ctx.throwIfCancelled();
     try {
       const request = {
+        ...(this.options.jsonMode ? { responseFormat: "json_object" as const } : {}),
         messages: [{ role: "system" as const, content: req.system }, { role: "user" as const, content: req.user }],
         intents: ["analysis" as const], requiredCapabilities: ["chat" as const, "reasoning" as const], optionalCapabilities: ["structured_output" as const],
       };

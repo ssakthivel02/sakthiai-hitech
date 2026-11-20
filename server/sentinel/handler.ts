@@ -111,7 +111,7 @@ export function createSentinelInvestigateHandler(deps: SentinelHandlerDeps): Tas
     let modelCalls = reservedModelCalls(ctx.checkpoint, id, stored);
     let reservationFailed = false;
     let reservationError: unknown;
-    const underlying: ProviderModel = deps.modelFor?.(ctx) ?? new TaskModelTransport(ctx);
+    const underlying: ProviderModel = deps.modelFor?.(ctx) ?? new TaskModelTransport(ctx, { jsonMode: cfg.jsonMode });
     const model: ProviderModel = {
       id: underlying.id, kind: underlying.kind,
       get lastError() { return underlying.lastError; },
