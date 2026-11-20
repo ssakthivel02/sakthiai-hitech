@@ -111,9 +111,10 @@ export class Broker {
 
   /** Defence in depth against a buggy or hostile adapter: whatever it returns must belong to this tenant, tool and target. */
   private checked(req: ToolRequest, out: BackendOutcome): BackendOutcome {
-    if (out.kind !== "ok") return out;
     const fail = (reason: string): BackendOutcome => { this.violations.push({ tool: req.tool, target: req.target, reason }); return { kind: "error", virtual_ms: ERROR_VMS, code: CONTRACT_VIOLATION }; };
-    if (!Array.isArray(out.obs) || typeof out.virtual_ms !== "number" || !(out.virtual_ms >= 0)) return fail("malformed-outcome");
+    if (!out || typeof out !== "object" || !["ok", "error", "timeout"].includes(out.kind) || typeof out.virtual_ms !== "number" || !Number.isFinite(out.virtual_ms) || out.virtual_ms < 0 || out.virtual_ms > Number.MAX_SAFE_INTEGER) return fail("malformed-outcome");
+    if (out.kind !== "ok") return out;
+    if (!Array.isArray(out.obs)) return fail("malformed-outcome");
     const observationIds = new Set(this.results.flatMap((r) => r.records.map((x) => x.obs_id)));
     for (const ob of out.obs) {
       if (!ob || typeof ob !== "object") return fail("malformed-observation");
@@ -264,8 +265,9 @@ export class Broker {
       }
       if (seen.has(key)) throw new RestoreError("DUPLICATE_EXECUTION", at);
       if (!Number.isInteger(r.attempts) || r.attempts < 1 || r.attempts > maxAttempts) throw new RestoreError("ATTEMPTS", at);
-      if (typeof r.virtual_ms !== "number" || !(r.virtual_ms >= 0)) throw new RestoreError("VIRTUAL_MS", at);
+      if (typeof r.virtual_ms !== "number" || !Number.isFinite(r.virtual_ms) || !(r.virtual_ms >= 0)) throw new RestoreError("VIRTUAL_MS", at);
       stats.calls_used++; stats.backend_execs += r.attempts; stats.retries += r.attempts - 1; stats.virtual_ms += r.virtual_ms;
+      if (!Number.isFinite(stats.virtual_ms)) throw new RestoreError("VIRTUAL_MS", at);
       if (r.status === "TIMEOUT") { stats.timeouts++; if (r.records.length) throw new RestoreError("TIMEOUT_HAS_RECORDS", at); }
       else if (r.status === "ERROR") { stats.transport_errors = (stats.transport_errors ?? 0) + 1; if (r.records.length) throw new RestoreError("ERROR_HAS_RECORDS", at); }
       else if (r.status === "OK" || r.status === "NO_DATA") {
