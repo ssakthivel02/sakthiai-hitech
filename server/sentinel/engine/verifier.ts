@@ -33,16 +33,16 @@ export function verifyFinal(final: FinalAnswer, c: CaseDoc, evidence: Map<string
   // --- schema
   const str = (x: unknown, max: number) => typeof x === "string" && x.length <= max;
   if (final.outcome !== "DIAGNOSIS" && final.outcome !== "ABSTAIN") fatal.push("SCHEMA:outcome");
-  if (!str(final.label, 60) || !(final.label in taxonomy)) fatal.push("SCHEMA:label-not-in-taxonomy");
+  if (!str(final.label, 60) || !Object.prototype.hasOwnProperty.call(taxonomy, final.label)) fatal.push("SCHEMA:label-not-in-taxonomy");
   if (final.outcome === "DIAGNOSIS" && final.label === "INCONCLUSIVE") fatal.push("SCHEMA:diagnosis-with-inconclusive-label");
   if (final.outcome === "ABSTAIN" && final.label !== "INCONCLUSIVE") fatal.push("SCHEMA:abstain-with-specific-label");
   if (!str(final.summary, 1500)) fatal.push("SCHEMA:summary");
-  if (typeof final.confidence !== "number" || final.confidence < 0 || final.confidence > 1) fatal.push("SCHEMA:confidence");
-  if (!Array.isArray(final.cited) || final.cited.some((x) => typeof x !== "string")) fatal.push("SCHEMA:cited");
-  if (!Array.isArray(final.contradictions) || final.contradictions.some((p) => !Array.isArray(p) || p.length !== 2)) fatal.push("SCHEMA:contradictions");
-  if (!final.remediation || typeof final.remediation.text !== "string") fatal.push("SCHEMA:remediation");
+  if (typeof final.confidence !== "number" || !Number.isFinite(final.confidence) || final.confidence < 0 || final.confidence > 1) fatal.push("SCHEMA:confidence");
+  if (!Array.isArray(final.cited) || final.cited.some((x) => !str(x, 80))) fatal.push("SCHEMA:cited");
+  if (!Array.isArray(final.contradictions) || final.contradictions.some((p) => !Array.isArray(p) || p.length !== 2 || p.some((x) => !str(x, 80)))) fatal.push("SCHEMA:contradictions");
+  if (!final.remediation || !str(final.remediation.text, 1500)) fatal.push("SCHEMA:remediation");
   else if (final.remediation.executed !== false || final.remediation.requires_approval !== true) fatal.push("APPROVAL:remediation-must-be-unexecuted-and-require-approval");
-  if (!Array.isArray(final.next_safe_steps)) fatal.push("SCHEMA:next_safe_steps");
+  if (!Array.isArray(final.next_safe_steps) || final.next_safe_steps.some((x) => !str(x, 300))) fatal.push("SCHEMA:next_safe_steps");
   if (fatal.some((f) => f.startsWith("SCHEMA"))) return { ok: false, fatal, redactions, sanitized, support: null };
   // --- citations
   const cited = final.cited;
