@@ -1,3 +1,4 @@
+import { verifyFinal } from "./engine/verifier";
 import { describe, expect, it } from "vitest";
 import { McpPolicyError } from "../connectors/mcp";
 import type { NormalizedResult } from "../connectors/mcp";
@@ -63,6 +64,21 @@ describe("McpDiagnosticTransport", () => {
     expect(r.records[1]!.text).toContain("QUARANTINED");
   });
 
+  it.each([false, true])("requires actual event times through adapter, broker and final verifier (timestamped=%s)", async timestamped => {
+    const bindings = [binding, { ...binding, tool: "metrics.query" as const, mcpTool: "query_metrics" }];
+    const t = new McpDiagnosticTransport({ service: { callTool: async (_actor, _id, name) => res(JSON.stringify([{ ...(timestamped ? { ts: prov.retrievedAt } : {}), level: "ERROR", text: name === "search_logs" ? "No space left on device" : "Disk used 100 percent" }])) }, workspaceId: 7, tenant, bindings });
+    const c = { ...caseDoc, allowed_tools: ["logs.search", "metrics.query"] };
+    const broker = new Broker(c, t);
+    const a = await broker.callAsync({ tool: "logs.search", target: "svc" });
+    const b = await broker.callAsync({ tool: "metrics.query", target: "svc" });
+    expect([a.status,b.status]).toEqual(["OK","OK"]);
+    const final = { outcome: "DIAGNOSIS" as const, label: "DISK_FULL", summary: "Disk capacity exhausted", cited: [a.records[0]!.rid,b.records[0]!.rid], contradictions: [], confidence: 0.8, remediation: { text: "Review storage capacity", executed: false, requires_approval: true }, next_safe_steps: [] };
+    const evidence = new Map([...a.records.map(r => [r.rid,{ ...r,tool: "logs.search",target: "svc" }] as const), ...b.records.map(r => [r.rid,{ ...r,tool: "metrics.query",target: "svc" }] as const)]);
+    const checked = verifyFinal(final,c,evidence,{ DISK_FULL: "disk" },{ requireSignatureSupport: false,signatureKb: "off" });
+    expect(checked.ok).toBe(timestamped);
+    if (!timestamped) expect(checked.fatal.filter(x => x.startsWith("TEMPORAL:invalid-timestamp"))).toHaveLength(2);
+  });
+
   it("through the broker: a write tool is denied before any connector call", async () => {
     let called = 0; const b = new Broker({ ...caseDoc, allowed_tools: ["logs.search", "service.restart"] }, make(async () => { called++; return res("x"); }));
     const r = await b.callAsync({ tool: "service.restart", target: "svc" });
@@ -74,6 +90,13 @@ describe("recordsFromText", () => {
   it("honours JSON arrays and notes truncation", () => {
     const r = recordsFromText(JSON.stringify([{ ts: "2026-10-01T10:00:00Z", level: "warn", text: "a" }, "b", { nope: 1 }]), "T", true);
     expect(r.map((x) => [x.level, x.text])).toEqual([["WARN", "a"], ["INFO", "b"], ["NOTE", "[connector output was truncated]"]]);
+  });
+  it("does not manufacture event timestamps from connector retrieval time", () => {
+    const retrieved = "2026-10-01T10:00:00Z";
+    const r = recordsFromText(JSON.stringify([{ text: "archived disk full" }, "undated metric"]), retrieved, true);
+    expect(r.map(x => x.ts)).toEqual(["", "", ""]);
+    expect(recordsFromText("archived line", retrieved, false)[0]!.ts).toBe("");
+    expect(recordsFromText("2026-09-01T10:00:00Z ERROR old event", retrieved, false)[0]!.ts).toBe("2026-09-01T10:00:00Z");
   });
   it("caps the number of lines", () => { expect(recordsFromText(Array.from({ length: 500 }, (_, i) => `line ${i}`).join("\n"), "T", false)).toHaveLength(200); });
 });

@@ -39,3 +39,10 @@ The previous161.623s model development diagnosis and172.680s abstention remain h
 The router fixtures previously used the current alert time with fixed1Oct telemetry. They now explicitly use1Oct alert time for their historical valid-data tests; assertions and security controls are unchanged. The new old/future timestamp tests cover the rejected mismatch rather than weakening the window. No sealed benchmark was opened or regenerated.
 
 Further qualification must cover genuine-model fresh/insufficient/stale incidents, real connector provenance, timestamp-source uncertainty, independent semantic correctness and canonical integration migrations. The independent reviewer retains the holdout and business/presentation workstream. No user should infer zero underlying risk from these regressions.
+
+
+## Connector event-time follow-up
+
+The MCP adapter previously substituted retrieval time for missing record timestamps. Retrieval proves when output was fetched, not when an event occurred; old undated text could therefore pass incident-relative freshness checks. Missing JSON timestamps, string-array items, plain lines and adapter-generated truncation notes now carry an unknown event timestamp (empty string). The existing final verifier rejects any cited or contradiction reference with that timestamp. Actual supplied timestamps remain unchanged and subject to existing temporal validation; no source attestation is implied. Unknown-time records remain visible for investigation, but cannot establish a verified diagnosis. Connectors must provide valid event timestamps for qualifying citations. This deliberately reduces acceptance of undated diagnostics rather than fabricating freshness. Historical stored traces are unchanged.
+
+Regression evidence includes a failing pre-fix missing-time test and adapter→broker→verifier tests contrasting identical undated and timestamped disk evidence. These are deterministic control tests, not live connector or model acceptance. Source-supplied timestamp authenticity, semantic diagnosis correctness and underlying source independence remain open.

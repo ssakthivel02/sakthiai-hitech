@@ -19,8 +19,9 @@ const MAX_LINES = 200;
 const LINE = /^(\d{4}-\d{2}-\d{2}[T ][0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?)\s+([A-Za-z]{3,8})\s+(.*)$/;
 const LEVELS = new Set(["TRACE", "DEBUG", "INFO", "NOTICE", "WARN", "WARNING", "ERROR", "ERR", "CRITICAL", "FATAL"]);
 
-/** Turn connector text into evidence-ready records. Structured JSON arrays of {ts,level,text} are honoured; anything else is split by line. */
-export function recordsFromText(text: string, retrievedAt: string, truncated: boolean): WorldRecord[] {
+/** Turn connector text into evidence-ready records. Structured JSON arrays of {ts,level,text} are honoured; anything else is split by line.
+ * Missing event timestamps stay unknown (empty string); retrieval time is not event time. The verifier refuses unknown timestamps in citations. */
+export function recordsFromText(text: string, _retrievedAt: string, truncated: boolean): WorldRecord[] {
   const out: WorldRecord[] = [];
   const t = text.trim();
   if (t.startsWith("[")) {
@@ -30,10 +31,10 @@ export function recordsFromText(text: string, retrievedAt: string, truncated: bo
         for (const x of arr.slice(0, MAX_LINES)) {
           if (x && typeof x === "object" && typeof (x as { text?: unknown }).text === "string") {
             const o = x as { ts?: unknown; level?: unknown; text: string };
-            out.push({ ts: typeof o.ts === "string" ? o.ts : retrievedAt, level: typeof o.level === "string" ? o.level.toUpperCase().slice(0, 16) : "INFO", text: o.text });
-          } else if (typeof x === "string") out.push({ ts: retrievedAt, level: "INFO", text: x });
+            out.push({ ts: typeof o.ts === "string" ? o.ts : "", level: typeof o.level === "string" ? o.level.toUpperCase().slice(0, 16) : "INFO", text: o.text });
+          } else if (typeof x === "string") out.push({ ts: "", level: "INFO", text: x });
         }
-        if (out.length) return withNote(out, truncated, retrievedAt);
+        if (out.length) return withNote(out, truncated);
       }
     } catch { /* not JSON: fall through to line mode */ }
   }
@@ -43,11 +44,11 @@ export function recordsFromText(text: string, retrievedAt: string, truncated: bo
     if (out.length >= MAX_LINES) break;
     const m = LINE.exec(line);
     if (m && LEVELS.has(m[2]!.toUpperCase())) out.push({ ts: m[1]!, level: m[2]!.toUpperCase(), text: m[3]! });
-    else out.push({ ts: retrievedAt, level: "INFO", text: line });
+    else out.push({ ts: "", level: "INFO", text: line });
   }
-  return withNote(out, truncated, retrievedAt);
+  return withNote(out, truncated);
 }
-const withNote = (r: WorldRecord[], truncated: boolean, at: string): WorldRecord[] => (truncated && r.length ? [...r, { ts: at, level: "NOTE", text: "[connector output was truncated]" }] : r);
+const withNote = (r: WorldRecord[], truncated: boolean): WorldRecord[] => (truncated && r.length ? [...r, { ts: "", level: "NOTE", text: "[connector output was truncated]" }] : r);
 
 /**
  * Read-only diagnostic adapter over the workspace's MCP connectors. It owns no network code: every call goes through
