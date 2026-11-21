@@ -57,3 +57,63 @@ describe("private-beta runtime profile", () => {
     expect(text).not.toMatch(/SECRETVALUE|PASSWORDVALUE/);
   });
 });
+
+describe("private-beta hardening regressions", () => {
+  const activation: EnvLike = {
+    ...good, GATEWAY_ALLOW_EXTERNAL: "true", GATEWAY_ALLOW_METERED: "true", GATEWAY_STATE_STORE: "mysql",
+    GATEWAY_EXTERNAL_MAX_REQUESTS_PER_DAY: "200", GATEWAY_EXTERNAL_MAX_TOKENS_PER_DAY: "1000000",
+    GATEWAY_EXTERNAL_MAX_COST_PER_DAY: "100", GATEWAY_COST_PER_1K_PROMPT_TOKENS: "0.015",
+    GATEWAY_COST_PER_1K_COMPLETION_TOKENS: "0.06", GATEWAY_COST_UNIT: "INR",
+    LLM_API_KEY: "synthetic-key", LLM_ENDPOINT_PROFILE: "sarvam-chat",
+  };
+
+  for (const value of ["", ",", " , , ", "\t,\n"]) {
+    it(`rejects an empty effective CSV allowlist (${JSON.stringify(value)})`, () => {
+      const env = { ...good, AUTH_ALLOWED_SUBJECTS: value, AUTH_ALLOWED_EMAILS: " , " };
+      expect(checkBetaProfile(env).ok).toBe(false);
+      expect(failing(env)).toContain("AUTH_ALLOWED_SUBJECTS");
+    });
+  }
+  for (const variable of ["CREATOR_PAID_IMAGE_USERS", "CREATOR_PAID_VIDEO_USERS", "CREATOR_PAID_SPEECH_USERS", "CREATOR_PAID_AVATAR_USERS"]) {
+    it(`rejects a populated ${variable}`, () => {
+      const env = { ...good, [variable]: "synthetic-user" };
+      expect(checkBetaProfile(env).ok).toBe(false);
+      expect(failing(env)).toContain(variable);
+    });
+  }
+  for (const value of ["0", "-1", "1.5", "9007199254740992", "9".repeat(400)]) {
+    it(`rejects an invalid instance ceiling (${value.slice(0, 20)})`, () => {
+      const env = { ...good, RATE_LIMIT_MAX_INSTANCES: value };
+      expect(checkBetaProfile(env).ok).toBe(false);
+      expect(failing(env)).toContain("RATE_LIMIT_MAX_INSTANCES");
+    });
+  }
+  for (const variable of ["GATEWAY_EXTERNAL_MAX_REQUESTS_PER_DAY", "GATEWAY_EXTERNAL_MAX_TOKENS_PER_DAY", "GATEWAY_EXTERNAL_MAX_COST_PER_DAY", "GATEWAY_COST_PER_1K_PROMPT_TOKENS", "GATEWAY_COST_PER_1K_COMPLETION_TOKENS"]) {
+    for (const value of [undefined, "", "0", "-1", "NaN", "Infinity", "not-a-number"]) {
+      it(`rejects ${variable}=${String(value)}`, () => {
+        const env = { ...activation, [variable]: value };
+        expect(checkBetaProfile(env, { modelActivation: true }).ok).toBe(false);
+        expect(failing(env, { modelActivation: true })).toContain(variable);
+      });
+    }
+  }
+  it("accepts an email-only invitation policy", () => {
+    expect(checkBetaProfile({ ...good, AUTH_ALLOWED_SUBJECTS: " , ", AUTH_ALLOWED_EMAILS: "test@example.invalid" }).ok).toBe(true);
+  });
+  it("accepts an owner-only invitation policy", () => {
+    expect(checkBetaProfile({ ...good, AUTH_ALLOWED_SUBJECTS: "", OWNER_OPEN_ID: "synthetic-owner" }).ok).toBe(true);
+  });
+  it("accepts valid model activation limits", () => {
+    expect(checkBetaProfile(activation, { modelActivation: true }).ok).toBe(true);
+  });
+  it("preserves background worker warning semantics", () => {
+    const result = checkBetaProfile({ ...good, TASK_WORKER_ENABLED: "true" });
+    expect(result.ok).toBe(true);
+    expect(result.findings).toEqual([expect.objectContaining({ level: "warn", variable: "TASK_WORKER_ENABLED" })]);
+  });
+  it("does not echo invalid activation values", () => {
+    const result = checkBetaProfile({ ...activation, GATEWAY_EXTERNAL_MAX_COST_PER_DAY: "SYNTHETIC-SECRET-SENTINEL" }, { modelActivation: true });
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toMatch(/SYNTHETIC-SECRET-SENTINEL/);
+  });
+});

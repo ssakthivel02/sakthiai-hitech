@@ -14,6 +14,8 @@ export type ProfileOptions = {
 
 const on = (value: string | undefined) => value?.trim().toLowerCase() === "true";
 const set = (value: string | undefined) => typeof value === "string" && value.trim().length > 0;
+const hasEntries = (value: string | undefined) => (value ?? "").split(",").some(entry => entry.trim().length > 0);
+const positiveFinite = (value: string | undefined) => set(value) && Number.isFinite(Number(value)) && Number(value) > 0;
 
 export function checkBetaProfile(env: EnvLike, options: ProfileOptions = {}): { ok: boolean; findings: ProfileFinding[] } {
   const f: ProfileFinding[] = [];
@@ -27,18 +29,18 @@ export function checkBetaProfile(env: EnvLike, options: ProfileOptions = {}): { 
 
   // Access: an explicit allowlist, never open signup, never an unset policy (which is "closed" in production, i.e. nobody can sign in).
   if (on(env.AUTH_OPEN_SIGNUP)) fail("AUTH_OPEN_SIGNUP", "open signup must be off in the private beta");
-  if (![env.AUTH_ALLOWED_SUBJECTS, env.AUTH_ALLOWED_EMAILS, env.OWNER_OPEN_ID].some(set)) fail("AUTH_ALLOWED_SUBJECTS", "no allowlist: set AUTH_ALLOWED_SUBJECTS and/or AUTH_ALLOWED_EMAILS (and OWNER_OPEN_ID)");
+  if (![env.AUTH_ALLOWED_SUBJECTS, env.AUTH_ALLOWED_EMAILS].some(hasEntries) && !set(env.OWNER_OPEN_ID)) fail("AUTH_ALLOWED_SUBJECTS", "no allowlist: set AUTH_ALLOWED_SUBJECTS and/or AUTH_ALLOWED_EMAILS (and OWNER_OPEN_ID)");
 
   // Uploads and Creator stay OFF.
   if (set(env.FILE_INGESTION_BACKEND_ENABLED) && env.FILE_INGESTION_BACKEND_ENABLED !== "false") fail("FILE_INGESTION_BACKEND_ENABLED", "file uploads must be off in the beta (leave unset)");
   if (on(env.CREATOR_PAID_GENERATION_ENABLED)) fail("CREATOR_PAID_GENERATION_ENABLED", "paid Creator generation must stay off");
-  for (const name of ["CREATOR_PAID_IMAGE_USERS", "CREATOR_PAID_VIDEO_USERS"]) if (set(env[name])) fail(name, "paid Creator user lists must be empty");
+  for (const name of ["CREATOR_PAID_IMAGE_USERS", "CREATOR_PAID_VIDEO_USERS", "CREATOR_PAID_SPEECH_USERS", "CREATOR_PAID_AVATAR_USERS"]) if (set(env[name])) fail(name, "paid Creator user lists must be empty");
   if (["STORAGE_BUCKET", "STORAGE_ACCESS_KEY_ID", "STORAGE_SECRET_ACCESS_KEY"].some(name => set(env[name]))) warn("STORAGE_*", "object storage is not used by the enabled beta paths; remove it to keep the credential surface minimal");
 
   // Shared, fail-closed request limits.
   if ((env.RATE_LIMIT_STORE ?? "").trim().toLowerCase() !== "mysql") fail("RATE_LIMIT_STORE", "must be mysql (shared counters; costly routes refuse when the counter is unavailable)");
   const maxInstancesText = (env.RATE_LIMIT_MAX_INSTANCES ?? "").trim();
-  if (!/^\d+$/.test(maxInstancesText) || Number(maxInstancesText) < 1) {
+  if (!/^\d+$/.test(maxInstancesText) || !Number.isSafeInteger(Number(maxInstancesText)) || Number(maxInstancesText) < 1) {
     fail("RATE_LIMIT_MAX_INSTANCES", "must be an explicit positive integer instance ceiling");
   }
 
@@ -74,6 +76,9 @@ export function checkBetaProfile(env: EnvLike, options: ProfileOptions = {}): { 
     if (!external || !metered) fail("GATEWAY_ALLOW_EXTERNAL", "activation requires GATEWAY_ALLOW_EXTERNAL=true and GATEWAY_ALLOW_METERED=true");
     if ((env.GATEWAY_STATE_STORE ?? "").trim().toLowerCase() !== "mysql") fail("GATEWAY_STATE_STORE", "activation requires mysql so the spend ceiling survives restarts");
     for (const name of ["GATEWAY_EXTERNAL_MAX_REQUESTS_PER_DAY", "GATEWAY_EXTERNAL_MAX_TOKENS_PER_DAY", "GATEWAY_EXTERNAL_MAX_COST_PER_DAY", "GATEWAY_COST_PER_1K_PROMPT_TOKENS", "GATEWAY_COST_PER_1K_COMPLETION_TOKENS", "GATEWAY_COST_UNIT"]) if (!set(env[name])) fail(name, "activation requires an explicit ceiling and rate");
+    for (const name of ["GATEWAY_EXTERNAL_MAX_REQUESTS_PER_DAY", "GATEWAY_EXTERNAL_MAX_TOKENS_PER_DAY", "GATEWAY_EXTERNAL_MAX_COST_PER_DAY", "GATEWAY_COST_PER_1K_PROMPT_TOKENS", "GATEWAY_COST_PER_1K_COMPLETION_TOKENS"]) {
+      if (set(env[name]) && !positiveFinite(env[name])) fail(name, "activation requires a finite positive number");
+    }
     if (!set(env.LLM_API_KEY)) fail("LLM_API_KEY", "not set");
     if (!set(env.LLM_ENDPOINT_PROFILE)) fail("LLM_ENDPOINT_PROFILE", "not set: pin the endpoint profile (e.g. sarvam-chat)");
   }
