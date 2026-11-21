@@ -52,6 +52,16 @@ export const AUTHENTICATED_RATE_POLICIES = {
     windowMs: 60_000,
     onSharedFailure: "deny",
   },
+  /**
+   * Sentinel investigations: each create queues a durable task that may make dozens of model calls and several connector calls, so it is at
+   * least as costly as a chat send. Abuse guard only; the per-workspace active cap (SENTINEL_MAX_ACTIVE_PER_WORKSPACE) bounds concurrency.
+   */
+  sentinelCreate: {
+    name: "sentinel-create",
+    maxRequests: 6,
+    windowMs: 60_000,
+    onSharedFailure: "deny",
+  },
   /** Operations on existing provider jobs (poll / retry / cancel). */
   creatorProviderJob: {
     name: "creator-provider-job",
@@ -65,6 +75,7 @@ export function selectAuthenticatedRatePolicy(path: string): RateLimitPolicy {
   if (path === "chat.send") return AUTHENTICATED_RATE_POLICIES.chatSend;
   if (path === "files.upload") return AUTHENTICATED_RATE_POLICIES.fileUpload;
   if (path === "creator.submitImage" || path === "creator.submitVideo") return AUTHENTICATED_RATE_POLICIES.creatorSubmit;
+  if (path === "sentinel.create") return AUTHENTICATED_RATE_POLICIES.sentinelCreate;
   if (path === "creator.pollGeneration" || path === "creator.retryGeneration" || path === "creator.cancelGeneration") {
     return AUTHENTICATED_RATE_POLICIES.creatorProviderJob;
   }

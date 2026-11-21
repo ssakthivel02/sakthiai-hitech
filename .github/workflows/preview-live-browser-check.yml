@@ -50,7 +50,8 @@ jobs:
 
   live-browser-check:
     needs: bind
-    runs-on: ubuntu-latest
+    # Same supported OS as Quality Gate E2E; bind remains unprivileged and unchanged.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Two dedicated, owner-provisioned, allow-listed real test accounts live only as environment secrets.
     # This environment does not exist until the owner creates it: it is NOT auto-provisioned by this

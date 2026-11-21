@@ -1,0 +1,28 @@
+import {describe,it,expect} from 'vitest';
+import {buildPrompt,parseDecision,ContractError} from './llm_contract';
+import {verifyFinal} from './verifier';
+import {GatewayPolicy} from './gateway_policy';
+import type {PolicyView,FinalAnswer} from './types';
+import type {EvidenceItem} from './broker';
+const view:PolicyView={case:{case_id:'contract-dev',tenant:'ws-7',objective:'Investigate',alert:{title:'Alert',severity:'high',service:'demo',fired_at:'2026-11-20T00:00:00Z',description:'Failure'},operator_notes:[],inventory:{services:['demo'],hosts:[]},allowed_tools:['logs.search','metrics.query'],limits:{max_tool_calls:4,max_steps:8,max_retries_per_call:0,max_virtual_ms:10000}},history:[],taxonomy:{TEST:'Synthetic test',INCONCLUSIVE:'Insufficient evidence'},calls_left:4,steps_left:8,virtual_ms_left:10000,force_final:false};
+const hyp={label:'TEST',score:0.5,status:'ACTIVE',supporting:[],refuted_by:[]};
+const call={type:'CALL',tool:'logs.search',target:'demo',rationale:'Read logs',hypotheses:[hyp]};
+const final:FinalAnswer={outcome:'DIAGNOSIS',label:'TEST',summary:'Evidence indicates a failure.',cited:['r1','r2'],contradictions:[],confidence:0.8,remediation:{text:'Review a change proposal.',executed:false,requires_approval:true},next_safe_steps:['Confirm findings']};
+const evidence=new Map<string,EvidenceItem>([['r1',{rid:'r1',tool:'logs.search',obs_id:'o1',quarantined:false,text:'failure',ts:'2026-11-20T00:00:00Z',level:'ERROR'} as EvidenceItem],['r2',{rid:'r2',tool:'metrics.query',obs_id:'o2',quarantined:false,text:'failure',ts:'2026-11-20T00:00:00Z',level:'ERROR'} as EvidenceItem]]);
+const verify=(f:FinalAnswer)=>verifyFinal(f,view.case,evidence,view.taxonomy,{requireSignatureSupport:false,signatureKb:'off'});
+describe('Sentinel contract qualification',()=>{
+ it('renders syntactically valid JSON examples',()=>{const lines=buildPrompt(view).system.split('\n').filter(l=>l.startsWith('To gather evidence:')||l.startsWith('To conclude'));expect(lines).toHaveLength(3);for(const line of lines)expect(()=>JSON.parse(line.slice(line.indexOf('{')))).not.toThrow();});
+ it('provides both final outcomes without teaching a particular diagnosis',()=>{const examples=buildPrompt(view).system.split('\n').filter(l=>l.startsWith('To conclude')).map(l=>JSON.parse(l.slice(l.indexOf('{'))));expect(examples.map(x=>x.outcome).sort()).toEqual(['ABSTAIN','DIAGNOSIS']);expect(examples.find(x=>x.outcome==='DIAGNOSIS').label).toBe('<LABEL>');});
+ it.each([null,[],false,0,'bad'])('rejects malformed hypothesis %j as a retryable contract error',(h)=>{expect(()=>parseDecision(JSON.stringify({...call,hypotheses:[h]}),view)).toThrow(ContractError);});
+ it.each(['constructor','toString','__proto__','hasOwnProperty'])('rejects inherited hypothesis label %s',(label)=>{expect(()=>parseDecision(JSON.stringify({...call,hypotheses:[{...hyp,label}]}),view)).toThrow(ContractError);});
+ it.each([['ACTIVE'],{},null,'BAD'])('rejects malformed status %j',(status)=>{expect(()=>parseDecision(JSON.stringify({...call,hypotheses:[{...hyp,status}]}),view)).toThrow(ContractError);});
+ it.each([null,'r1',[null],[42],['x'.repeat(81)],Array(21).fill('r1')])('rejects malformed evidence references %j',(refs)=>{for(const key of ['supporting','refuted_by'])expect(()=>parseDecision(JSON.stringify({...call,hypotheses:[{...hyp,[key]:refs}]}),view)).toThrow(ContractError);});
+ it.each(['constructor','toString','__proto__','hasOwnProperty'])('rejects inherited final label %s in both boundaries',(label)=>{const raw={type:'FINAL',outcome:'DIAGNOSIS',label,summary:'Unknown',cited:['r1','r2'],confidence:0.5,remediation_proposal:'Review',hypotheses:[]};expect(()=>parseDecision(JSON.stringify(raw),view)).toThrow(ContractError);expect(verify({...final,label}).fatal).toContain('SCHEMA:label-not-in-taxonomy');});
+ it.each([-0.1,1.1,Infinity,NaN])('rejects invalid confidence %s',(confidence)=>{expect(verify({...final,confidence}).fatal).toContain('SCHEMA:confidence');});
+ it('rejects unknown citations and contradictory evidence references',()=>{expect(verify({...final,cited:['r1','missing']}).fatal.some(x=>x.startsWith('CITATION:unknown'))).toBe(true);expect(verify({...final,contradictions:[['r1','missing']]}).fatal.some(x=>x.startsWith('CONTRADICTION:unknown'))).toBe(true);});
+ it('rejects malformed contradiction members before echo handling',()=>{expect(verify({...final,contradictions:[[null,'r1']] as never}).fatal).toContain('SCHEMA:contradictions');});
+ it('rejects malformed next steps without throwing',()=>{expect(verify({...final,next_safe_steps:[null] as never}).fatal).toContain('SCHEMA:next_safe_steps');});
+ it('rejects false remediation claims and forged approval flags',()=>{expect(verify({...final,summary:'I restarted the service.'}).fatal.some(x=>x.startsWith('CLAIM:'))).toBe(true);expect(verify({...final,remediation:{...final.remediation,executed:true}}).fatal.some(x=>x.startsWith('APPROVAL:'))).toBe(true);});
+ it('accepts legitimate structurally backed diagnosis without claiming semantic correctness',()=>expect(verify(final).ok).toBe(true));
+ it('consumes format retries within a fixed logical call budget',async()=>{let calls=0;const p=new GatewayPolicy({id:'scripted-test',kind:'mock',complete:async()=>{calls++;return{text:JSON.stringify({...call,hypotheses:[null]})}}},{maxModelCalls:2,formatRetries:3});await expect(p.next(view)).rejects.toThrow('MODEL_CALL_BUDGET_EXHAUSTED');expect(calls).toBe(2);});
+});

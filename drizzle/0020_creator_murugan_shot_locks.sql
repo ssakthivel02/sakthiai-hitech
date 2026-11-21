@@ -1,0 +1,20 @@
+CREATE TABLE `creatorMuruganShotLocks` (
+  `id` int AUTO_INCREMENT NOT NULL,
+  `workspaceId` int NOT NULL,
+  `creatorProjectId` int NOT NULL,
+  `snapshotId` int NOT NULL,
+  `snapshotSha256` varchar(64) NOT NULL,
+  `creatorShotId` int NOT NULL,
+  `shotId` varchar(80) NOT NULL,
+  `bindingId` varchar(64) NOT NULL,
+  `selectionJson` text NOT NULL,
+  `firstFrameAssetId` int NOT NULL,
+  `lastFrameAssetId` int NULL,
+  `contentSha256` varchar(64) NOT NULL,
+  `approvedByUserId` int NOT NULL,
+  `approvedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `revokedAt` timestamp NULL,
+  `revokedByUserId` int NULL,
+  CONSTRAINT `creatorMuruganShotLocks_id` PRIMARY KEY (`id`),
+  CONSTRAINT `creatorMuruganShotLocks_unique_shot_uq` UNIQUE (`workspaceId`,`creatorProjectId`,`snapshotId`,`creatorShotId`)
+);

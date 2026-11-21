@@ -14,6 +14,8 @@ export type GatewayRequest = {
   workspaceId: number;
   messages: GatewayMessage[];
   maxOutputTokens?: number;
+  /** Explicit JSON-object mode; requires a catalog capability and an opted-in endpoint. */
+  responseFormat?: "json_object";
   intents?: readonly TaskIntent[];
   requiredCapabilities?: readonly ModelCapability[];
   optionalCapabilities?: readonly ModelCapability[];
@@ -83,6 +85,8 @@ export type GatewayUsage = {
 export type AdapterCall = {
   messages: GatewayMessage[];
   maxOutputTokens?: number;
+  /** Explicit JSON-object mode; requires a catalog capability and an opted-in endpoint. */
+  responseFormat?: "json_object";
   model: string;
 };
 
@@ -113,6 +117,8 @@ export type ProviderBinding = {
   endpointProfile?: EndpointProfileId;
   /** Local binding only. The configured host is a name: every address it resolves to must be loopback/private at request time (fail closed). */
   resolveGuard?: boolean;
+  /** Operator-confirmed support for the OpenAI-compatible JSON-object request field. Default off. */
+  jsonMode?: boolean;
 };
 
 export type RuntimeState =
