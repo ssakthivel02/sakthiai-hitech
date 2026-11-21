@@ -1,5 +1,5 @@
 import type { CaseDoc, Decision, FinalAnswer, Hypothesis, PolicyView, ToolRequest, ToolResult } from "./types";
-import { checkFinalAgainstLedger, isBlocking, reviseLedger } from "./ledger";
+import { checkFinalAgainstLedger, isBlocking, reviseLedger, leaderOf } from "./ledger";
 import type { RevisionEvent } from "./ledger";
 import { Broker } from "./broker";
 import type { BrokerStats } from "./broker";
@@ -80,7 +80,10 @@ export class Investigation {
     if (this.meta.cancel?.cancelled) { this.trace.add("cancelled", this.vt, { step: this.step }); this.cancelledEnd(); return { kind: "DONE" }; }
     const b = this.broker;
     this.force = this.step === this.c.limits.max_steps || b.budgetLeft <= 0 || b.timeLeft <= 0;
-    return { kind: "DECIDE", step: this.step, force: this.force, view: { case: this.c, history: this.hist.slice(), calls_left: b.budgetLeft, steps_left: this.c.limits.max_steps - this.step, virtual_ms_left: b.timeLeft, force_final: this.force, taxonomy: this.meta.taxonomy } };
+    const prior = [...this.hh].reverse().find((entry) => entry.hypotheses.length > 0)?.hypotheses ?? [];
+    const hypothesis_context = structuredClone({ prior: prior.map(({ note: _note, ...claim }) => claim), leader: leaderOf(prior)?.label ?? null,
+      new_evidence: this.lastNew, blocking_warnings: this.meta.strictLedger ? [...new Set(this.ledgerWarnings.filter(isBlocking))].slice(-12) : [] });
+    return { kind: "DECIDE", step: this.step, force: this.force, view: { case: this.c, history: this.hist.slice(), calls_left: b.budgetLeft, steps_left: this.c.limits.max_steps - this.step, virtual_ms_left: b.timeLeft, force_final: this.force, taxonomy: this.meta.taxonomy, hypothesis_context } };
   }
 
   policyFailure(message: string): void {

@@ -41,9 +41,13 @@ export interface FinalAnswer {
   remediation: { text: string; executed: boolean; requires_approval: boolean };
   next_safe_steps: string[]; abstain_reason?: string;
 }
+/** Read-only engine snapshot; prior hypotheses are unverified policy claims, not diagnostic truth. */
+export interface HypothesisContext {
+  prior: Hypothesis[]; leader: string | null; new_evidence: string[]; blocking_warnings: string[];
+}
 export interface PolicyView {
   case: CaseDoc; history: ToolResult[]; calls_left: number; steps_left: number; virtual_ms_left: number;
-  force_final: boolean; taxonomy: Record<string, string>;
+  force_final: boolean; taxonomy: Record<string, string>; hypothesis_context?: HypothesisContext;
 }
 export interface Policy { id: string; kind: "deterministic_stub" | "llm"; next(view: PolicyView): Decision }
 
