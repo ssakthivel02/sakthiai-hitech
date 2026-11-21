@@ -63,6 +63,18 @@ describe("a partial gateway port never breaks the governed call", () => {
 });
 
 describe("TaskModelTransport", () => {
+  it.each([false, true])("assigns unique correlation IDs across calls and recreated adapters (detailed=%s)", async detailed => {
+    const ids: unknown[] = [];
+    for (let instance = 0; instance < 2; instance++) {
+      const capture = async (request: { requestId?: string }) => { ids.push(request.requestId); return "reply"; };
+      const model = new TaskModelTransport({ throwIfCancelled: () => undefined, invokeModel: capture,
+        ...(detailed ? { invokeModelDetailed: async (request: { requestId?: string }) => ({ content: await capture(request), meta: null }) } : {}) });
+      for (let call = 0; call < 2; call++) await model.complete({ system: "s", user: "u", attempt: 0 });
+    }
+    expect(ids).toHaveLength(4);
+    expect(ids.every(id => typeof id === "string" && /^sentinel-model:[0-9a-f-]{36}$/.test(id))).toBe(true);
+    expect(new Set(ids).size).toBe(4);
+  });
   it("attaches provenance when the context can supply it and omits it (never invents it) otherwise", async () => {
     const base = { throwIfCancelled: () => undefined };
     const detailed = new TaskModelTransport({ ...base, invokeModel: async () => "plain", invokeModelDetailed: async () => ({ content: "d", meta: modelCallMeta(returned()) }) });

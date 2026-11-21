@@ -65,4 +65,28 @@ describe.skipIf(skipMysqlSuite())("Sentinel durable retry boundaries on real SQL
     expect(verifyTrace(trace, row.id).ok).toBe(true);
     expect(trace.filter(e => e.type === "final")).toHaveLength(1);
   });
+  it("persists distinct call correlations through the real worker and production model adapter", async () => {
+    const store = new MysqlSentinelStore(async () => db.db);
+    const tasks = new MysqlTaskStore(async () => db.db);
+    const row = newRow({ id: randomUUID() }); await store.create(row);
+    const { task } = await tasks.create({ workspaceId: WS, type: "sentinel.investigate", input: { investigationId: row.id }, maxAttempts: 1 });
+    await store.attachTask(WS, row.id, task.id);
+    const ids: string[] = []; const scripted = goodModel();
+    const handler = createSentinelInvestigateHandler({ store, mcp: { callTool: async () => { throw Error("disabled"); } }, enabled: () => true,
+      config: () => ({ policyTimeoutMs: 5000, toolAttemptTimeoutMs: 1000, maxModelCalls: 4, formatRetries: 1, cancelPollMs: 20 }), transportFor: () => new FakeTools() });
+    const worker = new TaskWorker({ store: tasks, handlers: { "sentinel.investigate": handler }, gateway: { invoke: async request => {
+      ids.push(request.requestId!);
+      const output = await scripted.complete({ system: request.messages[0]!.content, user: request.messages[1]!.content, attempt: 0 });
+      return { status: "returned", content: output.text, providerId: "local-openai-compatible", modelId: "scripted-durability-control", profileId: "test", kind: "self_hosted", billingMode: "local_compute",
+        usage: { source: "provider_reported", promptTokens: 0, completionTokens: 0 }, attempts: [], latencyMs: 0 };
+    } } });
+    expect((await worker.runOnce()).status).toBe("succeeded");
+    expect(ids).toHaveLength(3); expect(new Set(ids).size).toBe(3);
+    expect(ids.every(id => /^sentinel-model:[0-9a-f-]{36}$/.test(id))).toBe(true);
+    const events = await store.readEvents(WS, row.id);
+    const text = JSON.stringify(events); for (const id of ids) expect(text).toContain(id);
+    expect(verifyTrace(events, row.id).ok).toBe(true);
+    expect((await tasks.get(WS, task.id))!.checkpoint).toMatchObject({ modelCalls: 3 });
+  });
+
 });
