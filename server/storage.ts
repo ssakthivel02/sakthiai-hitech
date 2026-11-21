@@ -1,4 +1,8 @@
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { createHash } from "node:crypto";
+import { readExactRangedObject, CREATOR_CHECKSUM_MAX_BYTES } from "./creator/boundedObjectRead";
+import { assertCreatorStoredObjectIntegrity, CREATOR_STORED_MEDIA_MAX_BYTES } from "./creator/storageIntegrity";
+import { assertCreatorRenderStorageKey, type CreatorRenderStorageIdentity } from "./creator/renderStorageKey";
+import { DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { ENV } from "./_core/env";
 
@@ -58,9 +62,152 @@ export async function storagePut(
   return { key, url: `/api/storage/${key}` };
 }
 
+/** Content-addressed Creator staging PUT. Never overwrite another worker's object. */
+export async function storagePutCreatorStagedObject(key: string, data: Uint8Array, contentType: string): Promise<void> {
+  const extensionByMime: Record<string, string> = {
+    "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "video/mp4": "mp4", "audio/wav": "wav",
+  };
+  const ext = extensionByMime[contentType];
+  if (!ext || !/^creator\/[1-9][0-9]*\/[1-9][0-9]*\/staged\/generation-[1-9][0-9]*\/job-[a-f0-9]{32}\/[a-f0-9]{64}\.(png|jpg|webp|mp4|wav)$/.test(key) ||
+      !key.endsWith(`.${ext}`) || !data.byteLength || data.byteLength > CREATOR_STORED_MEDIA_MAX_BYTES)
+    throw new Error("CREATOR_STAGED_STORAGE_KEY_INVALID");
+  const checksum = key.slice(key.lastIndexOf("/") + 1, -ext.length - 1);
+  if (createHash("sha256").update(data).digest("hex") !== checksum)
+    throw new Error("CREATOR_STAGED_STORAGE_CHECKSUM_INVALID");
+  const { client: s3, bucket } = getStorageConfig();
+  await s3.send(new PutObjectCommand({
+    Bucket: bucket, Key: key, Body: data, ContentType: contentType, IfNoneMatch: "*",
+  }), { abortSignal: AbortSignal.timeout(120_000) });
+}
+export function isCreatorStagedObjectMissing(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as { name?: string; Code?: string; code?: string };
+  return e.name === "NoSuchKey" || e.Code === "NoSuchKey" || e.code === "NoSuchKey";
+}
+export function isCreatorStagedObjectAlreadyExists(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return e.name === "PreconditionFailed" && e.$metadata?.httpStatusCode === 412;
+}
+
 export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
   return { key, url: `/api/storage/${key}` };
+}
+
+export async function storageRead(relKey: string): Promise<Uint8Array> {
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  const result = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!result.Body) throw new Error("Storage object body missing");
+  return result.Body.transformToByteArray();
+}
+
+/** Exact-size, bounded S3 GET. Range is required and the stream is capped even if
+ * a backend lies about Content-Length or ignores the requested range. */
+export async function storageReadExactRange(relKey: string, expectedSize: number): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(expectedSize) || expectedSize < 1 || expectedSize > CREATOR_CHECKSUM_MAX_BYTES) {
+    throw new Error("CREATOR_CHECKSUM_SIZE_OUT_OF_RANGE");
+  }
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  const result = await s3.send(new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Range: `bytes=0-${expectedSize - 1}`,
+  }));
+  if (!result.Body) throw new Error("CREATOR_CHECKSUM_MISSING_BODY");
+  // Require HTTP 206 plus exact Content-Range; reject even forged range headers on HTTP 200.
+  if (result.$metadata?.httpStatusCode !== 206 || !result.ContentRange) {
+    // A noncompliant backend may still return a large streaming body. Cancel it
+    // without reading any bytes, and preserve the original contract error even
+    // when the SDK stream cannot be converted or cancelled.
+    try {
+      await result.Body.transformToWebStream().cancel("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+    } catch {
+      // Cleanup is best-effort; never turn a rejected range into success.
+    }
+    throw new Error("CREATOR_CHECKSUM_RANGE_NOT_HONORED");
+  }
+  return readExactRangedObject(result.Body.transformToWebStream(), expectedSize, result.ContentRange, result.ContentLength);
+}
+
+/** Verify persisted media bytes, not only the PutObject response or ETag. */
+export async function storageVerifySha256(relKey: string, expectedSize: number, expectedSha256: string): Promise<void> {
+  if (!Number.isSafeInteger(expectedSize) || expectedSize < 1 || expectedSize > CREATOR_STORED_MEDIA_MAX_BYTES ||
+      !/^[0-9a-f]{64}$/.test(expectedSha256)) throw new Error("CREATOR_STORAGE_EVIDENCE_INVALID");
+  const { client: s3, bucket } = getStorageConfig();
+  const result = await s3.send(new GetObjectCommand({
+    Bucket: bucket, Key: normalizeKey(relKey), Range: `bytes=0-${expectedSize - 1}`,
+  }), { abortSignal: AbortSignal.timeout(120_000) });
+  if (!result.Body) throw new Error("CREATOR_STORAGE_READBACK_MISSING_BODY");
+  await assertCreatorStoredObjectIntegrity({
+    stream: result.Body.transformToWebStream(),
+    statusCode: result.$metadata?.httpStatusCode,
+    contentRange: result.ContentRange,
+    contentLength: result.ContentLength,
+    expectedSize, expectedSha256,
+  });
+}
+
+export async function storageDelete(relKey: string): Promise<void> {
+  const { client: s3, bucket } = getStorageConfig();
+  const key = normalizeKey(relKey);
+  await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+}
+
+type StorageProbeDependencies = {
+  put?: typeof storagePut;
+  /** Optional legacy test seam; production must use the bounded range verifier. */
+  read?: typeof storageRead;
+  verify?: typeof storageVerifySha256;
+  delete?: typeof storageDelete;
+};
+
+export async function storageRoundTripProbe(
+  deps: StorageProbeDependencies = {},
+): Promise<{ pass: boolean; detail: string }> {
+  const payload = Buffer.from(`sakthiai-creator-storage-probe:${crypto.randomUUID()}`, "utf-8");
+  const put = deps.put ?? storagePut;
+  // Runtime readiness must exercise the SAME HTTP 206 / SHA-256 contract as
+  // Creator artifact persistence. An ordinary full-object GET is insufficient.
+  // The injected read seam is retained only for existing isolated unit tests.
+  const verify = deps.verify ?? (deps.read
+    ? async (key: string, size: number, checksum: string) => {
+        const loaded = Buffer.from(await deps.read!(key));
+        if (loaded.byteLength !== size || createHash("sha256").update(loaded).digest("hex") !== checksum) {
+          throw new Error("CREATOR_STORAGE_PROBE_MISMATCH");
+        }
+      }
+    : storageVerifySha256);
+  const remove = deps.delete ?? storageDelete;
+  let key: string | undefined;
+  let primaryFailure: { pass: false; detail: string } | null = null;
+
+  try {
+    const stored = await put(
+      "creator/runtime-probes/storage-canary.txt",
+      payload,
+      "text/plain; charset=utf-8",
+    );
+    key = stored.key;
+    await verify(stored.key, payload.byteLength, createHash("sha256").update(payload).digest("hex"));
+  } catch {
+    primaryFailure = { pass: false, detail: "Storage write/read round-trip failed." };
+  }
+
+  if (key) {
+    try {
+      await remove(key);
+    } catch {
+      if (!primaryFailure) {
+        return { pass: false, detail: "Storage delete verification failed." };
+      }
+    }
+  }
+
+  if (primaryFailure) return primaryFailure;
+  return { pass: true, detail: "Storage write/verified-read/delete round-trip succeeded; canary SHA-256 matched." };
 }
 
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
@@ -71,4 +218,69 @@ export async function storageGetSignedUrl(relKey: string): Promise<string> {
     new GetObjectCommand({ Bucket: bucket, Key: key }),
     { expiresIn: 300 },
   );
+}
+
+/** Bounded S3 listing for operator-only Creator reconciliation; no writes or deletion. */
+export async function storageListPage(prefix: string, maxKeys = 100, continuationToken?: string): Promise<{
+  objects: Array<{ key: string; sizeBytes: number; lastModified: Date | null }>;
+  isTruncated: boolean;
+  nextContinuationToken?: string;
+}> {
+  if (!new RegExp("^creator/[1-9][0-9]*/$").test(prefix)) throw new Error("CREATOR_INVENTORY_PREFIX_INVALID");
+  if (!Number.isInteger(maxKeys) || maxKeys < 1 || maxKeys > 200) throw new Error("CREATOR_INVENTORY_LIMIT_INVALID");
+  const { client: s3, bucket } = getStorageConfig();
+  const result = await s3.send(new ListObjectsV2Command({
+    Bucket: bucket,
+    Prefix: prefix,
+    MaxKeys: maxKeys,
+    ContinuationToken: continuationToken,
+  }));
+  const objects = (result.Contents ?? []).map((item) => {
+    if (!item.Key || !item.Key.startsWith(prefix) || !Number.isSafeInteger(item.Size) || item.Size! < 0) {
+      throw new Error("CREATOR_INVENTORY_INVALID_STORAGE_OBJECT");
+    }
+    return { key: item.Key, sizeBytes: item.Size!, lastModified: item.LastModified ?? null };
+  });
+  if (result.IsTruncated && !result.NextContinuationToken) throw new Error("CREATOR_INVENTORY_INVALID_PAGE");
+  return {
+    objects,
+    isTruncated: Boolean(result.IsTruncated),
+    nextContinuationToken: result.NextContinuationToken,
+  };
+}
+
+
+/**
+ * Read-only, bounded inventory of ONE fenced render's storage objects.
+ * The exact prefix is derived from numeric DB scope, never from a user key.
+ * Reject truncated results rather than reporting an incomplete inventory as
+ * evidence that an orphan does not exist. No deletion or state mutation.
+ */
+export async function storageListCreatorRenderObjects(
+  identity: CreatorRenderStorageIdentity,
+  maxKeys = 50,
+): Promise<Array<{ key: string; sizeBytes: number }>> {
+  if (!Number.isSafeInteger(maxKeys) || maxKeys < 1 || maxKeys > 100) {
+    throw new Error("CREATOR_RENDER_INVENTORY_LIMIT_INVALID");
+  }
+  const prefix = `creator/${identity.workspaceId}/${identity.creatorProjectId}/renders/timeline-${identity.timelineId}/export-${identity.exportId}`;
+  assertCreatorRenderStorageKey(`${prefix}.mp4`, identity);
+  const { client: s3, bucket } = getStorageConfig();
+  const result = await s3.send(new ListObjectsV2Command({
+    Bucket: bucket, Prefix: prefix, MaxKeys: maxKeys,
+  }), { abortSignal: AbortSignal.timeout(30_000) });
+  if (result.IsTruncated) throw new Error("CREATOR_RENDER_INVENTORY_TRUNCATED");
+  const objects: Array<{ key: string; sizeBytes: number }> = [];
+  for (const item of result.Contents ?? []) {
+    if (!item.Key || !item.Key.startsWith(prefix) ||
+        !Number.isSafeInteger(item.Size) || item.Size! < 0) {
+      throw new Error("CREATOR_RENDER_INVENTORY_INVALID_OBJECT");
+    }
+    // S3 prefix matching includes export-17* (e.g. export-170). Only the
+    // canonical key or the exact storagePut suffix belongs to this export.
+    try { assertCreatorRenderStorageKey(item.Key, identity); }
+    catch { continue; }
+    objects.push({ key: item.Key, sizeBytes: item.Size! });
+  }
+  return objects;
 }

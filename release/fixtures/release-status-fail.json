@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "1.0.0",
+  "purpose": "Public-safe release evidence ledger rendered on /intelligence. Records what was OBSERVED, when, and by which kind of check. No hostnames, service identifiers, account names or credentials. Unknown is never healthy; an observation older than freshnessDays is shown as stale and treated as unknown.",
+  "observedAt": "2026-10-24T02:40:00Z",
+  "freshnessDays": 7,
+  "verdicts": {
+    "preview": "no-go",
+    "production": "no-go"
+  },
+  "candidate": {
+    "label": "Draft PR #29 (combined runtime-qualification candidate)",
+    "link": "https://github.com/ssakthivel02/sakthiai-hitech/pull/29",
+    "lastCiVerifiedCommit": "0a48dc3164e35218c3e2789e2b8d34b177c3e48b",
+    "ciEvidence": "17/17 check runs successful at 0a48dc3 (16 distinct names), read 24 Oct 2026",
+    "note": "Commits pushed after the CI-verified commit are source-implemented only until their own CI run is read. The exact head is whatever this page's build reports below."
+  },
+  "deployment": {
+    "observedCommit": "469c668e71ceaae800e8605c5814e7017035fdbc",
+    "observedAt": "2026-10-24T02:35:00Z",
+    "method": "Hosting provider API, read-only: one web service, auto-deploy off, latest live deploy",
+    "note": "The preview serves an older commit than the CI-verified candidate. Deploying the candidate is an owner-approved, gated action."
+  },
+  "dashboardLink": "https://github.com/ssakthivel02/sakthiai-hitech/issues/1",
+  "layers": [
+    {
+      "id": "source-security",
+      "name": "Gateway and Creator security fixes (local-slot classification, redirects, pinned endpoint profiles)",
+      "state": "source_implemented",
+      "evidence": "Reproduced on 0a48dc3, fixed, unit-tested and mutation-checked locally on 24 Oct 2026; CI not yet read for the new commits."
+    },
+    {
+      "id": "ci",
+      "name": "Repository CI on the candidate",
+      "state": "ci_passed",
+      "evidence": "17/17 check runs at 0a48dc3. Later commits need their own CI run."
+    },
+    {
+      "id": "preview-deploy",
+      "name": "Preview deployment serves the candidate",
+      "state": "deployed",
+      "evidence": "Preview serves 469c668, which is 11 commits behind the CI-verified candidate 0a48dc3 (more behind the current head).",
+      "blocker": "Owner approval for a preview redeploy; preview service suspension (decision Q2) is approved but not executed."
+    },
+    {
+      "id": "preview-database",
+      "name": "Preview database inspected and migrated",
+      "state": "blocked",
+      "evidence": "No read-only inspection of the preview database has been recorded for the current candidate; migrations 0011/0012 have only local MySQL 8.0 qualification from earlier sessions (MySQL 8.4 not verified).",
+      "blocker": "Owner approval and environment-scoped credentials for the read-only inspect run, then a separately approved migrate run."
+    },
+    {
+      "id": "session-isolation",
+      "name": "Live session revocation and tenant isolation",
+      "state": "unknown",
+      "evidence": "Covered by source tests; never exercised against a deployed candidate."
+    },
+    {
+      "id": "file-scanner",
+      "name": "Malware scanner runtime and file ingestion",
+      "state": "blocked",
+      "evidence": "Upload path fails closed without a scanner; no live clean/EICAR/unavailable-scanner acceptance exists.",
+      "blocker": "Approved scanner runtime and its acceptance evidence. Ingestion stays disabled until then."
+    },
+    {
+      "id": "model-runtime",
+      "name": "Real model execution",
+      "state": "blocked",
+      "evidence": "No genuine local or hosted model call has been recorded. Tamil quality is not measured.",
+      "blocker": "Owner-run evaluation (Q8-eval) or a local model run; hosted providers stay disabled by default."
+    },
+    {
+      "id": "paid-creator",
+      "name": "Paid Creator generation",
+      "state": "blocked",
+      "evidence": "Fail-closed authorization and spend ledger exist in source; paid generation is disabled.",
+      "blocker": "Runtime verification of server-side budget and authorization controls before any enablement."
+    }
+  ]
+}

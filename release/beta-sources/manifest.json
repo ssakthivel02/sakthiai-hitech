@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1",
+  "corpusId": "sakthiai-beta-synthetic-v1",
+  "synthetic": true,
+  "purpose": "Operator-only import of synthetic English/Tamil sources into designated beta workspaces. Fictional content; no personal, customer or production data. Owner review of these files and approval of the database write are recorded outside this repository before any apply (see docs/BETA_SOURCE_IMPORT.md).",
+  "documents": [
+    {
+      "file": "synthetic-en-library-events.txt",
+      "filename": "synthetic-en-library-events.txt",
+      "language": "en",
+      "mimeType": "text/plain",
+      "sha256": "8eea6f4bbaa7d2c5dbc9691b3e07b09c18d4a2ebf8c9b3edb6fd69c21f3f2863"
+    },
+    {
+      "file": "synthetic-en-library-hours.txt",
+      "filename": "synthetic-en-library-hours.txt",
+      "language": "en",
+      "mimeType": "text/plain",
+      "sha256": "b971514b4fa827e64585149a6ddb82acdfbe74effb5a8e3886c30c125a293fb0"
+    },
+    {
+      "file": "synthetic-en-library-membership.txt",
+      "filename": "synthetic-en-library-membership.txt",
+      "language": "en",
+      "mimeType": "text/plain",
+      "sha256": "449b518d1c0c4c864ca4e5c5f9dbc2123c550dbe2b5407510b9d8dc8902849b7"
+    },
+    {
+      "file": "synthetic-ta-center-courses.txt",
+      "filename": "synthetic-ta-center-courses.txt",
+      "language": "ta",
+      "mimeType": "text/plain",
+      "sha256": "aadcecaeea705c95d5c2a75dca75544bb343d766283307fd09e17b2dd295fe74"
+    },
+    {
+      "file": "synthetic-ta-center-hours.txt",
+      "filename": "synthetic-ta-center-hours.txt",
+      "language": "ta",
+      "mimeType": "text/plain",
+      "sha256": "de2ad4feff6941a84a15dff9ad2a26e1663b6f4f9e2200713e618c7a62af5280"
+    },
+    {
+      "file": "synthetic-ta-center-safety.txt",
+      "filename": "synthetic-ta-center-safety.txt",
+      "language": "ta",
+      "mimeType": "text/plain",
+      "sha256": "76b3020f277d03f853487c2418e1bcc28377153e3b31b244c45175b2ba7d9923"
+    }
+  ]
+}

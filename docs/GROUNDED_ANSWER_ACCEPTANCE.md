@@ -15,6 +15,18 @@ The validator requires the chat path to:
 7. instruct the model to return the exact sentinel when evidence is insufficient;
 8. explicitly forbid invented citations.
 
+## Model-failure truthfulness (behaviourally tested)
+
+When evidence exists but the model call fails, times out or returns nothing, the chat path returns
+`grounding: MODEL_UNAVAILABLE` with a plain statement that generation failed and the retrieved citations.
+It never returns `GROUNDED_EVIDENCE` and never substitutes fabricated answer text. A model that itself
+answers with the exact `INSUFFICIENT_EVIDENCE` sentinel is reported as `INSUFFICIENT_EVIDENCE` with no citations.
+
+`server/chat.grounding.test.ts` (real `chat.send`, mocked model boundary) and
+`server/retrieval.unicode.test.ts` (Unicode/Tamil lexical retrieval with embeddings unavailable) run in
+both the Quality Gate (`pnpm test`) and this workflow, so ASCII-only tokenization or a mislabelled model
+failure cannot silently return.
+
 ## Claim boundary
 
 A passing repository gate does **not** prove live retrieval quality, Tamil answer quality, hallucination-free generation, citation correctness against a representative corpus, deployed database behavior, embedding-provider behavior, or production readiness.
