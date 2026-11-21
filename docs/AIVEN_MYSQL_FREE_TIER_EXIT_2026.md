@@ -6,7 +6,7 @@
 
 ## Purpose and known facts
 
-The account owner reported an Aiven notice dated 6 November 2026 announcing free MySQL retirement on **21 December 2026**, with eventual loss of hosted data and backups. Confirm the exact service applicability and deadlines from the private notice; do not depend on a post-retirement grace period.
+Aiven's public MySQL free-tier migration documentation and retirement changelog independently confirm that remaining free MySQL services are scheduled to be powered off on **21 December 2026**, with associated data/backups removed and no self-service recovery afterward. Vendor references: https://aiven.io/docs/products/mysql/howto/mysql-free-tier-migration-options and https://aiven.io/changelog/507f8b1b-dd8f-4841-ac4a-940ac492b688 . Treat this as a hard preservation deadline; do not depend on a post-retirement grace period.
 
 Read-only service metadata observed on 8 November 2026:
 
