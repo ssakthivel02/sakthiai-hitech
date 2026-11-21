@@ -130,3 +130,20 @@ Do not use the local MariaDB recovery rehearsal as proof that the managed MySQL 
 - [ ] Old service shutdown is separately approved only after the new path works.
 
 **Current conclusion (12 November 2026):** documentation and read-only Aiven inventory only. Both project Aiven services are currently reported `POWEROFF`; no independent export or restore has been verified for any of the shared MySQL databases. The data-preservation task is **OPEN/P0**. This runbook change does not power on, export, restore, change a plan, or authorize paid operations.
+
+
+## Read-only provider checkpoint — 21 November 2026
+
+A fresh **read-only** Aiven inspection was performed without powering on the service, connecting to MySQL, reading SQL, changing credentials, creating a service, upgrading a plan, or incurring provider spend.
+
+Observed provider metadata:
+- service `hitech-preview-mysql` remains **POWEROFF**;
+- plan remains `free-1-1gb` with reported plan price **USD 0**;
+- engine metadata remains MySQL **8.4.8** in `do-blr`;
+- the provider still lists `defaultdb`, `kirthiverse_preview`, `ramaverse_preview`, and `sakthiai_preview`;
+- three non-incremental managed backup records are currently listed, at approximately **278 MB** each, with backup timestamps on **9 Nov 2026** and **13 Nov 2026** (two snapshots on 13 Nov);
+- TLS mode in provider connection metadata remains required.
+
+This supersedes the older statement that hosted backup metadata was only observed through 3 November. It **does not** upgrade the recovery status: provider backup listings are still not an independently exported copy, and no restore/readback has been attempted or proven. The service is powered off, so this checkpoint deliberately did not query table counts, dump content, backup internals, or application data.
+
+**P0 status remains OPEN.** The safe next step still requires separate owner authorization for a controlled source-read/export window (or another provider-supported, independently restorable export path), encrypted off-platform custody, and an isolated scratch restore with schema/data checks. Do not power on or upgrade solely because newer managed backup metadata exists.
