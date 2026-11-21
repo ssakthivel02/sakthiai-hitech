@@ -50,6 +50,20 @@ For each database, use its **verified, separately authorized** read-only identit
 
 ## A — Before starting the service
 
+### Network-exposure gate before any recovery power-on
+
+The 21 Nov 2026 read-only Aiven metadata shows the powered-off service's configured IP filter currently includes both `0.0.0.0/0` and `::/0`. This is a broad network allowlist. It is **not evidence of unauthenticated access**, and the service is currently POWEROFF, but it is not an acceptable default assumption for a controlled export window.
+
+Before any separately authorized power-on:
+- obtain explicit owner/security approval for the intended network path;
+- restrict ingress to the minimum approved export-client source(s), private network, or another provider-supported controlled access path **before exposing the running database**;
+- preserve TLS identity verification and least-privilege export credentials;
+- record the temporary access-control change and rollback plan privately;
+- restore the approved secure posture after the export window.
+
+Do **not** power on first and rely on password authentication alone while the broad allowlist remains configured. Any IP-filter change is itself a live infrastructure mutation and requires separate `AUTHORIZE_AIVEN_ACTION` / owner approval; this runbook does not execute it.
+
+
 - [ ] Owner authorizes a limited power-on/export window and cost/plan boundaries.
 - [ ] Record the current Aiven plan, state, region, MySQL version, expected database and latest provider backup timestamp privately; confirm the provider-managed backup still exists.
 - [ ] Privately inventory every database on the shared MySQL service, confirm each project owner and preservation/retirement decision, and explicitly include any retained `defaultdb` data.
