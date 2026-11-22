@@ -1,7 +1,7 @@
 import type { AsyncPolicy, Decision, PolicyView } from "./types";
 import type { ModelTransport } from "./model_transport";
 import { ContractError, buildPrompt, parseDecision, stripReasoning } from "./llm_contract";
-import { sha256 } from "./canon";
+import { hashOf, sha256 } from "./canon";
 
 export interface GatewayOptions {
   /** hard cap on model calls for one investigation (including format retries) */ maxModelCalls?: number;
@@ -30,19 +30,30 @@ export class GatewayPolicy implements AsyncPolicy {
     if (base.system.length + base.user.length > this.o.maxPromptChars) throw new Error("PROMPT_TOO_LARGE");
     let user = base.user, lastReason = "";
     for (let attempt = 0; attempt <= this.o.formatRetries; attempt++) {
+      if (signal?.aborted) throw signal.reason ?? new Error("MODEL_CALL_ABORTED");
       if (this.modelCalls >= this.o.maxModelCalls) throw new Error("MODEL_CALL_BUDGET_EXHAUSTED");
       this.modelCalls++;
       const res = await this.t.complete({ system: base.system, user, attempt, ...(signal ? { signal } : {}) });
       this.tokensIn += res.tokens_in ?? 0; this.tokensOut += res.tokens_out ?? 0;
+      // A transport may ignore cancellation and return late. Account for the spent call, but never continue it.
+      if (signal?.aborted) throw signal.reason ?? new Error("MODEL_CALL_ABORTED");
       try {
         if (typeof res.text !== "string") throw new ContractError("reply is not text");
         if (res.text.length > this.o.maxResponseChars) throw new ContractError("reply too long");
         const d = parseDecision(res.text, view);
+        if (d.type === "CALL") {
+          // Match the broker's exact cache identity, including absent vs explicit empty args.
+          // Denials are not cached; completed errors/timeouts/no-data results are.
+          const key = hashOf({ t: d.request.tool, g: d.request.target, a: d.request.args ?? null });
+          if (view.history.some((h) => h.status !== "DENIED" && hashOf({ t: h.request.tool, g: h.request.target, a: h.request.args ?? null }) === key)) {
+            throw new ContractError("request already cached: choose a different authorized read or FINAL");
+          }
+        }
         return { ...d, model_meta: { reasoning_chars: stripReasoning(res.text).reasoning_chars, prompt_sha256: sha256(base.system + "\n" + user), response_sha256: sha256(res.text), attempt, model_calls: this.modelCalls, ...(res.tokens_in !== undefined ? { tokens_in: res.tokens_in } : {}), ...(res.tokens_out !== undefined ? { tokens_out: res.tokens_out } : {}), transport: this.t.kind, ...(res.provenance ? { provenance: res.provenance } : {}) } };
       } catch (e) {
         if (!(e instanceof ContractError)) throw e;
         lastReason = e.message.replace(/[^\w :.\-]/g, "?").slice(0, 80);       // reason text is ours, never the model's reply
-        user = base.user + `\n\nYour previous reply was rejected by the format validator (${lastReason}). Reply with exactly one valid JSON object and nothing else.`;
+        user = base.user + `\n\nYour previous reply was rejected by the decision validator (${lastReason}). Reply with exactly one valid JSON object and nothing else.`;
       }
     }
     throw new ContractError(`model reply rejected after ${this.o.formatRetries + 1} attempt(s): ${lastReason}`);

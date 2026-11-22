@@ -168,12 +168,17 @@ describe.skipIf(skip)("Sentinel through the governed MCP connector path (synthet
   it("a connector that hangs is cut off with the investigation's attempt: the in-flight request is aborted, not left running to its own timeout", async () => {
     fake.delayMs = 4000;                                           // far longer than the attempt timeout below, shorter than the connector's own 8s timeout
     const t0 = Date.now();
+    // A previous call can finish inside the old 20ms audit window. Keep it present to test isolation.
+    await mcpStore.audit({ workspaceId: WS, connectorId, actorUserId: 3, action: "CALL_TOOL", target: "unrelated-prior-call", outcome: "ERROR", detail: "Prior-call isolation control" });
+    const auditStart = (await mcpStore.listAudit(WS, 1))[0]!.id;
     const { ctx } = fakeCtx();
     const tight = () => ({ ...cfg(), toolAttemptTimeoutMs: 500 });
     const out = await createSentinelInvestigateHandler({ store, mcp, enabled: () => true, config: tight, modelFor: () => goodModel() })(ctx) as { status: string; verified: boolean | null };
     expect(out.status).not.toBe("COMPLETED"); expect(out.verified).toBe(false);
     // every hung attempt is audited as caller-aborted well before the connector's own 8s timeout could have fired
-    const audit = (await mcpStore.listAudit(WS, 50)).filter((a) => a.action === "CALL_TOOL" && a.createdAt.getTime() >= t0 - 20);
+    const allAudit = await mcpStore.listAudit(WS, 50);
+    const audit = allAudit.filter((a) => a.action === "CALL_TOOL" && a.id > auditStart);
+    expect(allAudit.find((a) => a.id === auditStart)?.outcome).toBe("ERROR"); // historical row retained, not hidden by outcome filtering
     expect(audit.length).toBeGreaterThan(0);
     expect(audit.every((a) => a.outcome === "TIMEOUT" && /aborted by the caller/.test(a.detail ?? ""))).toBe(true);
     expect(Date.now() - t0).toBeLessThan(7000);

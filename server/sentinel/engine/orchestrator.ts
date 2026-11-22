@@ -63,7 +63,11 @@ export async function investigateAsync(c: CaseDoc, o: AsyncRunOptions): Promise<
         try { d = await guarded(o.policy.next(a.view, ac.signal), ac.signal, o.policyTimeoutMs); }
         catch (e) {
           if (token.cancelled || ac.signal.aborted || (e instanceof Interrupted && e.kind === "ABORT")) inv.cancelInFlight("policy");
-          else inv.policyFailure(e instanceof Interrupted ? "POLICY_TIMEOUT" : String((e as Error)?.message ?? e));
+          else {
+            // The policy promise may still be running after its deadline. Prevent a late reply from starting a retry.
+            if (e instanceof Interrupted && e.kind === "TIMEOUT") ac.abort();
+            inv.policyFailure(e instanceof Interrupted ? "POLICY_TIMEOUT" : String((e as Error)?.message ?? e));
+          }
           break;
         }
         const b = inv.applyDecision(d);
