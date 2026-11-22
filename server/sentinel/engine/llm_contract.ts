@@ -16,6 +16,7 @@ export function buildPrompt(view: PolicyView): { system: string; user: string } 
     "Examples show structure only. Replace every placeholder with actual allowed identifiers or evidence IDs; do not copy an example's conclusion. Choose DIAGNOSIS only when the evidence supports it, otherwise give a specific reason for ABSTAIN and identify the missing evidence.",
     "For a DIAGNOSIS, use outcome DIAGNOSIS, an actual taxonomy label, actual cited record IDs, and evidence-backed remediation proposals. Score and confidence must be JSON numbers from 0 to 1; hypothesis status must be ACTIVE, LEADING, REJECTED, or SUPPORTED.",
     "A DIAGNOSIS needs at least two cited records from two different tools. If evidence is insufficient or tools failed, ABSTAIN with next_safe_steps.",
+    "Check evidence_inventory before concluding. When structural_minimum_met is false, do not return DIAGNOSIS: request a different useful authorized tool if budget permits, or ABSTAIN. When budget.force_final is true, ABSTAIN instead of requesting more tools. structural_minimum_met is not a diagnosis approval: citations still need relevant, current evidence and an assessment of contradictions, and the final verifier remains authoritative. Different tool names do not prove independent underlying sources.",
     "An identical tool request returns a cached result, marked history.replayed, and supplies no new evidence. Do not repeat it to obtain more records. Choose another useful authorized request or ABSTAIN when evidence is insufficient.",
     "When hypothesis_context is present, prior and leader are previously reported claims, not verified facts. new_evidence lists the clean records newly available for this decision; a cached replay supplies none. Keep your claims consistent with that snapshot. If blocking_warnings is nonempty, ABSTAIN because a strict ledger inconsistency has already been recorded.",
     "Keep your hypotheses current. When the leading hypothesis changes, the change must rest on a record returned by your most recent tool call: list it in supporting (new leader) or refuted_by (old leader, status REJECTED). Cite only rids that appear in history.",
@@ -25,8 +26,19 @@ export function buildPrompt(view: PolicyView): { system: string; user: string } 
   ].join("\n");
   // Tenant identity is enforced by the broker and the transport session, never by the model, so the model is not shown it and cannot echo or choose it.
   const { tenant: _tenant, ...visibleCase } = view.case;
+  // Counts explain existing minimums to the policy; they do not authorize a conclusion or replace verification.
+  // Replays retain their original record IDs, so unique IDs avoid manufacturing corroboration from cached reads.
+  const records = new Map<string, { observation: string; tool: string }>();
+  for (const h of view.history) if (h.status === "OK") for (const r of h.records) {
+    if (!r.quarantined) records.set(r.rid, { observation: r.obs_id, tool: h.request.tool });
+  }
+  const observations = new Set([...records.values()].map((r) => r.observation));
+  const tools = [...new Set([...records.values()].map((r) => r.tool))];
+  const evidence_inventory = { clean_records: records.size, distinct_observations: observations.size, tools_with_records: tools,
+    minimum_for_diagnosis: { records: 2, observations: 2, tools: 2 }, structural_minimum_met: records.size >= 2 && observations.size >= 2 && tools.length >= 2 };
   const user = JSON.stringify({ case: visibleCase, tool_policy: { allowed_targets: [...new Set([...view.case.inventory.services, ...view.case.inventory.hosts])], denied_requests: view.history.filter((h) => h.status === "DENIED").map((h) => ({ request: h.request, reason: h.deny_reason ?? "DENIED" })) }, history: view.history.map((h) => ({ request: h.request, status: h.status, replayed: h.replayed, deny_reason: h.deny_reason, records: h.records.map((r) => ({ rid: r.rid, ts: r.ts, level: r.level, text: r.text })) })),
     ...(view.hypothesis_context ? { hypothesis_context: view.hypothesis_context } : {}),
+    evidence_inventory,
     budget: { calls_left: view.calls_left, steps_left: view.steps_left, virtual_ms_left: view.virtual_ms_left, force_final: view.force_final } });
   return { system, user };
 }
