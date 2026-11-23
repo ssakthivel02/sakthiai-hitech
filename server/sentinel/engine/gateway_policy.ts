@@ -31,6 +31,8 @@ export class GatewayPolicy implements AsyncPolicy {
     let user = base.user, lastReason = "";
     for (let attempt = 0; attempt <= this.o.formatRetries; attempt++) {
       if (signal?.aborted) throw signal.reason ?? new Error("MODEL_CALL_ABORTED");
+      // Retry feedback also consumes prompt space. Reject before reserving another model call.
+      if (base.system.length + user.length > this.o.maxPromptChars) throw new Error("PROMPT_TOO_LARGE");
       if (this.modelCalls >= this.o.maxModelCalls) throw new Error("MODEL_CALL_BUDGET_EXHAUSTED");
       this.modelCalls++;
       const res = await this.t.complete({ system: base.system, user, attempt, ...(signal ? { signal } : {}) });
