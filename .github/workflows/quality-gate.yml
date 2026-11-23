@@ -614,10 +614,58 @@ jobs:
           node -p 'const m=require("./dist/release-manifest.json");`artifact=${m.artifactDigest}\ncommit=${m.sourceCommit}`' >> "$GITHUB_OUTPUT"
           node -e 'const m=require("./dist/release-manifest.json");console.log(`| field | value |\n|---|---|\n| artifact digest | ${m.artifactDigest} |\n| server digest | ${m.components.server.digest} |\n| client digest | ${m.components.client.digest} |\n| VITE variables | ${m.buildEnvironment.viteVariables.join(", ") || "none"} (fingerprint ${m.buildEnvironment.fingerprint}) |\n| files | ${m.fileCount} |\n| source commit | ${m.sourceCommit} |\n| lockfile sha256 | ${m.lockfileSha256} |\n| package.json sha256 | ${m.packageJsonSha256} |\n| node / pnpm | ${m.toolchain.node} / ${m.toolchain.pnpm} |\n| build | ${m.buildCommand} |`)' >> "$GITHUB_STEP_SUMMARY"
 
+      # upload-artifact excludes dotfiles unless requested; restrict them before opt-in.
+      - name: Restrict hidden files in release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/public/.gitkeep
+          test ! -s dist/public/.gitkeep
+          while IFS= read -r -d '' item; do
+            if [[ "$item" != "dist/public/.gitkeep" ]]; then
+              echo "Unexpected hidden build path; refusing archive" >&2
+              exit 1
+            fi
+          done < <(find dist -mindepth 1 -name '.*' -print0)
+
       - name: Retain deployable artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-artifact-${{ steps.identity.outputs.commit }}
           path: dist/
+          include-hidden-files: true
           retention-days: 90
           if-no-files-found: error
+
+      # Validate the stored download, not only the pre-upload build.
+      - name: Download release artifact for round-trip verification
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifact-${{ steps.identity.outputs.commit }}
+          path: ${{ runner.temp }}/sakthiai-release-roundtrip
+
+      - name: Verify downloaded artifact bytes against manifest
+        shell: bash
+        env:
+          ROUNDTRIP_DIST: ${{ runner.temp }}/sakthiai-release-roundtrip
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { computeArtifactDigest } from './scripts/release-manifest.mjs';
+          const path = process.env.ROUNDTRIP_DIST;
+          const manifest = JSON.parse(readFileSync(join(path, 'release-manifest.json'), 'utf8'));
+          const actual = computeArtifactDigest(path);
+          const same = actual.digest === manifest.artifactDigest &&
+            actual.fileCount === manifest.fileCount &&
+            actual.components.server.digest === manifest.components.server.digest &&
+            actual.components.client.digest === manifest.components.client.digest &&
+            actual.components.server.fileCount === manifest.components.server.fileCount &&
+            actual.components.client.fileCount === manifest.components.client.fileCount &&
+            manifest.sourceCommit === process.env.EXPECTED_HEAD;
+          if (!same) {
+            console.error('Uploaded release archive does not match built artifact manifest and exact source SHA');
+            process.exitCode = 1;
+          } else console.log('RELEASE_ARCHIVE_ROUNDTRIP_PASS files=' + actual.fileCount + ' digest=' + actual.digest);
+          NODE
