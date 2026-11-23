@@ -33,3 +33,11 @@ it('exposes fresh options in the model view without replacing other requests or 
  assert.match(prompt.system,/different valid args/);
  assert.equal(Object.hasOwn(visible.tool_policy,'diagnosis'),false);
 });
+it('keeps earlier evidence in the reusable prefix when budgets and available requests change',()=>{
+ const record={rid:'prefix-record',obs_id:'prefix-observation',ts:'2026-11-20T00:00:00Z',level:'INFO',text:'Stable evidence prefix',quarantined:false};
+ const first={...base,calls_left:3,history:[history({records:[record]})]};
+ const later={...base,calls_left:2,history:[...first.history,history({seq:2,request:{tool:'config.get',target:'demo'}})]};
+ const before=buildPrompt(first).user,after=buildPrompt(later).user,marker='"text":"Stable evidence prefix"';
+ assert(before.includes(marker));let common=0;while(common<before.length&&before[common]===after[common])common++;
+ assert(common>=before.indexOf(marker)+marker.length,'Changing request guidance evicted the earlier evidence prefix');
+});
