@@ -1,3 +1,4 @@
+import { isBoundedResponseSchema } from "./responseSchema";
 import { isRetryableHttpStatus } from "../_core/llm";
 export { isRetryableHttpStatus };
 import { isPinnedProfile, validatePinnedOrigin, type EndpointProfileId } from "./endpointProfiles";
@@ -19,6 +20,8 @@ export type OpenAiCompatibleOptions = {
   apiKey?: string;
   /** Set only for endpoints explicitly configured to support JSON-object mode. */
   jsonMode?: boolean;
+  /** Opt-in local llama-compatible response_format.schema extension. Not inferred from JSON mode. */
+  llamaJsonSchema?: boolean;
   /** Per-HTTP-attempt timeout. */
   timeoutMs?: number;
   /** Bounded HTTP attempts (first try included). */
@@ -126,6 +129,7 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
 
   async function attemptOnce(call: AdapterCall, attemptTimeoutMs: number): Promise<Omit<AdapterSuccess, "attempts">> {
     if (call.responseFormat !== undefined && (call.responseFormat !== "json_object" || !options.jsonMode)) throw new ProviderCallError("bad_request");
+    if (call.responseSchema !== undefined && (call.responseFormat !== "json_object" || !options.llamaJsonSchema || !isBoundedResponseSchema(call.responseSchema))) throw new ProviderCallError("bad_request");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
     try {
@@ -143,7 +147,7 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
           headers: { "content-type": "application/json", ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}) },
           body: JSON.stringify({
             model: call.model,
-            ...(call.responseFormat ? { response_format: { type: call.responseFormat } } : {}),
+            ...(call.responseFormat ? { response_format: { type: call.responseFormat, ...(call.responseSchema !== undefined ? { schema: call.responseSchema } : {}) } } : {}),
             messages: call.messages,
             ...(call.maxOutputTokens ? { max_tokens: call.maxOutputTokens } : {}),
           }),

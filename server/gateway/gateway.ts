@@ -1,3 +1,4 @@
+import { isBoundedResponseSchema } from "./responseSchema";
 import { MODEL_CATALOG } from "../model-fabric/catalog";
 import { routeModel } from "../model-fabric/router";
 import type { ModelProfile, RoutingRequest } from "../model-fabric/types";
@@ -100,6 +101,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
             endpointProfile: binding.endpointProfile,
             apiKey: binding.apiKey,
             jsonMode: binding.jsonMode,
+            llamaJsonSchema: binding.kind === "self_hosted" && binding.llamaJsonSchema === true,
             timeoutMs: binding.timeoutMs,
             // The local slot dials only through the pinned fetch: the address policy runs inside the socket's own lookup, so a name cannot pass a check and then
             // connect somewhere else (DNS rebinding), and link-local / cloud-metadata addresses are refused as a terminal bad_request. The early guard stays as a cheap pre-check.
@@ -282,6 +284,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
       finish({ status: "failed", reason, attempts, latencyMs: now() - startedAt });
 
     if (request.responseFormat !== undefined && request.responseFormat !== "json_object") return failed("bad_request");
+    if (request.responseSchema !== undefined && (request.responseFormat !== "json_object" || !isBoundedResponseSchema(request.responseSchema))) return failed("bad_request");
     const ordered = routedProfiles(request);
     if (!ordered.length) return failed("no_eligible_provider");
 
@@ -296,6 +299,12 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
       tried.add(binding.providerId);
       if (request.responseFormat && !binding.jsonMode) {
         attempts.push({ providerId: binding.providerId, outcome: "skipped:policy:json_mode_not_enabled" });
+        lastFailure = "policy_denied";
+        continue;
+      }
+
+      if (request.responseSchema !== undefined && (binding.kind !== "self_hosted" || !binding.llamaJsonSchema)) {
+        attempts.push({ providerId: binding.providerId, outcome: "skipped:policy:local_schema_not_enabled" });
         lastFailure = "policy_denied";
         continue;
       }
@@ -327,7 +336,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
 
       const callStarted = now();
       try {
-        const success = await adapterFor(binding).complete({ messages: request.messages, maxOutputTokens, model: binding.model, ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}) });
+        const success = await adapterFor(binding).complete({ messages: request.messages, maxOutputTokens, model: binding.model, ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}), ...(request.responseSchema !== undefined ? { responseSchema: request.responseSchema } : {}) });
         await breaker.recordSuccess(binding.providerId);
         const usage = usageFrom(binding, success, estimatedTokens);
         if (gate.reservation && budgetStore) {

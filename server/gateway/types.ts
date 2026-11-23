@@ -16,6 +16,8 @@ export type GatewayRequest = {
   maxOutputTokens?: number;
   /** Explicit JSON-object mode; requires a catalog capability and an opted-in endpoint. */
   responseFormat?: "json_object";
+  /** Optional bounded schema for an explicitly opted-in local llama-compatible endpoint; requires JSON-object mode. */
+  responseSchema?: Record<string, unknown>;
   intents?: readonly TaskIntent[];
   requiredCapabilities?: readonly ModelCapability[];
   optionalCapabilities?: readonly ModelCapability[];
@@ -87,6 +89,8 @@ export type AdapterCall = {
   maxOutputTokens?: number;
   /** Explicit JSON-object mode; requires a catalog capability and an opted-in endpoint. */
   responseFormat?: "json_object";
+  /** Optional bounded schema for an explicitly opted-in local llama-compatible endpoint; requires JSON-object mode. */
+  responseSchema?: Record<string, unknown>;
   model: string;
 };
 
@@ -119,6 +123,8 @@ export type ProviderBinding = {
   resolveGuard?: boolean;
   /** Operator-confirmed support for the OpenAI-compatible JSON-object request field. Default off. */
   jsonMode?: boolean;
+  /** Local llama-compatible schema extension. Default off; operator must independently verify endpoint support. */
+  llamaJsonSchema?: boolean;
 };
 
 export type RuntimeState =
