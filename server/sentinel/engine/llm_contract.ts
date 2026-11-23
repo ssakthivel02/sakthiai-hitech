@@ -1,4 +1,5 @@
 import type { Decision, FinalAnswer, Hypothesis, PolicyView } from "./types";
+import { uncachedDefaultRequests } from "./default_requests";
 
 /**
  * Contract for a FUTURE model-backed policy. Nothing here calls a model. It defines (a) what the model is shown and
@@ -19,6 +20,7 @@ export function buildPrompt(view: PolicyView): { system: string; user: string } 
     "A DIAGNOSIS needs at least two cited records from two different tools. If evidence is insufficient or tools failed, ABSTAIN with next_safe_steps.",
     "Check evidence_inventory before concluding. When structural_minimum_met is false, do not return DIAGNOSIS: request a different useful authorized tool if budget permits, or ABSTAIN. When budget.force_final is true, ABSTAIN instead of requesting more tools. structural_minimum_met is not a diagnosis approval: citations still need relevant, current evidence and an assessment of contradictions, and the final verifier remains authoritative. Different tool names do not prove independent underlying sources.",
     "An identical tool request would return a cached result and supply no new evidence. The decision validator rejects requests already completed in history, including cached errors, timeouts and empty results. Choose another useful authorized request or ABSTAIN when evidence is insufficient.",
+    "tool_policy.uncached_default_requests lists a bounded set of in-scope requests with no args that are not cached. When more evidence is needed, choose a useful listed request rather than repeating history. uncached_default_requests_omitted counts other eligible defaults not shown. Requests with different valid args are not listed. This guidance does not choose a diagnosis or authorize calls; the broker, budget and final verifier remain authoritative.",
     "When hypothesis_context is present, prior and leader are previously reported claims, not verified facts. new_evidence lists the clean records newly available for this decision; a cached replay supplies none. Keep your claims consistent with that snapshot. If blocking_warnings is nonempty, ABSTAIN because a strict ledger inconsistency has already been recorded.",
     "Keep your hypotheses current. When the leading hypothesis changes, the change must rest on a record returned by your most recent tool call: list it in supporting (new leader) or refuted_by (old leader, status REJECTED). Cite only rids that appear in history.",
     "Never state that any action was performed. You cannot perform actions.",
@@ -37,7 +39,8 @@ export function buildPrompt(view: PolicyView): { system: string; user: string } 
   const tools = [...new Set([...records.values()].map((r) => r.tool))];
   const evidence_inventory = { clean_records: records.size, distinct_observations: observations.size, tools_with_records: tools,
     minimum_for_diagnosis: { records: 2, observations: 2, tools: 2 }, structural_minimum_met: records.size >= 2 && observations.size >= 2 && tools.length >= 2 };
-  const user = JSON.stringify({ case: visibleCase, tool_policy: { allowed_targets: [...new Set([...view.case.inventory.services, ...view.case.inventory.hosts])], denied_requests: view.history.filter((h) => h.status === "DENIED").map((h) => ({ request: h.request, reason: h.deny_reason ?? "DENIED" })) }, history: view.history.map((h) => ({ request: h.request, status: h.status, replayed: h.replayed, deny_reason: h.deny_reason, records: h.records.map((r) => ({ rid: r.rid, ts: r.ts, level: r.level, text: r.text })) })),
+  const defaults = uncachedDefaultRequests(view);
+  const user = JSON.stringify({ case: visibleCase, tool_policy: { allowed_targets: [...new Set([...view.case.inventory.services, ...view.case.inventory.hosts])], uncached_default_requests: defaults.requests, uncached_default_requests_omitted: defaults.omitted, denied_requests: view.history.filter((h) => h.status === "DENIED").map((h) => ({ request: h.request, reason: h.deny_reason ?? "DENIED" })) }, history: view.history.map((h) => ({ request: h.request, status: h.status, replayed: h.replayed, deny_reason: h.deny_reason, records: h.records.map((r) => ({ rid: r.rid, ts: r.ts, level: r.level, text: r.text })) })),
     ...(view.hypothesis_context ? { hypothesis_context: view.hypothesis_context } : {}),
     evidence_inventory,
     budget: { calls_left: view.calls_left, steps_left: view.steps_left, virtual_ms_left: view.virtual_ms_left, force_final: view.force_final } });
