@@ -18,7 +18,7 @@ export function buildPrompt(view: PolicyView): { system: string; user: string } 
     "Examples show structure only: replace placeholders with allowed IDs or actual rids; never copy a conclusion. Diagnose only from evidence; otherwise ABSTAIN with a specific reason and missing evidence.",
     "DIAGNOSIS requires an actual taxonomy label, actual cited rids and evidence-backed proposals. Scores/confidence are JSON numbers in [0,1]; hypothesis status: ACTIVE, LEADING, REJECTED or SUPPORTED.",
     "DIAGNOSIS needs at least two cited records from different tools. Insufficient evidence or failed tools requires ABSTAIN with next_safe_steps.",
-    "Check evidence_inventory. When structural_minimum_met is false, read another useful authorized source within budget or ABSTAIN; never DIAGNOSIS. budget.force_final requires ABSTAIN. structural_minimum_met is not a diagnosis approval: assess relevant/current evidence and contradictions; the final verifier decides. Different tool names do not prove independent underlying sources.",
+    "Check evidence_inventory. When structural_minimum_met is false, read another useful authorized source within budget or ABSTAIN; never DIAGNOSIS. budget.force_final requires FINAL; choose an outcome using budget.structural_final_outcomes and the evidence. structural_minimum_met is not a diagnosis approval: assess relevant/current evidence and contradictions; the final verifier decides. Different tool names do not prove independent underlying sources.",
     "Identical completed requests are cached (errors/timeouts/empty results too) and rejected. Prefer useful tool_policy.uncached_default_requests; different valid args are not listed. The omitted count means more defaults. This bounded list grants no permission or evidence sufficiency.",
     "hypothesis_context.prior/leader are unverified prior claims; new_evidence lists fresh clean rids (none on replay). Keep claims consistent with it. Nonempty blocking_warnings means a strict ledger inconsistency: ABSTAIN.",
     "A changed leading hypothesis needs a record from the latest tool call in supporting for the new leader or refuted_by for the old REJECTED leader. Cite only history rids.",
@@ -42,7 +42,7 @@ export function buildPrompt(view: PolicyView): { system: string; user: string } 
   const user = JSON.stringify({ case: visibleCase, history: view.history.map((h) => ({ request: h.request, status: h.status, replayed: h.replayed, deny_reason: h.deny_reason, records: h.records.map((r) => ({ rid: r.rid, ts: r.ts, level: r.level, text: r.text })) })),
     ...(view.hypothesis_context ? { hypothesis_context: view.hypothesis_context } : {}),
     evidence_inventory,
-    budget: { calls_left: view.calls_left, steps_left: view.steps_left, virtual_ms_left: view.virtual_ms_left, force_final: view.force_final },
+    budget: { calls_left: view.calls_left, steps_left: view.steps_left, virtual_ms_left: view.virtual_ms_left, force_final: view.force_final, structural_final_outcomes: evidence_inventory.structural_minimum_met ? ["DIAGNOSIS", "ABSTAIN"] : ["ABSTAIN"] },
     // Keep changing guidance after evidence so it cannot invalidate an otherwise reusable history prefix.
     tool_policy: { allowed_targets: [...new Set([...view.case.inventory.services, ...view.case.inventory.hosts])], uncached_default_requests: defaults.requests, uncached_default_requests_omitted: defaults.omitted, denied_requests: view.history.filter((h) => h.status === "DENIED").map((h) => ({ request: h.request, reason: h.deny_reason ?? "DENIED" })) } });
   return { system, user };

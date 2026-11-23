@@ -46,4 +46,21 @@ describe("model-visible corroboration inventory", () => {
     expect(p.system).toContain("When budget.force_final is true, return FINAL, never CALL");
     expect(p.system).toContain("structural_minimum_met is not a diagnosis approval");
   });
+  it("keeps both final outcomes structurally possible at a final-only boundary with corroboration", () => {
+    const history = [result("logs.search", "r1", "o1"), result("config.get", "r2", "o2")];
+    const v: PolicyView = { case: caseFromRecord(newRow() as never), history, calls_left: 0, steps_left: 0, virtual_ms_left: 0, force_final: true, taxonomy: { ...DEFAULT_TAXONOMY } };
+    const state = JSON.parse(buildPrompt(v).user);
+    expect(state.budget.structural_final_outcomes).toEqual(["DIAGNOSIS", "ABSTAIN"]);
+    expect(state.budget.force_final).toBe(true);
+    expect(state.tool_policy.uncached_default_requests).toEqual([]);
+  });
+  it("offers only abstention as a final outcome when structural corroboration is missing", () => {
+    for (const history of [[], [result("logs.search", "r1", "o1")], [result("logs.search", "r1", "o1"), result("config.get", "r2", "o2", true)]]) {
+      const v: PolicyView = { case: caseFromRecord(newRow() as never), history, calls_left: 0, steps_left: 0, virtual_ms_left: 0, force_final: true, taxonomy: { ...DEFAULT_TAXONOMY } };
+      const state = JSON.parse(buildPrompt(v).user);
+      expect(state.budget.structural_final_outcomes).toEqual(["ABSTAIN"]);
+      expect(state.tool_policy.uncached_default_requests).toEqual([]);
+    }
+  });
+
 });
