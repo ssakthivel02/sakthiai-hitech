@@ -231,14 +231,10 @@ describe("Creator render plan global frame grid", () => {
     expect(args).toContain("concat=n=4:v=1:a=0,setpts=N/(24*TB)[vc]");
   });
 
-  it("keeps the aligned fixture's frame count and lists zero-frame segments without rendering them", () => {
+  it("rejects approved visual segments that own no frame on the global grid", () => {
     expect(gridPlan([0, 1500, 3000], 24).frameCount).toBe(72);
-    const plan = gridPlan([0, 1, 2, 3, 100], 24);
-    expect(plan.frameCount).toBe(2);
-    expect(plan.visualAssetIds).toEqual([200, 201, 202, 203]);
-    expect(plan.frameSegments.map(segment => segment.frameCount)).toEqual([0, 0, 0, 2]);
-    expect(plan.ffmpegArgs.filter(arg => arg === "-loop")).toHaveLength(1);
-    expect(plan.ffmpegArgs.join(" ")).toContain("concat=n=1:v=1:a=0");
+    expect(() => gridPlan([0, 1, 2, 3, 100], 24))
+      .toThrow("CREATOR_RENDER_VISUAL_TOO_SHORT_FOR_FPS");
   });
 
   it("refuses a master too short to occupy one frame at the target fps", () => {

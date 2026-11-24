@@ -56,7 +56,7 @@ export type DeterministicRenderPlan = {
   durationMs: number;
   visualAssetIds: number[];
   frameCount: number;
-  /** Visual segments on the global frame grid (frame indices, end exclusive). Zero-frame segments are listed but not rendered. */
+  /** Visual segments on the global frame grid (frame indices, end exclusive). Every approved segment must own >= 1 frame. */
   frameSegments: RenderFrameSegment[];
 };
 
@@ -152,9 +152,15 @@ function planFrameSegments(visuals: RenderVisualItem[], fps: number, durationMs:
     const endFrame = frameAtMs(item.endMs, fps);
     return { assetId: item.assetId, startFrame, endFrame, frameCount: endFrame - startFrame };
   });
+  // An approved visual that owns no output frame would be silently omitted from
+  // the render. Fail closed instead so authoring must align every approved item
+  // to the global frame grid.
+  if (segments.some(segment => segment.frameCount < 1)) {
+    throw new Error("CREATOR_RENDER_VISUAL_TOO_SHORT_FOR_FPS");
+  }
   // Defensive: validateVisualItems already guarantees ms contiguity, so a failure here means the grid logic is broken.
   const tiled = segments[0].startFrame === 0 &&
-    segments.every((seg, index) => seg.frameCount >= 0 && (index === 0 || seg.startFrame === segments[index - 1].endFrame)) &&
+    segments.every((seg, index) => seg.frameCount >= 1 && (index === 0 || seg.startFrame === segments[index - 1].endFrame)) &&
     segments[segments.length - 1].endFrame === totalFrames &&
     segments.reduce((sum, seg) => sum + seg.frameCount, 0) === totalFrames;
   if (!tiled) throw new Error("CREATOR_RENDER_FRAME_GRID_INVALID");
@@ -182,8 +188,7 @@ export function buildDeterministicRenderPlan(input: DeterministicRenderPlanInput
   const filters: string[] = [];
 
   const { segments: frameSegments, totalFrames } = planFrameSegments(visuals, input.fps, input.audioDurationMs);
-  // A segment shorter than one frame occupies no frame on the grid, so it contributes no FFmpeg input.
-  const rendered = visuals.map((item, index) => ({ item, frames: frameSegments[index].frameCount })).filter(entry => entry.frames > 0);
+  const rendered = visuals.map((item, index) => ({ item, frames: frameSegments[index].frameCount }));
 
   rendered.forEach(({ item, frames }, index) => {
     // Generous input window; the exact length is enforced by trim=end_frame on the global frame grid.
