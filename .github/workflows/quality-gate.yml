@@ -492,8 +492,13 @@ jobs:
       - name: Install FFmpeg and FFprobe for real Creator browser candidate acceptance
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          # Playwright's preceding --with-deps install already refreshes apt
+          # metadata. Avoid a second unbounded apt update here: it exhausted the
+          # 25-minute E2E job timeout on the prior exact head before tests ran.
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            timeout 300 sudo env DEBIAN_FRONTEND=noninteractive \
+              apt-get install -y --no-install-recommends ffmpeg
+          fi
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
 
