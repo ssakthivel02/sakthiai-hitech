@@ -572,6 +572,9 @@ jobs:
     # its /releasez artifact.digest with the digest recorded here (docs/RELEASE_ARTIFACT.md).
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout exact deployable commit
         uses: actions/checkout@v4
@@ -637,12 +640,32 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
+      # The upload may finalize before GitHub indexes it for same-run download.
+      # Retry bounded read-only listings instead of dispatching another workflow.
+      - name: Wait for uploaded archive to be discoverable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: release-artifact-${{ steps.identity.outputs.commit }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired == false) | .name' | grep -Fxq "$ARTIFACT_NAME"; then
+              exit 0
+            fi
+            sleep "$((attempt * 3))"
+          done
+          echo "::error::Release artifact was uploaded but not discoverable in this exact run."
+          exit 1
+
       # Validate the stored download, not only the pre-upload build.
       - name: Download release artifact for round-trip verification
         uses: actions/download-artifact@v4
         with:
           name: release-artifact-${{ steps.identity.outputs.commit }}
           path: ${{ runner.temp }}/sakthiai-release-roundtrip
+          github-token: ${{ github.token }}
 
       - name: Verify downloaded artifact bytes against manifest
         shell: bash
