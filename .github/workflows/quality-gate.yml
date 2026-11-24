@@ -238,8 +238,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          # Avoid a second unbounded apt metadata refresh after runner/service
+          # setup. The same pattern previously consumed the E2E timeout.
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            timeout 300 sudo env DEBIAN_FRONTEND=noninteractive \
+              apt-get install -y --no-install-recommends ffmpeg
+          fi
           ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
 
