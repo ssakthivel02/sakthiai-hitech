@@ -194,42 +194,44 @@ jobs:
 
       - name: Start disposable loopback MinIO
         shell: bash
+        env:
+          MINIO_RELEASE_URL: https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/minio.linux-amd64.RELEASE.2025-09-07T16-13-09Z
+          MINIO_RELEASE_SHA256: 7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f
         run: |
           set -euo pipefail
-          # Registry throttling is external to the Creator code. Try the exact
-          # pinned image from two registries with bounded backoff; never use
-          # :latest or skip the real MinIO acceptance when pulls fail.
-          minio_image=""
-          for candidate in \
-            public.ecr.aws/y9w4h2u9/minio:RELEASE.2025-09-07T16-13-09Z \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z; do
-            for attempt in 1 2 3; do
-              if docker pull "$candidate"; then
-                minio_image="$candidate"
-                break
-              fi
-              echo "MinIO registry pull failed (attempt $attempt); retrying with bounded delay"
-              sleep "$((attempt * 3))"
-            done
-            if [ -n "$minio_image" ]; then break; fi
-          done
-          if [ -z "$minio_image" ]; then
-            echo "MinIO pinned image unavailable from both registries; failing closed"
-            exit 1
-          fi
-          docker run --pull=never --rm -d --name sakthiai-creator-minio \
-            -p 127.0.0.1:9000:9000 \
-            -e MINIO_ROOT_USER=ci-minio-user \
-            -e MINIO_ROOT_PASSWORD=ci-minio-secret-only \
-            "$minio_image" server /data
+          # MinIO Community Edition is source-only now and the historical
+          # container registries are not reliable. Use the exact upstream
+          # GitHub release asset instead of an unverified mirror, verify its
+          # published SHA-256, and run it only on runner loopback.
+          minio_bin="$RUNNER_TEMP/minio.RELEASE.2025-09-07T16-13-09Z"
+          minio_data="$RUNNER_TEMP/sakthiai-minio-data"
+          minio_log="$RUNNER_TEMP/sakthiai-minio.log"
+          mkdir -p "$minio_data"
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-all-errors --retry-delay 2 \
+            "$MINIO_RELEASE_URL" --output "$minio_bin"
+          echo "$MINIO_RELEASE_SHA256  $minio_bin" | sha256sum --check --strict
+          chmod 0755 "$minio_bin"
+          "$minio_bin" --version
+          MINIO_ROOT_USER=ci-minio-user \
+          MINIO_ROOT_PASSWORD=ci-minio-secret-only \
+            "$minio_bin" server "$minio_data" --address 127.0.0.1:9000 \
+            >"$minio_log" 2>&1 &
+          minio_pid=$!
+          echo "$minio_pid" > "$RUNNER_TEMP/sakthiai-minio.pid"
           for attempt in $(seq 1 40); do
             if curl --fail --silent http://127.0.0.1:9000/minio/health/live > /dev/null; then
               echo "Disposable MinIO is ready"
               exit 0
             fi
+            if ! kill -0 "$minio_pid" 2>/dev/null; then
+              echo "Disposable MinIO exited before readiness"
+              cat "$minio_log"
+              exit 1
+            fi
             sleep 2
           done
-          docker logs sakthiai-creator-minio
+          cat "$minio_log"
           exit 1
 
       - name: Install FFmpeg and FFprobe for integrated Creator acceptance
@@ -282,7 +284,14 @@ jobs:
 
       - name: Stop disposable MinIO
         if: always()
-        run: docker rm -f sakthiai-creator-minio || true
+        shell: bash
+        run: |
+          pid_file="$RUNNER_TEMP/sakthiai-minio.pid"
+          if [ -f "$pid_file" ]; then
+            minio_pid="$(cat "$pid_file")"
+            kill "$minio_pid" 2>/dev/null || true
+            wait "$minio_pid" 2>/dev/null || true
+          fi
 
   mysql-integration:
     # Real MySQL 8 qualification: migrations vs schema, session revocation, tenancy, upload/scanner protocol,
