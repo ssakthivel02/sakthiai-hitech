@@ -49,6 +49,30 @@ for (const layer of data.layers) {
     if (!Date.parse(layer.verifiedAt ?? '')) fail(`${layer.id}: ${layer.state} requires verifiedAt`);
   }
 }
-if (data.verdicts.preview === 'go' && data.layers.some(l => l.state === 'blocked' || l.state === 'unknown')) fail('preview cannot be go with blocked or unknown layers');
+// A positive verdict needs fresh, exact-build *runtime* evidence, not just green CI.
+// This validates the public ledger's claims; the separately gated live browser tests
+// are still responsible for independently proving the underlying observations.
+const runtimeStates = new Set(['live_verified', 'deployed']);
+const freshnessMs = data.freshnessDays * 86_400_000;
+const evidenceIsFresh = value => {
+  const at = typeof value === 'string' ? Date.parse(value) : NaN;
+  const now = Date.now();
+  return Number.isFinite(at) && at <= now + 3_600_000 && now - at <= freshnessMs;
+};
+const requireFreshRuntimeLayer = (id, tier) => {
+  const layer = data.layers.find(l => l.id === id);
+  if (!layer || !runtimeStates.has(layer.state)) fail(`${tier} cannot be go without ${id} live runtime evidence`);
+  if (!evidenceIsFresh(layer.verifiedAt)) fail(`${tier} cannot be go with stale ${id} runtime evidence`);
+};
+if (data.verdicts.preview === 'go') {
+  if (data.layers.some(l => l.state === 'blocked' || l.state === 'unknown')) fail('preview cannot be go with blocked or unknown layers');
+  if (!evidenceIsFresh(data.observedAt) || !evidenceIsFresh(data.deployment.observedAt)) fail('preview cannot be go with stale ledger or deployment observations');
+  if (data.deployment.observedCommit !== data.candidate.lastCiVerifiedCommit) fail('preview cannot be go when deployed commit differs from CI-verified candidate');
+  for (const id of ['preview-deploy', 'preview-database', 'session-isolation', 'build-identity']) requireFreshRuntimeLayer(id, 'preview');
+}
+if (data.verdicts.production === 'go') {
+  if (data.verdicts.preview !== 'go') fail('production cannot be go before preview acceptance');
+  requireFreshRuntimeLayer('production-environment', 'production');
+}
 
 console.log(`Release status valid: ${data.layers.length} layers; ${healthy} runtime-verified; preview ${data.verdicts.preview}; production ${data.verdicts.production}.`);
