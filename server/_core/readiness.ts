@@ -27,8 +27,22 @@ export type SchemaReadiness = {
   expectedTables: number;
   missingTables: string[];
   missingColumns: number;
+  /** Present only when the protected runtime also inspected the Creator provider-job unique index. */
+  missingIndexes?: number;
 };
 type ColumnRow = { t: string; c: string };
+type CriticalIndexRow = { t: string; i: string; c: string | null; nonUnique: number | string; seq: number | string };
+const CREATOR_JOB_UNIQUE_INDEX = "creatorProviderJobs_workspace_job_uq";
+
+/** Migration 0021 adds a unique two-column provider-job identity fence. Columns alone cannot prove it was applied. */
+export function creatorProviderJobUniqueIndexPresent(rows: CriticalIndexRow[]): boolean {
+  const relevant = rows
+    .filter(row => row.t?.toLowerCase() === "creatorproviderjobs" && row.i?.toLowerCase() === CREATOR_JOB_UNIQUE_INDEX.toLowerCase())
+    .sort((a, b) => Number(a.seq) - Number(b.seq));
+  const expectedColumns = ["workspaceId", "providerJobId"];
+  return relevant.length === expectedColumns.length &&
+    relevant.every((row, i) => Number(row.seq) === i + 1 && Number(row.nonUnique) === 0 && row.c === expectedColumns[i]);
+}
 
 /** Every table and column this build's Drizzle schema declares; the connected database must contain all of them. */
 export function expectedSchema(): Map<string, string[]> {
@@ -59,7 +73,10 @@ export function compareSchema(expected: Map<string, string[]>, present: ColumnRo
  * A reachable database is not a ready one: the schema must match this build (e.g. migrations 0005-0010 applied).
  * Reads information_schema only; any failure is reported as "unknown", which is not ready.
  */
-export async function probeSchemaReadiness(readColumns?: () => Promise<ColumnRow[]>): Promise<SchemaReadiness> {
+export async function probeSchemaReadiness(
+  readColumns?: () => Promise<ColumnRow[]>,
+  readIndexes?: () => Promise<CriticalIndexRow[]>,
+): Promise<SchemaReadiness> {
   const expected = expectedSchema();
   try {
     let rows: ColumnRow[];
@@ -70,7 +87,29 @@ export async function probeSchemaReadiness(readColumns?: () => Promise<ColumnRow
       const result = await db.execute(sql`SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()`);
       rows = (Array.isArray(result) ? result[0] : result) as unknown as ColumnRow[];
     }
-    return compareSchema(expected, rows);
+    const columnState = compareSchema(expected, rows);
+    if (columnState.status !== "current") return columnState;
+    // Partial column-only injection is retained for legacy unit tests; production uses BOTH metadata probes.
+    if (readColumns && !readIndexes) return columnState;
+    let indexRows: CriticalIndexRow[];
+    if (readIndexes) indexRows = await readIndexes();
+    else {
+      const db = await getDb();
+      if (!db) throw new Error("database unavailable");
+      const indexResult = await db.execute(sql`
+        SELECT TABLE_NAME AS t, INDEX_NAME AS i, COLUMN_NAME AS c, NON_UNIQUE AS nonUnique, SEQ_IN_INDEX AS seq
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'creatorProviderJobs'
+          AND INDEX_NAME = 'creatorProviderJobs_workspace_job_uq'
+        ORDER BY SEQ_IN_INDEX`);
+      indexRows = (Array.isArray(indexResult) ? indexResult[0] : indexResult) as unknown as CriticalIndexRow[];
+    }
+    if (!creatorProviderJobUniqueIndexPresent(indexRows)) {
+      // Do not leak table metadata through the public endpoint; failure is reflected in schema_mismatch.
+      return { ...columnState, status: "behind", missingIndexes: 1 };
+    }
+    return { ...columnState, missingIndexes: 0 };
   } catch {
     return { status: "unknown", expectedTables: expected.size, missingTables: [], missingColumns: 0 };
   }
