@@ -1,24 +1,24 @@
 {
   "schemaVersion": "1.0.0",
   "purpose": "Public-safe release evidence ledger rendered on /intelligence. Records what was OBSERVED, when, and by which kind of check. No hostnames, service identifiers, account names or credentials. Unknown is never healthy; an observation older than freshnessDays is shown as stale and treated as unknown.",
-  "observedAt": "2026-10-27T10:25:00Z",
+  "observedAt": "2026-11-24T04:51:32.354Z",
   "freshnessDays": 7,
   "verdicts": {
     "preview": "no-go",
     "production": "no-go"
   },
   "candidate": {
-    "label": "Draft PR #29 (combined runtime-qualification candidate)",
-    "link": "https://github.com/ssakthivel02/sakthiai-hitech/pull/29",
-    "lastCiVerifiedCommit": "33be89a244aefd03e8f112c5256877153c9e76f8",
-    "ciEvidence": "18/18 check runs successful at 33be89a (incl. mysql-integration on MySQL 8.0, mysql-84-compatibility on MySQL 8.4, e2e, release-artifact and release-evidence with the artifactIdentity gate), read 25 Oct 2026; 89239c5 had 19/19 including the path-filtered preflight",
-    "note": "Commits pushed after the CI-verified commit are source-implemented only until their own CI run is read. A local integration of this candidate with persistent Artifacts and file links (migrations 0014-0015) is qualified locally only (real MySQL 8.0 and 8.4, browser e2e) and is not yet pushed, so it has no CI run. The exact head is whatever this page's build reports below."
+    "label": "Draft PR #63 (consolidated Web MVP release candidate)",
+    "link": "https://github.com/ssakthivel02/sakthiai-hitech/pull/63",
+    "lastCiVerifiedCommit": "90ab30ad6152cbda999c5b17fda319cfdaebd513",
+    "ciEvidence": "14/14 workflows SUCCESS at exact head 90ab30ad on 23 Nov 2026; Quality Gate run 45200601574 (7/7), MySQL 8.0/8.4 CI, synthetic browser E2E and downloaded artifact digest checks. Independently re-read 24 Nov 2026.",
+    "note": "This is the last CI-verified source commit, not a deployment or approval. A later ledger-only source change needs its own CI. PR #63 is Draft and cannot be marked Ready or merged without separate owner tokens. Hosted login/storage/runtime, independent database recovery, and Creator/Sentinel schema authority remain unverified."
   },
   "deployment": {
     "observedCommit": "469c668e71ceaae800e8605c5814e7017035fdbc",
-    "observedAt": "2026-10-27T10:25:00Z",
-    "method": "Hosting provider API, read-only, 27 Oct 2026: one web service, auto-deploy off, latest live deploy 469c668 (10 Oct), not suspended, start command still pnpm start",
-    "note": "The preview serves an older commit than the CI-verified candidate. Deploying the candidate is an owner-approved, gated action."
+    "observedAt": "2026-11-24T04:51:32.354Z",
+    "method": "Read-only hosting API check on 24 Nov 2026: preview SUSPENDED, automatic deployment OFF. Last recorded release is from 10 Oct 2026 and is not currently being served.",
+    "note": "This older recorded deployment predates the security baseline and is explicitly forbidden as a rollback target. No current candidate has been deployed; resuming the old preview would not prove current release readiness."
   },
   "dashboardLink": "https://github.com/ssakthivel02/sakthiai-hitech/issues/1",
   "layers": [
@@ -26,80 +26,80 @@
       "id": "source-security",
       "name": "Gateway and Creator security fixes (local-slot classification, redirects, pinned endpoint profiles)",
       "state": "ci_passed",
-      "evidence": "Reproduced on 0a48dc3, fixed, unit-tested and mutation-checked; CI-verified at 2eb2b6e. Not deployed."
+      "evidence": "Source-level provider-routing, redirect and private-beta access protections are included in the 90ab30ad CI-qualified candidate. Real deployed security posture has not been observed."
     },
     {
       "id": "ci",
       "name": "Repository CI on the candidate",
       "state": "ci_passed",
-      "evidence": "18/18 check runs at 33be89a, including MySQL 8.0 and 8.4 containers, browser e2e and the retained exact-commit release artifact. Later commits need their own CI run."
+      "evidence": "At 90ab30ad, all 14 exact-head GitHub workflows succeeded, including the 7-job Quality Gate. This is source/CI verification, not hosted application readiness."
     },
     {
       "id": "preview-deploy",
       "name": "Preview deployment serves the candidate",
       "state": "blocked",
-      "evidence": "Preview serves 469c668; no candidate build is deployed. The preview is still running (suspension approved, not executed).",
-      "blocker": "Owner approval for a preview redeploy; preview service suspension (decision Q2) is approved but not executed."
+      "evidence": "A read-only hosting check on 24 Nov confirmed the preview is suspended, automatic deployment off, with the last recorded deployment dated 10 Oct and not equal to the current candidate.",
+      "blocker": "Approved current-SHA deployment only after secured database preservation, schema compatibility and runtime readiness approval."
     },
     {
       "id": "preview-database",
       "name": "Preview database inspected and migrated",
       "state": "blocked",
-      "evidence": "No read-only inspection of the preview database exists for the candidate. Pending migrations for the preview are expected to be 0011-0015 (all additive; not assumed until inspected). The default-branch workflow is now the fail-closed stub (merged 25 Oct); the guarded inspect mode exists only at the candidate ref. A superseded Artifacts branch also numbered its migration 0013; if any shared database applied it, the guard refuses before writing (tested on MySQL 8.0 and 8.4).",
-      "blocker": "Owner approval for power-on and a read-only inspect dispatch from the candidate ref (with a real recovery point); then a separately approved migrate run."
+      "evidence": "Read-only Aiven evidence on 24 Nov reports the shared free MySQL service powered off with provider-managed backups; no encrypted off-platform export, independently restored database or applied migration-journal inspection has been qualified.",
+      "blocker": "Explicitly approved secure network/source-access window, complete multi-schema encrypted export, isolated restore proof and migration authority."
     },
     {
       "id": "session-isolation",
       "name": "Live session revocation and tenant isolation",
       "state": "unknown",
-      "evidence": "Covered by source tests; never exercised against a deployed candidate."
+      "evidence": "Native CI and synthetic browser cases cover session and tenant controls, but no real identity-provider, deployed two-account session revocation or cross-tenant live-browser acceptance exists."
     },
     {
       "id": "file-scanner",
       "name": "Malware scanner runtime and file ingestion",
       "state": "blocked",
-      "evidence": "Upload path fails closed without a scanner; no live clean/EICAR/unavailable-scanner acceptance exists.",
-      "blocker": "Approved scanner runtime and its acceptance evidence. Ingestion stays disabled until then."
+      "evidence": "File ingestion remains off by default; scanner contracts and simulated tests do not demonstrate an approved deployed scanner with clean, infected and unavailable-path checks.",
+      "blocker": "Approved live scanner integration, safe object storage, and real upload acceptance before enabling ingestion."
     },
     {
       "id": "model-runtime",
       "name": "Real model execution",
       "state": "blocked",
-      "evidence": "No genuine local or hosted model call has been recorded. Tamil quality is not measured.",
-      "blocker": "Owner-run evaluation (Q8-eval) or a local model run; hosted providers stay disabled by default."
+      "evidence": "Separate Sentinel development used a genuine local model with synthetic observations, but no hosted Web MVP model runtime, Tamil semantic quality or production service acceptance has been established.",
+      "blocker": "Independent model-quality and authenticated hosted inference qualification with approved zero-spend configuration."
     },
     {
       "id": "paid-creator",
       "name": "Paid Creator generation",
       "state": "blocked",
-      "evidence": "Fail-closed authorization and spend ledger exist in source; paid generation is disabled.",
-      "blocker": "Runtime verification of server-side budget and authorization controls before any enablement."
+      "evidence": "Provider authorization, spend limits and Creator safety controls are in source and tested in CI; live paid-provider operation is disabled and no approved end-to-end paid rendering exists.",
+      "blocker": "Separate owner authorization, cost cap, provider evidence and rights-cleared media before any paid activation."
     },
     {
       "id": "multi-instance-limits",
       "name": "Request limits shared across instances",
-      "state": "source_implemented",
-      "evidence": "Shared limiter with an explicit failure policy (costly routes refuse, others use a scaled per-process bound), bounded failures and readiness reporting; readiness now recovers once a bounded probe finds the shared table healthy again. Its table is migration 0013. Tested on real MySQL 8.0 and 8.4 with independent connection pools. Not deployed; the default stays per-process, which is correct for one instance."
+      "state": "ci_passed",
+      "evidence": "Repository source includes shared MySQL request-limit controls with CI and database integration tests; no deployed multi-instance rate limiter or actual failure recovery has been verified."
     },
     {
       "id": "production-environment",
       "name": "Production environment",
       "state": "blocked",
-      "evidence": "No production web service, database, bucket or domain was found in the accounts readable from the release sessions (Render read on 25 Oct; Aiven not readable). A guarded production database workflow (separate environments and secrets, exact-commit and database-name bindings) exists in source and is tested locally; it is not yet on the default branch, so it cannot be dispatched.",
-      "blocker": "Owner decision to provision production infrastructure after preview acceptance (spend-bearing)."
+      "evidence": "No owner-approved production release, qualified production runtime or signed deployment evidence is recorded in the current release gates. CI infrastructure mocks do not supply this.",
+      "blocker": "Complete preview acceptance first, then explicit owner approval and cost/security review for production infrastructure."
     },
     {
       "id": "build-identity",
       "name": "Built-artifact identity",
       "state": "ci_passed",
-      "evidence": "Each build writes a SHA-256 manifest of dist (server and browser components, source commit, lockfile, toolchain, build-time VITE fingerprint); the server re-verifies it at startup and reports it on /releasez. CI retained release-artifact-33be89a (90 days) and its release-evidence gate reproduced the digest on a second runner. The host rebuilds from source, so a deploy is tied by digest equality, not yet observed on a deployed build."
+      "evidence": "The 90ab30ad release archive contained 399 non-manifest files; complete artifact, client and server SHA-256 digests matched its retained manifest and no unexpected hidden file was found. Hosted build identity remains unverified."
     },
     {
       "id": "rollback",
       "name": "Security-qualified rollback",
       "state": "blocked",
-      "evidence": "Rollback targets must contain the security baseline; the build the preview serves today (469c668) is forbidden as a target and can only be contained by suspension. Builds from this candidate add tested application maintenance mode (SAKTHIAI_MAINTENANCE_MODE=true), a second containment path once such a build serves the environment.",
-      "blocker": "First live-verified deployment of a candidate at or after the security baseline."
+      "evidence": "CI-qualified rollback policy rejects the older deployed commit as below the security baseline; no current approved live target or real rollback-and-restore drill has passed.",
+      "blocker": "Backup/restore approval, a security-qualified deployed target and observed release/health/readiness checks after controlled rollback."
     }
   ]
 }
