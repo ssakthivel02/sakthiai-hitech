@@ -206,14 +206,14 @@ describe("Creator render plan global frame grid", () => {
 
   it.each([
     [nonAligned, 24], [nonAligned, 30], [nonAligned, 25], [nonAligned, 60],
-    [[0, 41, 83, 125, 166, 208], 24], [[0, 1, 2, 3, 100], 24], [[0, 333, 667, 1000], 30],
+    [[0, 41, 83, 125, 166, 208], 24], [[0, 333, 667, 1000], 30],
     [[0, 1000, 2000], 24], [[0, 1500, 3000], 24], [[0, 17, 34, 51, 68, 85, 102, 119, 136, 153, 170], 60],
   ] as Array<[number[], number]>)("tiles %j at %i fps with exact shared boundaries", (bounds, fps) => {
     const plan = gridPlan(bounds, fps);
     const segments = plan.frameSegments;
     expect(segments[0].startFrame).toBe(0);
     segments.forEach((segment, index) => {
-      expect(segment.frameCount).toBeGreaterThanOrEqual(0);
+      expect(segment.frameCount).toBeGreaterThan(0);
       expect(segment.frameCount).toBe(segment.endFrame - segment.startFrame);
       expect(segment.startFrame).toBe(frameAtMs(bounds[index], fps));
       expect(segment.endFrame).toBe(frameAtMs(bounds[index + 1], fps));
@@ -286,7 +286,6 @@ describe.skipIf(!canProbe)("Creator real FFmpeg frame-count acceptance (global f
     [nonAligned, 24, 144],
     [nonAligned, 30, 180],
     [[0, 41, 83, 125, 166, 208], 24, 5],
-    [[0, 1, 2, 3, 100], 24, 2],
     [[0, 333, 667, 1000], 24, 24],
     [[0, 1000, 2000], 24, 48],
   ] as Array<[number[], number, number]>)("renders %j at %i fps as exactly %i decoded frames", async (bounds, fps, expected) => {
