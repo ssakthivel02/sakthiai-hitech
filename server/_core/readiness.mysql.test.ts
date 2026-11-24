@@ -1,11 +1,36 @@
 // Real MySQL 8: /readyz schema readiness against a database stuck at the pre-0005 baseline vs. a fully migrated one.
 import { describe, expect, it } from "vitest";
 import { createTestDatabase, migrationStatements, skipMysqlSuite } from "../testing/mysqlTestDb";
-import { probeSchemaReadiness } from "./readiness";
+import { creatorProviderJobUniqueIndexPresent, probeSchemaReadiness } from "./readiness";
+
+describe("Creator provider-job unique index is a readiness prerequisite", () => {
+  const valid = [
+    { t: "creatorProviderJobs", i: "creatorProviderJobs_workspace_job_uq", c: "workspaceId", nonUnique: 0, seq: 1 },
+    { t: "creatorProviderJobs", i: "creatorProviderJobs_workspace_job_uq", c: "providerJobId", nonUnique: 0, seq: 2 },
+  ];
+
+  it("accepts only the exact composite UNIQUE index", () => {
+    expect(creatorProviderJobUniqueIndexPresent(valid)).toBe(true);
+    expect(creatorProviderJobUniqueIndexPresent([...valid].reverse())).toBe(true);
+  });
+  it("rejects missing or incomplete index metadata", () => {
+    expect(creatorProviderJobUniqueIndexPresent([])).toBe(false);
+    expect(creatorProviderJobUniqueIndexPresent(valid.slice(0, 1))).toBe(false);
+  });
+  it("rejects a non-unique index, reversed key order or an extra key", () => {
+    expect(creatorProviderJobUniqueIndexPresent(valid.map(row => ({ ...row, nonUnique: 1 })))).toBe(false);
+    expect(creatorProviderJobUniqueIndexPresent(valid.map(row => ({ ...row, c: row.c === "workspaceId" ? "providerJobId" : "workspaceId" })))).toBe(false);
+    expect(creatorProviderJobUniqueIndexPresent([...valid, { ...valid[1], c: "id", seq: 3 }])).toBe(false);
+  });
+});
 
 describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_000 }, () => {
   const readColumns = (db: Awaited<ReturnType<typeof createTestDatabase>>) => async () =>
     (await db.pool.promise().query("SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"))[0] as Array<{ t: string; c: string }>;
+  const readIndexes = (db: Awaited<ReturnType<typeof createTestDatabase>>) => async () =>
+    (await db.pool.promise().query(
+      "SELECT TABLE_NAME AS t, INDEX_NAME AS i, COLUMN_NAME AS c, NON_UNIQUE AS nonUnique, SEQ_IN_INDEX AS seq FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'creatorProviderJobs' AND INDEX_NAME = 'creatorProviderJobs_workspace_job_uq' ORDER BY SEQ_IN_INDEX",
+    ))[0] as Array<{ t: string; i: string; c: string | null; nonUnique: number; seq: number }>;
 
   it("a reachable database at baseline 0004 is NOT ready: the tables of migrations 0005-0010 are reported missing", async () => {
     const db = await createTestDatabase({ migrate: false });
@@ -75,4 +100,18 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
       expect(await probeSchemaReadiness(readColumns(db))).toMatchObject({ status: "current", missingTables: [], missingColumns: 0 });
     } finally { await db.close(); }
   });
+  it("a fully migrated DB with the 0021 UNIQUE index dropped is NOT ready even though all columns remain", async () => {
+    const db = await createTestDatabase();
+    try {
+      expect(await probeSchemaReadiness(readColumns(db), readIndexes(db))).toMatchObject({ status: "current", missingIndexes: 0 });
+      await db.pool.promise().query("ALTER TABLE `creatorProviderJobs` DROP INDEX `creatorProviderJobs_workspace_job_uq`");
+      // This was the old false positive: column-only inspection still sees the entire expected schema.
+      expect((await probeSchemaReadiness(readColumns(db))).status).toBe("current");
+      const after = await probeSchemaReadiness(readColumns(db), readIndexes(db));
+      expect(after).toMatchObject({ status: "behind", missingTables: [], missingColumns: 0, missingIndexes: 1 });
+    } finally {
+      await db.close();
+    }
+  });
+
 });
