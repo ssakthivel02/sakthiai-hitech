@@ -12,8 +12,10 @@ import { InMemoryRateLimiter, type RateLimitDecision, type RateLimitPolicy } fro
  * Failure policy (explicit, per policy; see RateLimitPolicy.onSharedFailure). When the shared store cannot count
  * (database unavailable, timeout, table missing or incompatible, breaker open):
  *   - "deny" policies (model calls, uploads, Creator jobs) refuse with scope "unavailable" (HTTP 503 + Retry-After);
- *   - "scaled-local" policies use a per-process window of floor(max / RATE_LIMIT_MAX_INSTANCES), scope
- *     "local-degraded", so the fleet-wide bound still holds for up to that many instances.
+ *   - "scaled-local" policies use epoch-aligned per-process windows of floor(max / RATE_LIMIT_MAX_INSTANCES),
+ *     scope "local-degraded"; when that floor is zero they refuse. This limits a wholly degraded window across
+ *     the configured fleet when clocks are aligned, but cannot guarantee a hard global bound after a
+ *     mid-window shared-to-local failover, clock skew, or more instances than configured.
  * A per-process counter is never reported as the global quota. Failures are bounded: each attempt has a timeout,
  * deadlocks are retried once, and after 3 consecutive failures the store is skipped for a cooldown (no DB calls).
  * This is availability/abuse control only; spend is authorised elsewhere (gateway budget, Creator ledger) and those
@@ -182,10 +184,23 @@ export class MysqlRateLimiter implements RateLimiter {
       this.counts.deniedUnavailable += 1;
       return { allowed: false, limit: policy.maxRequests, remaining: 0, resetAt: now + retryAfterMs, retryAfterMs, scope: "unavailable" };
     }
-    const scaled: RateLimitPolicy = { name: `${policy.name}:degraded`, maxRequests: Math.max(1, Math.floor(policy.maxRequests / this.instanceCeiling)), windowMs: policy.windowMs };
-    const decision = this.local.consume(key, scaled, now);
+    const perInstanceLimit = Math.floor(policy.maxRequests / this.instanceCeiling);
+    // A quota smaller than the configured fleet cannot safely grant even one
+    // request per instance: refuse instead of silently exceeding the budget.
+    if (perInstanceLimit < 1) {
+      this.counts.deniedUnavailable += 1;
+      return { allowed: false, limit: policy.maxRequests, remaining: 0, resetAt: now + retryAfterMs, retryAfterMs, scope: "unavailable" };
+    }
+    const scaled: RateLimitPolicy = { name: `${policy.name}:degraded`, maxRequests: perInstanceLimit, windowMs: policy.windowMs };
+    // Anchor local fallback buckets to the SAME epoch windows as the SQL
+    // limiter. Per-process first-request windows can otherwise reset twice
+    // within one shared window and admit more than the configured fleet bound.
+    const windowStart = Math.floor(now / policy.windowMs) * policy.windowMs;
+    const decision = this.local.consume(key, scaled, windowStart);
     if (decision.allowed) this.counts.degradedAllowed += 1; else this.counts.degradedDenied += 1;
-    return { ...decision, scope: "local-degraded" };
+    // InMemoryRateLimiter sees the aligned start; report Retry-After relative
+    // to the actual request timestamp, not the artificial bucket timestamp.
+    return { ...decision, retryAfterMs: decision.allowed ? 0 : Math.max(1, decision.resetAt - now), scope: "local-degraded" };
   }
 
   private async countShared(bucketKey: string, windowStart: number, resetAt: number, now: number): Promise<number> {
