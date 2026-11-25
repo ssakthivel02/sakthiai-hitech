@@ -124,6 +124,38 @@ describe("shared limiter: explicit failure policy", () => {
     expect(s.store === "mysql" && s.counts.shared).toBe(0);
   });
 
+  it("refuses scaled-local admission when a quota is smaller than the configured fleet", async () => {
+    const strict = { name: "single-request", maxRequests: 1, windowMs: 60_000, onSharedFailure: "scaled-local" as const };
+    const instances = Array.from({ length: 2 }, () => new MysqlRateLimiter(async () => null, { instanceCeiling: 2, failureThreshold: 100 }));
+    const blocked = await Promise.all(instances.map(l => l.consume("user:one", strict, 60_001)));
+    expect(blocked.every(d => !d.allowed && d.scope === "unavailable" && d.remaining === 0)).toBe(true);
+    for (const l of instances) expect(l.status()).toMatchObject({ counts: { deniedUnavailable: 1, degradedAllowed: 0 } });
+
+    // A divisible policy is still available without the shared database:
+    // one admission per instance, never more than the fleet-wide budget.
+    const divisible = { ...strict, name: "two-request", maxRequests: 2 };
+    const admitted = await Promise.all(instances.map(l => l.consume("user:one", divisible, 60_003)));
+    expect(admitted.every(d => d.allowed && d.scope === "local-degraded" && d.limit === 1)).toBe(true);
+  });
+
+  it("aligns degraded windows to shared SQL epochs and calculates Retry-After from real time", async () => {
+    const policy = { name: "aligned-fallback", maxRequests: 4, windowMs: 60_000, onSharedFailure: "scaled-local" as const };
+    const instances = Array.from({ length: 2 }, () => new MysqlRateLimiter(async () => null, { instanceCeiling: 2, failureThreshold: 100 }));
+    // Seed independent processes just before the minute changes; the old
+    // first-request anchoring admitted 6 requests inside [60000,120000).
+    for (const l of instances) expect((await l.consume("user:window", policy, 59_000)).allowed).toBe(true);
+    const decisions = [];
+    for (const now of [60_001, 60_002, 119_001, 119_002]) {
+      for (const l of instances) decisions.push(await l.consume("user:window", policy, now));
+    }
+    expect(decisions.filter(d => d.allowed)).toHaveLength(4); // 2 per process across one aligned minute
+    expect(decisions.filter(d => !d.allowed)).toHaveLength(4);
+    expect(decisions.every(d => d.scope === "local-degraded" && d.resetAt === 120_000)).toBe(true);
+    expect(decisions[4]!.retryAfterMs).toBe(999);
+    expect(decisions[6]!.retryAfterMs).toBe(998);
+    for (const l of instances) expect(await l.consume("user:window", policy, 120_000)).toMatchObject({ allowed: true, scope: "local-degraded", resetAt: 180_000 });
+  });
+
   it("shared-store readiness is true only when the MySQL limiter is healthy and verified", async () => {
     for (const [shape, state] of [[[], "missing"], [GOOD_SHAPE.map(r => (r.c === "bucketKey" ? { ...r, len: 64 } : r)), "incompatible"]] as const) {
       const l = new MysqlRateLimiter(async () => fakeDb({ shape: shape as never }) as never);
