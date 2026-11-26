@@ -34,7 +34,7 @@ type ColumnRow = { t: string; c: string };
 type CriticalIndexRow = { t: string; i: string; c: string | null; nonUnique: number | string; seq: number | string };
 const CREATOR_JOB_UNIQUE_INDEX = "creatorProviderJobs_workspace_job_uq";
 
-/** Uniqueness is a runtime safety requirement for paid generation and avatar admission.
+/** Uniqueness is a runtime safety requirement for paid generation, avatar admission and fenced FFmpeg render claims.
  * A schema with all columns can still be missing these additive migration constraints.
  * This is an explicit bounded allowlist, not an assertion that every SQL index is checked.
  */
@@ -42,6 +42,7 @@ const CRITICAL_CREATOR_UNIQUE_INDEXES = [
   { table: "creatorProviderJobs", name: CREATOR_JOB_UNIQUE_INDEX, columns: ["workspaceId", "providerJobId"] },
   { table: "creatorGenerations", name: "creatorGenerations_workspaceId_idempotencyKey_unique", columns: ["workspaceId", "idempotencyKey"] },
   { table: "creatorAvatarDispatchAdmissions", name: "creatorAvatarDispatchAdmissions_workspace_callback_uq", columns: ["workspaceId", "callbackId"] },
+  { table: "creatorRenderClaims", name: "creatorRenderClaims_scope_fingerprint_uq", columns: ["workspaceId", "creatorProjectId", "timelineId", "mode", "fingerprint"] },
 ] as const;
 
 function exactCompositeUniqueIndexPresent(rows: CriticalIndexRow[], spec: (typeof CRITICAL_CREATOR_UNIQUE_INDEXES)[number]): boolean {
@@ -57,7 +58,7 @@ export function creatorProviderJobUniqueIndexPresent(rows: CriticalIndexRow[]): 
   return exactCompositeUniqueIndexPresent(rows, CRITICAL_CREATOR_UNIQUE_INDEXES[0]);
 }
 
-/** The actual runtime requires all three source-defined uniqueness guards. Names are never returned by /readyz. */
+/** The actual runtime requires all four source-defined uniqueness guards. Names are never returned by /readyz. */
 export function missingCriticalCreatorUniqueIndexes(rows: CriticalIndexRow[]): string[] {
   return CRITICAL_CREATOR_UNIQUE_INDEXES.filter(spec => !exactCompositeUniqueIndexPresent(rows, spec)).map(spec => spec.name);
 }
@@ -122,6 +123,7 @@ export async function probeSchemaReadiness(
             (TABLE_NAME = 'creatorProviderJobs' AND INDEX_NAME = 'creatorProviderJobs_workspace_job_uq')
             OR (TABLE_NAME = 'creatorGenerations' AND INDEX_NAME = 'creatorGenerations_workspaceId_idempotencyKey_unique')
             OR (TABLE_NAME = 'creatorAvatarDispatchAdmissions' AND INDEX_NAME = 'creatorAvatarDispatchAdmissions_workspace_callback_uq')
+            OR (TABLE_NAME = 'creatorRenderClaims' AND INDEX_NAME = 'creatorRenderClaims_scope_fingerprint_uq')
           )
         ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`);
       indexRows = (Array.isArray(indexResult) ? indexResult[0] : indexResult) as unknown as CriticalIndexRow[];
