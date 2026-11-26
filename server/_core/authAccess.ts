@@ -41,9 +41,22 @@ export function isIdentityAllowed(policy: LoginAccessPolicy, identity: LoginIden
 }
 
 /**
- * Session-time check. The stored email was accepted at login only if it was verified (or the subject matched),
- * because unapproved identities never reach the user upsert.
+ * Session-time access must not promote a persisted email to verified. An OIDC subject
+ * can legitimately be allowlisted with an unverified email; after subject removal,
+ * the email must NOT silently become a second admission route. Only a verified
+ * email snapshot from the server-signed session token can satisfy email allowlisting.
+ * The snapshot must still equal the current persisted email, and the current
+ * access policy is checked on every request. Older tokens lacking proof fail
+ * closed for email-only admission (subject allowlisting still works).
  */
-export function isSessionUserAllowed(policy: LoginAccessPolicy, user: { openId: string; email: string | null }): boolean {
-  return isIdentityAllowed(policy, { openId: user.openId, email: user.email, emailVerified: true });
+export function isSessionUserAllowed(
+  policy: LoginAccessPolicy,
+  user: { openId: string; email: string | null },
+  verifiedEmailFromSession?: string | null,
+): boolean {
+  if (policy.mode === "open") return true;
+  if (policy.mode === "closed") return false;
+  if (policy.subjects.has(user.openId)) return true;
+  const verifiedEmail = verifiedEmailFromSession?.trim().toLowerCase();
+  return Boolean(verifiedEmail && user.email?.trim().toLowerCase() === verifiedEmail && policy.emails.has(verifiedEmail));
 }
