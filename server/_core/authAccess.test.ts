@@ -97,6 +97,8 @@ describe("authenticateRequest re-checks access on every request", () => {
   });
 
   it("preserves verified-email access but rejects persisted-email drift and allowlist removal", async () => {
+    // Production is fail-closed with an empty allowlist. In test mode, empty means open by design.
+    vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("AUTH_ALLOWED_EMAILS", "tester@example.com");
     dbMock.getUserByOpenId.mockResolvedValue({ ...user, email: "Tester@Example.com" });
     const verifiedRequest = await request("tester@example.com");
