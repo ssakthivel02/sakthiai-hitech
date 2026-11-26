@@ -34,14 +34,32 @@ type ColumnRow = { t: string; c: string };
 type CriticalIndexRow = { t: string; i: string; c: string | null; nonUnique: number | string; seq: number | string };
 const CREATOR_JOB_UNIQUE_INDEX = "creatorProviderJobs_workspace_job_uq";
 
-/** Migration 0021 adds a unique two-column provider-job identity fence. Columns alone cannot prove it was applied. */
-export function creatorProviderJobUniqueIndexPresent(rows: CriticalIndexRow[]): boolean {
+/** Uniqueness is a runtime safety requirement for paid generation and avatar admission.
+ * A schema with all columns can still be missing these additive migration constraints.
+ * This is an explicit bounded allowlist, not an assertion that every SQL index is checked.
+ */
+const CRITICAL_CREATOR_UNIQUE_INDEXES = [
+  { table: "creatorProviderJobs", name: CREATOR_JOB_UNIQUE_INDEX, columns: ["workspaceId", "providerJobId"] },
+  { table: "creatorGenerations", name: "creatorGenerations_workspaceId_idempotencyKey_unique", columns: ["workspaceId", "idempotencyKey"] },
+  { table: "creatorAvatarDispatchAdmissions", name: "creatorAvatarDispatchAdmissions_workspace_callback_uq", columns: ["workspaceId", "callbackId"] },
+] as const;
+
+function exactCompositeUniqueIndexPresent(rows: CriticalIndexRow[], spec: (typeof CRITICAL_CREATOR_UNIQUE_INDEXES)[number]): boolean {
   const relevant = rows
-    .filter(row => row.t?.toLowerCase() === "creatorproviderjobs" && row.i?.toLowerCase() === CREATOR_JOB_UNIQUE_INDEX.toLowerCase())
+    .filter(row => row.t?.toLowerCase() === spec.table.toLowerCase() && row.i?.toLowerCase() === spec.name.toLowerCase())
     .sort((a, b) => Number(a.seq) - Number(b.seq));
-  const expectedColumns = ["workspaceId", "providerJobId"];
-  return relevant.length === expectedColumns.length &&
-    relevant.every((row, i) => Number(row.seq) === i + 1 && Number(row.nonUnique) === 0 && row.c === expectedColumns[i]);
+  return relevant.length === spec.columns.length &&
+    relevant.every((row, i) => Number(row.seq) === i + 1 && Number(row.nonUnique) === 0 && row.c === spec.columns[i]);
+}
+
+/** Migration 0021 adds a unique two-column provider-job identity fence. Keep the public test helper stable. */
+export function creatorProviderJobUniqueIndexPresent(rows: CriticalIndexRow[]): boolean {
+  return exactCompositeUniqueIndexPresent(rows, CRITICAL_CREATOR_UNIQUE_INDEXES[0]);
+}
+
+/** The actual runtime requires all three source-defined uniqueness guards. Names are never returned by /readyz. */
+export function missingCriticalCreatorUniqueIndexes(rows: CriticalIndexRow[]): string[] {
+  return CRITICAL_CREATOR_UNIQUE_INDEXES.filter(spec => !exactCompositeUniqueIndexPresent(rows, spec)).map(spec => spec.name);
 }
 
 /** Every table and column this build's Drizzle schema declares; the connected database must contain all of them. */
@@ -100,14 +118,18 @@ export async function probeSchemaReadiness(
         SELECT TABLE_NAME AS t, INDEX_NAME AS i, COLUMN_NAME AS c, NON_UNIQUE AS nonUnique, SEQ_IN_INDEX AS seq
         FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'creatorProviderJobs'
-          AND INDEX_NAME = 'creatorProviderJobs_workspace_job_uq'
-        ORDER BY SEQ_IN_INDEX`);
+          AND (
+            (TABLE_NAME = 'creatorProviderJobs' AND INDEX_NAME = 'creatorProviderJobs_workspace_job_uq')
+            OR (TABLE_NAME = 'creatorGenerations' AND INDEX_NAME = 'creatorGenerations_workspaceId_idempotencyKey_unique')
+            OR (TABLE_NAME = 'creatorAvatarDispatchAdmissions' AND INDEX_NAME = 'creatorAvatarDispatchAdmissions_workspace_callback_uq')
+          )
+        ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`);
       indexRows = (Array.isArray(indexResult) ? indexResult[0] : indexResult) as unknown as CriticalIndexRow[];
     }
-    if (!creatorProviderJobUniqueIndexPresent(indexRows)) {
-      // Do not leak table metadata through the public endpoint; failure is reflected in schema_mismatch.
-      return { ...columnState, status: "behind", missingIndexes: 1 };
+    const missingCriticalIndexes = missingCriticalCreatorUniqueIndexes(indexRows);
+    if (missingCriticalIndexes.length) {
+      // Do not leak table/index identities through /readyz; only publish the count.
+      return { ...columnState, status: "behind", missingIndexes: missingCriticalIndexes.length };
     }
     return { ...columnState, missingIndexes: 0 };
   } catch {
