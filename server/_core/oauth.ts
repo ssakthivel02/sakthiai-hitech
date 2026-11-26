@@ -160,6 +160,7 @@ export function registerOAuthRoutes(app: Express, injectedStore?: LoginTransacti
         name: userInfo.name || "User",
         expiresInMs: sessionMaxAgeMs(),
         sessionGeneration,
+        verifiedEmail: userInfo.emailVerified ? userInfo.email : null,
       });
 
       const cookieOptions = getSessionCookieOptions(req);
