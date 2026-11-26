@@ -5,7 +5,7 @@ const dbMock = vi.hoisted(() => ({ getUserByOpenId: vi.fn(), advanceUserSessionG
 vi.mock("../db", () => dbMock);
 
 import { ENV } from "./env";
-import { isIdentityAllowed, loginAccessPolicy } from "./authAccess";
+import { isIdentityAllowed, isSessionUserAllowed, loginAccessPolicy } from "./authAccess";
 import { sdk } from "./sdk";
 
 const id = (openId: string, email: string | null = null, emailVerified = false) => ({ openId, email, emailVerified });
@@ -64,9 +64,11 @@ describe("loginAccessPolicy", () => {
 
 describe("authenticateRequest re-checks access on every request", () => {
   const user = { id: 1, openId: "sub-1", email: null, name: "U", loginMethod: "oidc", role: "user", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date("2026-01-01T00:00:10Z") };
-  async function request() {
+  async function request(verifiedEmail?: string | null) {
     ENV.cookieSecret = "y".repeat(48);
-    const token = await sdk.createSessionToken("sub-1", { sessionGeneration: Math.floor(user.lastSignedIn.getTime() / 1000) });
+    const token = await sdk.createSessionToken("sub-1", {
+      sessionGeneration: Math.floor(user.lastSignedIn.getTime() / 1000), verifiedEmail,
+    });
     return { headers: { authorization: `Bearer ${token}` } } as never;
   }
 
@@ -79,6 +81,37 @@ describe("authenticateRequest re-checks access on every request", () => {
   it("a valid token for a subject REMOVED from the allowlist is refused (no 1-year grace)", async () => {
     vi.stubEnv("AUTH_ALLOWED_SUBJECTS", "someone-else");
     dbMock.getUserByOpenId.mockResolvedValue(user);
+    await expect(sdk.authenticateRequest(await request())).rejects.toThrow(/not authorized/i);
+  });
+
+  it("does not promote an unverified login email after subject revocation", async () => {
+    const persisted = { ...user, email: "tester@example.com" };
+    dbMock.getUserByOpenId.mockResolvedValue(persisted);
+    vi.stubEnv("AUTH_ALLOWED_SUBJECTS", "sub-1");
+    vi.stubEnv("AUTH_ALLOWED_EMAILS", "tester@example.com");
+    const existingRequest = await request(); // subject admitted, but no OIDC email_verified proof
+    await expect(sdk.authenticateRequest(existingRequest)).resolves.toMatchObject({ openId: "sub-1" });
+    vi.stubEnv("AUTH_ALLOWED_SUBJECTS", "");
+    await expect(sdk.authenticateRequest(existingRequest)).rejects.toThrow(/not authorized/i);
+    expect(isSessionUserAllowed(loginAccessPolicy(), persisted)).toBe(false);
+  });
+
+  it("preserves verified-email access but rejects persisted-email drift and allowlist removal", async () => {
+    vi.stubEnv("AUTH_ALLOWED_EMAILS", "tester@example.com");
+    dbMock.getUserByOpenId.mockResolvedValue({ ...user, email: "Tester@Example.com" });
+    const verifiedRequest = await request("tester@example.com");
+    await expect(sdk.authenticateRequest(verifiedRequest)).resolves.toMatchObject({ openId: "sub-1" });
+    dbMock.getUserByOpenId.mockResolvedValue({ ...user, email: "other@example.com" });
+    await expect(sdk.authenticateRequest(verifiedRequest)).rejects.toThrow(/not authorized/i);
+    dbMock.getUserByOpenId.mockResolvedValue({ ...user, email: "tester@example.com" });
+    vi.stubEnv("AUTH_ALLOWED_EMAILS", "");
+    await expect(sdk.authenticateRequest(verifiedRequest)).rejects.toThrow(/not authorized/i);
+  });
+
+  it("rejects malformed signed email proof and denies legacy email-only sessions", async () => {
+    vi.stubEnv("AUTH_ALLOWED_EMAILS", "tester@example.com");
+    dbMock.getUserByOpenId.mockResolvedValue({ ...user, email: "tester@example.com" });
+    await expect(sdk.authenticateRequest(await request("x".repeat(321)))).rejects.toThrow(/invalid session/i);
     await expect(sdk.authenticateRequest(await request())).rejects.toThrow(/not authorized/i);
   });
 });
