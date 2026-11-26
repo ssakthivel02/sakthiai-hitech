@@ -29,6 +29,7 @@ describe("Creator provider-job unique index is a readiness prerequisite", () => 
       { t: "creatorGenerations", i: "creatorGenerations_workspaceId_idempotencyKey_unique", c: "idempotencyKey", nonUnique: 0, seq: 2 },
       { t: "creatorAvatarDispatchAdmissions", i: "creatorAvatarDispatchAdmissions_workspace_callback_uq", c: "workspaceId", nonUnique: 0, seq: 1 },
       { t: "creatorAvatarDispatchAdmissions", i: "creatorAvatarDispatchAdmissions_workspace_callback_uq", c: "callbackId", nonUnique: 0, seq: 2 },
+      ...["workspaceId", "creatorProjectId", "timelineId", "mode", "fingerprint"].map((column, i) => ({ t: "creatorRenderClaims", i: "creatorRenderClaims_scope_fingerprint_uq", c: column, nonUnique: 0, seq: i + 1 })),
     ];
     const all = [...valid, ...additional];
     expect(missingCriticalCreatorUniqueIndexes(all)).toEqual([]);
@@ -40,6 +41,12 @@ describe("Creator provider-job unique index is a readiness prerequisite", () => 
       .toEqual(["creatorGenerations_workspaceId_idempotencyKey_unique"]);
     expect(missingCriticalCreatorUniqueIndexes(all.map(row => row.t === "creatorAvatarDispatchAdmissions" ? { ...row, c: row.c === "workspaceId" ? "callbackId" : "workspaceId" } : row)))
       .toEqual(["creatorAvatarDispatchAdmissions_workspace_callback_uq"]);
+    expect(missingCriticalCreatorUniqueIndexes(all.filter(row => row.t !== "creatorRenderClaims")))
+      .toEqual(["creatorRenderClaims_scope_fingerprint_uq"]);
+    expect(missingCriticalCreatorUniqueIndexes(all.map(row => row.t === "creatorRenderClaims" && row.c === "fingerprint" ? { ...row, nonUnique: 1 } : row)))
+      .toEqual(["creatorRenderClaims_scope_fingerprint_uq"]);
+    expect(missingCriticalCreatorUniqueIndexes(all.map(row => row.t === "creatorRenderClaims" && row.c === "timelineId" ? { ...row, seq: 99 } : row)))
+      .toEqual(["creatorRenderClaims_scope_fingerprint_uq"]);
   });
 });
 
@@ -48,7 +55,7 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
     (await db.pool.promise().query("SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"))[0] as Array<{ t: string; c: string }>;
   const readIndexes = (db: Awaited<ReturnType<typeof createTestDatabase>>) => async () =>
     (await db.pool.promise().query(
-      "SELECT TABLE_NAME AS t, INDEX_NAME AS i, COLUMN_NAME AS c, NON_UNIQUE AS nonUnique, SEQ_IN_INDEX AS seq FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND ((TABLE_NAME = 'creatorProviderJobs' AND INDEX_NAME = 'creatorProviderJobs_workspace_job_uq') OR (TABLE_NAME = 'creatorGenerations' AND INDEX_NAME = 'creatorGenerations_workspaceId_idempotencyKey_unique') OR (TABLE_NAME = 'creatorAvatarDispatchAdmissions' AND INDEX_NAME = 'creatorAvatarDispatchAdmissions_workspace_callback_uq')) ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX",
+      "SELECT TABLE_NAME AS t, INDEX_NAME AS i, COLUMN_NAME AS c, NON_UNIQUE AS nonUnique, SEQ_IN_INDEX AS seq FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND ((TABLE_NAME = 'creatorProviderJobs' AND INDEX_NAME = 'creatorProviderJobs_workspace_job_uq') OR (TABLE_NAME = 'creatorGenerations' AND INDEX_NAME = 'creatorGenerations_workspaceId_idempotencyKey_unique') OR (TABLE_NAME = 'creatorAvatarDispatchAdmissions' AND INDEX_NAME = 'creatorAvatarDispatchAdmissions_workspace_callback_uq') OR (TABLE_NAME = 'creatorRenderClaims' AND INDEX_NAME = 'creatorRenderClaims_scope_fingerprint_uq')) ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX",
     ))[0] as Array<{ t: string; i: string; c: string | null; nonUnique: number; seq: number }>;
 
   it("a reachable database at baseline 0004 is NOT ready: the tables of migrations 0005-0010 are reported missing", async () => {
@@ -136,6 +143,7 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
   it.each([
     ["generation idempotency", "creatorGenerations", "creatorGenerations_workspaceId_idempotencyKey_unique"],
     ["avatar callback admission", "creatorAvatarDispatchAdmissions", "creatorAvatarDispatchAdmissions_workspace_callback_uq"],
+    ["fenced render-claim fingerprint", "creatorRenderClaims", "creatorRenderClaims_scope_fingerprint_uq"],
   ] as const)("refuses %s when its UNIQUE constraint is dropped in an isolated MySQL test DB", async (_label, table, index) => {
     const db = await createTestDatabase();
     try {
