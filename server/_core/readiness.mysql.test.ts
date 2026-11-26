@@ -1,7 +1,7 @@
 // Real MySQL 8: /readyz schema readiness against a database stuck at the pre-0005 baseline vs. a fully migrated one.
 import { describe, expect, it } from "vitest";
 import { createTestDatabase, migrationStatements, skipMysqlSuite } from "../testing/mysqlTestDb";
-import { creatorProviderJobUniqueIndexPresent, probeSchemaReadiness } from "./readiness";
+import { creatorProviderJobUniqueIndexPresent, missingCriticalCreatorUniqueIndexes, probeSchemaReadiness } from "./readiness";
 
 describe("Creator provider-job unique index is a readiness prerequisite", () => {
   const valid = [
@@ -22,6 +22,25 @@ describe("Creator provider-job unique index is a readiness prerequisite", () => 
     expect(creatorProviderJobUniqueIndexPresent(valid.map(row => ({ ...row, c: row.c === "workspaceId" ? "providerJobId" : "workspaceId" })))).toBe(false);
     expect(creatorProviderJobUniqueIndexPresent([...valid, { ...valid[1], c: "id", seq: 3 }])).toBe(false);
   });
+
+  it("requires generation idempotency and avatar callback unique constraints in addition to provider jobs", () => {
+    const additional = [
+      { t: "creatorGenerations", i: "creatorGenerations_workspaceId_idempotencyKey_unique", c: "workspaceId", nonUnique: 0, seq: 1 },
+      { t: "creatorGenerations", i: "creatorGenerations_workspaceId_idempotencyKey_unique", c: "idempotencyKey", nonUnique: 0, seq: 2 },
+      { t: "creatorAvatarDispatchAdmissions", i: "creatorAvatarDispatchAdmissions_workspace_callback_uq", c: "workspaceId", nonUnique: 0, seq: 1 },
+      { t: "creatorAvatarDispatchAdmissions", i: "creatorAvatarDispatchAdmissions_workspace_callback_uq", c: "callbackId", nonUnique: 0, seq: 2 },
+    ];
+    const all = [...valid, ...additional];
+    expect(missingCriticalCreatorUniqueIndexes(all)).toEqual([]);
+    expect(missingCriticalCreatorUniqueIndexes([...valid, ...additional.filter(row => row.t !== "creatorGenerations")]))
+      .toEqual(["creatorGenerations_workspaceId_idempotencyKey_unique"]);
+    expect(missingCriticalCreatorUniqueIndexes([...valid, ...additional.filter(row => row.t !== "creatorAvatarDispatchAdmissions")]))
+      .toEqual(["creatorAvatarDispatchAdmissions_workspace_callback_uq"]);
+    expect(missingCriticalCreatorUniqueIndexes(all.map(row => row.t === "creatorGenerations" ? { ...row, nonUnique: 1 } : row)))
+      .toEqual(["creatorGenerations_workspaceId_idempotencyKey_unique"]);
+    expect(missingCriticalCreatorUniqueIndexes(all.map(row => row.t === "creatorAvatarDispatchAdmissions" ? { ...row, c: row.c === "workspaceId" ? "callbackId" : "workspaceId" } : row)))
+      .toEqual(["creatorAvatarDispatchAdmissions_workspace_callback_uq"]);
+  });
 });
 
 describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_000 }, () => {
@@ -29,7 +48,7 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
     (await db.pool.promise().query("SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"))[0] as Array<{ t: string; c: string }>;
   const readIndexes = (db: Awaited<ReturnType<typeof createTestDatabase>>) => async () =>
     (await db.pool.promise().query(
-      "SELECT TABLE_NAME AS t, INDEX_NAME AS i, COLUMN_NAME AS c, NON_UNIQUE AS nonUnique, SEQ_IN_INDEX AS seq FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'creatorProviderJobs' AND INDEX_NAME = 'creatorProviderJobs_workspace_job_uq' ORDER BY SEQ_IN_INDEX",
+      "SELECT TABLE_NAME AS t, INDEX_NAME AS i, COLUMN_NAME AS c, NON_UNIQUE AS nonUnique, SEQ_IN_INDEX AS seq FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND ((TABLE_NAME = 'creatorProviderJobs' AND INDEX_NAME = 'creatorProviderJobs_workspace_job_uq') OR (TABLE_NAME = 'creatorGenerations' AND INDEX_NAME = 'creatorGenerations_workspaceId_idempotencyKey_unique') OR (TABLE_NAME = 'creatorAvatarDispatchAdmissions' AND INDEX_NAME = 'creatorAvatarDispatchAdmissions_workspace_callback_uq')) ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX",
     ))[0] as Array<{ t: string; i: string; c: string | null; nonUnique: number; seq: number }>;
 
   it("a reachable database at baseline 0004 is NOT ready: the tables of migrations 0005-0010 are reported missing", async () => {
@@ -114,4 +133,20 @@ describe.skipIf(skipMysqlSuite())("schema readiness on real SQL", { timeout: 30_
     }
   });
 
+  it.each([
+    ["generation idempotency", "creatorGenerations", "creatorGenerations_workspaceId_idempotencyKey_unique"],
+    ["avatar callback admission", "creatorAvatarDispatchAdmissions", "creatorAvatarDispatchAdmissions_workspace_callback_uq"],
+  ] as const)("refuses %s when its UNIQUE constraint is dropped in an isolated MySQL test DB", async (_label, table, index) => {
+    const db = await createTestDatabase();
+    try {
+      expect(await probeSchemaReadiness(readColumns(db), readIndexes(db))).toMatchObject({ status: "current", missingIndexes: 0 });
+      // Deliberately alter ONLY the disposable test schema. Column-only probing would still falsely pass.
+      await db.pool.promise().query(`ALTER TABLE \`${table}\` DROP INDEX \`${index}\``);
+      expect((await probeSchemaReadiness(readColumns(db))).status).toBe("current");
+      expect(await probeSchemaReadiness(readColumns(db), readIndexes(db)))
+        .toMatchObject({ status: "behind", missingTables: [], missingColumns: 0, missingIndexes: 1 });
+    } finally {
+      await db.close();
+    }
+  });
 });
