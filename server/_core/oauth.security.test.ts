@@ -22,11 +22,13 @@ vi.mock("../db", () => dbMock);
 import { ENV } from "./env";
 import { OAuthTransactionLedger, pkceS256Challenge, resolvePostLoginPath, resolveCallbackRedirectUri } from "./oauthSafety";
 import { registerOAuthRoutes } from "./oauth";
+import { sdk } from "./sdk";
 
 // ---- fake OIDC provider ---------------------------------------------------------------
 type Grant = { challenge: string; redirectUri: string; used: boolean };
 const grants = new Map<string, Grant>();
 const tokenRequests: URLSearchParams[] = [];
+let providerEmailVerified = false;
 let provider: http.Server;
 let providerPort = 0;
 
@@ -47,7 +49,7 @@ function startProvider() {
         if (createHash("sha256").update(verifier).digest("base64url") !== grant.challenge) return reply(400, { error: "invalid_grant", why: "pkce" });
         return reply(200, { access_token: "at-" + form.get("code") });
       }
-      if (req.url === "/userinfo") return reply(200, { sub: "user-123", name: "Test User", email: "t@example.invalid" });
+      if (req.url === "/userinfo") return reply(200, { sub: "user-123", name: "Test User", email: "t@example.invalid", email_verified: providerEmailVerified });
       reply(404, {});
     });
   });
@@ -82,7 +84,7 @@ afterAll(async () => {
   app.closeAllConnections(); provider.closeAllConnections();
   await Promise.all([new Promise(r => app.close(r)), new Promise(r => provider.close(r))]);
 });
-beforeEach(() => { grants.clear(); tokenRequests.length = 0; dbMock.upsertUser.mockClear(); });
+beforeEach(() => { grants.clear(); tokenRequests.length = 0; providerEmailVerified = false; dbMock.upsertUser.mockClear(); });
 
 // ---- helpers emulating the browser side of startLogin() ---------------------------------
 const b64url = (b: Buffer) => b.toString("base64url");
@@ -405,6 +407,26 @@ describe("login access policy (preview-user restriction)", () => {
     const r = await callback({ code: login.code, state: login.state }, login.cookie);
     expect(r.status).toBe(403);
     expect(dbMock.upsertUser).not.toHaveBeenCalled();
+  });
+
+  it("subject-authorized callback does not sign proof for an unverified email", async () => {
+    vi.stubEnv("AUTH_ALLOWED_SUBJECTS", sub);
+    const login = beginLogin();
+    const r = await callback({ code: login.code, state: login.state }, login.cookie);
+    expect(r.status).toBe(302);
+    const token = r.setCookie.find(c => c.startsWith("app_session_id="))?.split(";")[0].split("=")[1];
+    expect((await sdk.verifySession(token))?.verifiedEmail).toBeNull();
+  });
+
+  it("email-authorized callback signs only explicitly OIDC-verified email proof", async () => {
+    providerEmailVerified = true;
+    vi.stubEnv("AUTH_ALLOWED_EMAILS", "t@example.invalid");
+    const login = beginLogin();
+    const r = await callback({ code: login.code, state: login.state }, login.cookie);
+    expect(r.status).toBe(302);
+    const token = r.setCookie.find(c => c.startsWith("app_session_id="))?.split(";")[0].split("=")[1];
+    expect((await sdk.verifySession(token))?.verifiedEmail).toBe("t@example.invalid");
+    expect(dbMock.upsertUser).toHaveBeenCalledTimes(1);
   });
 
   it("another subject on the allowlist: this identity is refused", async () => {
