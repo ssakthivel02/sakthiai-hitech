@@ -20,6 +20,8 @@ export type SessionPayload = {
   name: string;
   sessionGeneration: number;
   sessionId: string;
+  /** Email explicitly verified by the IdP at login; null means no email proof. */
+  verifiedEmail?: string | null;
 };
 
 export type AuthTokenResponse = {
@@ -137,7 +139,7 @@ class SDKServer {
 
   async createSessionToken(
     openId: string,
-    options: { expiresInMs?: number; name?: string; sessionGeneration: number },
+    options: { expiresInMs?: number; name?: string; sessionGeneration: number; verifiedEmail?: string | null },
   ): Promise<string> {
     return this.signSession(
       {
@@ -146,6 +148,7 @@ class SDKServer {
         name: options.name || "User",
         sessionGeneration: options.sessionGeneration,
         sessionId: randomUUID(),
+        verifiedEmail: options.verifiedEmail ?? null,
       },
       options,
     );
@@ -164,6 +167,7 @@ class SDKServer {
       appId: payload.appId,
       name: payload.name,
       sessionGeneration: payload.sessionGeneration,
+      verifiedEmail: payload.verifiedEmail ?? null,
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setJti(payload.sessionId)
@@ -181,7 +185,7 @@ class SDKServer {
       const { payload } = await jwtVerify(cookieValue, this.getSessionSecret(), {
         algorithms: ["HS256"],
       });
-      const { openId, appId, name, sessionGeneration, jti, iat } = payload as Record<
+      const { openId, appId, name, sessionGeneration, verifiedEmail, jti, iat } = payload as Record<
         string,
         unknown
       >;
@@ -194,7 +198,8 @@ class SDKServer {
         !isNonEmptyString(jti) ||
         typeof sessionGeneration !== "number" ||
         !Number.isSafeInteger(sessionGeneration) ||
-        sessionGeneration < 0
+        sessionGeneration < 0 ||
+        (verifiedEmail != null && (!isNonEmptyString(verifiedEmail) || verifiedEmail.length > 320))
       ) {
         return null;
       }
@@ -205,6 +210,7 @@ class SDKServer {
         name,
         sessionGeneration,
         sessionId: jti,
+        verifiedEmail: typeof verifiedEmail === "string" ? verifiedEmail : null,
       };
     } catch {
       return null;
@@ -236,7 +242,7 @@ class SDKServer {
     if (!isSessionGenerationCurrent(session.sessionGeneration, user.lastSignedIn)) {
       throw ForbiddenError("Session revoked");
     }
-    if (!isSessionUserAllowed(loginAccessPolicy(), user)) {
+    if (!isSessionUserAllowed(loginAccessPolicy(), user, session.verifiedEmail)) {
       throw ForbiddenError("Account not authorized");
     }
 
