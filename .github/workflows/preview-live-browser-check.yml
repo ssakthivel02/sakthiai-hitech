@@ -103,15 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --max-time 20 "${PREVIEW_URL%/}/releasez" | tee /tmp/release.json
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const release = JSON.parse(fs.readFileSync('/tmp/release.json', 'utf8'));
-          const expected = process.env.EXPECTED_COMMIT.toLowerCase();
-          if (String(release.commit).toLowerCase() !== expected) {
-            throw new Error(`Preview is serving ${String(release.commit)}, not the approved commit ${expected}; refusing to sign in anywhere.`);
-          }
-          console.log('Preview release-identity PASS for', expected);
-          NODE
+          node scripts/verify-preview-live-release.mjs /tmp/release.json "$EXPECTED_COMMIT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
