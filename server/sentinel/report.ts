@@ -154,6 +154,7 @@ export function renderHtml(r: InvestigationReport): string {
   if (r.remediation) parts.push(`<h2>Proposed remediation <span class="tag">NOT executed · requires human approval</span></h2><p>Approval status: ${esc(r.remediation.approval)}</p><pre>${esc(r.remediation.proposal)}</pre>`);
   if (r.nextSafeSteps.length) parts.push(`<h2>Next safe steps</h2><ul>${r.nextSafeSteps.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`);
   if (r.verification) parts.push(`<h2>Verification</h2><p>Structural checks: <strong>${r.verification.passed ? "passed" : "failed"}</strong></p><p>${esc(r.verification.note)}</p>${r.verification.rejectedChecks.length ? `<p>Rejected checks: ${esc(r.verification.rejectedChecks.join("; "))}</p>` : ""}`);
+  if (r.verification?.ledgerWarnings.length) parts.push(`<p>Ledger warnings: ${esc(r.verification.ledgerWarnings.join("; "))}</p>`);
   if (r.audit.length) parts.push(`<h2>Activity audit</h2>` + table(["Time", "Action", "User", "Detail"], r.audit.map((a) => [a.createdAt, a.action, `#${a.actorUserId}`, a.detail ?? ""])));
   parts.push(`<h2>Integrity</h2><p>Event chain ${r.integrity.chainOk ? "intact" : "BROKEN"} · complete trace ${r.integrity.complete ? "yes" : "no"} · ${r.integrity.eventCount} events<br><span class="mono">head ${esc(r.integrity.head ?? "none")}</span></p>`);
   parts.push(`<h2>Disclosures</h2><ul>${r.disclosures.map((d) => `<li>${esc(d)}</li>`).join("")}</ul>`);

@@ -169,3 +169,15 @@ describe("extended provenance (hosted runtime, correlation, timestamp, fallback,
     expect(view.modelIdentity.cost).toBeNull();
   });
 });
+
+describe("HTML verification explanations", () => {
+  it("shows ledger warnings and escapes their text", async () => {
+    const { view } = await run(identified(false)); const report = buildReport(view);
+    if (!report.verification) throw Error("completed report must include verification");
+    report.verification.passed = false;
+    report.verification.ledgerWarnings = ["FINAL_CITATIONS_DISJOINT_FROM_LEDGER:DISK_FULL", "<script>untrusted-warning</script>"];
+    const html = renderHtml(report);
+    expect(html).toContain("Ledger warnings:"); expect(html).toContain("FINAL_CITATIONS_DISJOINT_FROM_LEDGER:DISK_FULL");
+    expect(html).toContain("&lt;script&gt;untrusted-warning&lt;/script&gt;"); expect(html).not.toContain("<script>untrusted-warning</script>");
+  });
+});
