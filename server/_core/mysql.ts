@@ -20,6 +20,17 @@ export function getMysqlConnectionOptions(connectionString: string, expectedData
   const caB64 = process.env[AIVEN_CA_ENV]?.trim();
   const isAiven = url.hostname.endsWith(".aivencloud.com");
   const tier = deploymentTier();
+  // NODE_ENV=production is the runtime mode for *all* hosted tiers. Never let a
+  // missing/invalid deployment-tier setting silently bypass the TLS/schema guard.
+  // Explicit local mode remains usable for loopback-only development on a
+  // production-built server; it must not be used for remote plaintext MySQL.
+  if (process.env.NODE_ENV === "production" && tier === "unspecified") {
+    throw new Error("Production MySQL runtime requires explicit SAKTHIAI_DEPLOY_ENV");
+  }
+  if (process.env.NODE_ENV === "production" && tier === "local" &&
+      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
+    throw new Error("Local MySQL tier requires a loopback host in a production runtime");
+  }
   // Render's approved preview uses one Aiven database. Runtime must enforce the
   // same trust boundary even if a deployment environment is misconfigured.
   if (tier === "preview" && (!isAiven || expectedDatabase !== "sakthiai_preview")) {
