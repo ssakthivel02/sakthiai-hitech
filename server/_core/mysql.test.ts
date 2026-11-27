@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AIVEN_CA_ENV, getMysqlConnectionOptions } from "./mysql";
 
 const originalCa = process.env[AIVEN_CA_ENV];
@@ -7,6 +7,7 @@ const testCa = Buffer.from("-----BEGIN CERTIFICATE-----\nTEST-ONLY-CA\n-----END 
 afterEach(() => {
   if (originalCa === undefined) delete process.env[AIVEN_CA_ENV];
   else process.env[AIVEN_CA_ENV] = originalCa;
+  vi.unstubAllEnvs();
 });
 
 describe("SakthiAI preview MySQL contract", () => {
@@ -43,6 +44,73 @@ describe("SakthiAI preview MySQL contract", () => {
         "sakthiai_preview",
       ),
     ).toThrow(/DATABASE_CA_CERT_B64 is required/);
+  });
+
+  it("rejects an alternate or plaintext preview database, even when its logical name matches", () => {
+    vi.stubEnv("SAKTHIAI_DEPLOY_ENV", "preview");
+    delete process.env[AIVEN_CA_ENV];
+    expect(() => getMysqlConnectionOptions(
+      "mysql://u:p@other.example.com/sakthiai_preview", "sakthiai_preview",
+    )).toThrow(/approved Aiven host/);
+    expect(() => getMysqlConnectionOptions(
+      "mysql://u:p@db.example.aivencloud.com/sakthiai_preview", "sakthiai_preview",
+    )).toThrow(/DATABASE_CA_CERT_B64/);
+    process.env[AIVEN_CA_ENV] = testCa;
+    expect(() => getMysqlConnectionOptions(
+      "mysql://u:p@db.example.aivencloud.com/sakthiai_preview",
+    )).toThrow(/sakthiai_preview target/);
+    expect(getMysqlConnectionOptions(
+      "mysql://u:p@db.example.aivencloud.com/sakthiai_preview", "sakthiai_preview",
+    ).ssl).toMatchObject({ rejectUnauthorized: true, minVersion: "TLSv1.2" });
+  });
+
+  it.each(["staging", "production"] as const)("requires a database name and trusted CA in %s, including non-Aiven providers", tier => {
+    vi.stubEnv("SAKTHIAI_DEPLOY_ENV", tier);
+    process.env[AIVEN_CA_ENV] = testCa;
+    expect(() => getMysqlConnectionOptions("mysql://u:p@db.example.org/sakthiai_production"))
+      .toThrow(/DATABASE_EXPECTED_NAME/);
+    delete process.env[AIVEN_CA_ENV];
+    expect(() => getMysqlConnectionOptions(
+      "mysql://u:p@db.example.org/sakthiai_production", "sakthiai_production",
+    )).toThrow(/DATABASE_CA_CERT_B64/);
+    process.env[AIVEN_CA_ENV] = testCa;
+    expect(getMysqlConnectionOptions(
+      "mysql://u:p@db.example.org/sakthiai_production", "sakthiai_production",
+    ).ssl).toMatchObject({ rejectUnauthorized: true, minVersion: "TLSv1.2" });
+  });
+
+  it("refuses production database connections when the deployment tier is missing or invalid", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    process.env[AIVEN_CA_ENV] = testCa;
+    for (const badTier of ["", "prod", "unrecognised"]) {
+      vi.stubEnv("SAKTHIAI_DEPLOY_ENV", badTier);
+      expect(() => getMysqlConnectionOptions(
+        "mysql://u:p@db.example.org/sakthiai_production", "sakthiai_production",
+      )).toThrow(/explicit SAKTHIAI_DEPLOY_ENV/);
+    }
+  });
+
+  it("refuses a remote database disguised as local in a production-built runtime", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SAKTHIAI_DEPLOY_ENV", "local");
+    delete process.env[AIVEN_CA_ENV];
+    expect(() => getMysqlConnectionOptions(
+      "mysql://u:p@remote.example.org/devdb", "devdb",
+    )).toThrow(/loopback host/);
+    expect(getMysqlConnectionOptions(
+      "mysql://u:p@127.0.0.1/devdb", "devdb",
+    ).ssl).toBeUndefined();
+    expect(getMysqlConnectionOptions(
+      "mysql://u:p@[::1]/devdb", "devdb",
+    ).host).toBe("[::1]");
+  });
+
+  it("keeps local development MySQL usable without a deployed-tier CA", () => {
+    vi.stubEnv("SAKTHIAI_DEPLOY_ENV", "local");
+    delete process.env[AIVEN_CA_ENV];
+    const options = getMysqlConnectionOptions("mysql://dev:dev@127.0.0.1/devdb", "devdb");
+    expect(options.host).toBe("127.0.0.1");
+    expect(options.ssl).toBeUndefined();
   });
 
   it("rejects non-MySQL schemes before any connection is attempted", () => {

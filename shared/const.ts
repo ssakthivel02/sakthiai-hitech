@@ -10,9 +10,17 @@ export const NOT_ADMIN_ERR_MSG = 'You do not have required permission (10002)';
 // victim's browser.
 export const OAUTH_STATE_COOKIE = "__Host-oauth_state";
 
-// `state` carries the callback redirect URI (used at token exchange) plus the
-// CSRF nonce. Defined here so the client encoder and server decoder never drift.
-export type OAuthState = { redirectUri: string; nonce?: string };
+// PKCE (RFC 7636, S256) verifier cookie. Same host-only `__Host-` protections as
+// the nonce cookie; consumed (cleared) by the callback so it is single-use.
+export const OAUTH_PKCE_COOKIE = "__Host-oauth_pkce";
+
+// `state` carries the callback redirect URI, the CSRF nonce, the S256 PKCE
+// challenge and an optional post-login destination (`returnTo`).
+// Everything in it is CLIENT-CONTROLLED until validated: the server accepts
+// `redirectUri` only if it equals the server's own callback URL, and `returnTo`
+// only as a same-site relative path (see server/_core/oauthSafety.ts).
+// Defined here so the client encoder and server decoder never drift.
+export type OAuthState = { redirectUri: string; nonce?: string; challenge?: string; returnTo?: string };
 
 export const encodeOAuthState = (state: OAuthState): string =>
   btoa(JSON.stringify(state));

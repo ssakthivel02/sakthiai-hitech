@@ -8,10 +8,15 @@ on:
       - ".env.example"
       - "server/_core/mysql.ts"
       - "server/_core/index.ts"
+      - "server/_core/artifactIdentity.ts"
+      - "server/_core/sharedRateLimit.ts"
       - "server/db.ts"
       - ".github/workflows/preview-db-setup.yml"
       - ".github/workflows/preview-http-smoke.yml"
       - ".github/workflows/preview-deploy-preflight.yml"
+      - "docs/INTEGRATION_RUNTIME_QUALIFICATION.md"
+      - "release/preview-contract.json"
+      - "scripts/validate-runtime-qualification-order.mjs"
 
 permissions:
   contents: read
@@ -29,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           grep -Eq '^    name: sakthiai-hitech-preview$' render.yaml
-          grep -Eq '^    healthCheckPath: /readyz$' render.yaml
+          grep -Eq '^    healthCheckPath: /healthz$' render.yaml
           grep -Eq '^    autoDeployTrigger: off$' render.yaml
           grep -q 'key: DATABASE_URL' render.yaml
           grep -q 'key: DATABASE_CA_CERT_B64' render.yaml
@@ -69,6 +74,8 @@ jobs:
           grep -q '/releasez' "$smoke"
           grep -q 'ssakthivel02/sakthiai-hitech' "$smoke"
           grep -q 'exactCommitKnown' "$smoke"
+          grep -q "artifact?.state !== 'verified'" "$smoke"
+          grep -q 'artifactIdentityReady' server/_core/index.ts
 
       - name: Validate deployed readiness contract
         shell: bash
@@ -81,6 +88,11 @@ jobs:
           grep -q 'authentication' "$smoke"
           grep -q 'llm' "$smoke"
           grep -q 'storage' "$smoke"
+          grep -q 'rateLimit' "$smoke"
+          grep -q "state !== 'shared'" "$smoke"
+
+      - name: Validate qualification order and required gates
+        run: node scripts/validate-runtime-qualification-order.mjs
 
       - name: Preview deployment preflight PASS
         run: echo 'SakthiAI preview deployment configuration is internally consistent and exact-commit verifiable.'

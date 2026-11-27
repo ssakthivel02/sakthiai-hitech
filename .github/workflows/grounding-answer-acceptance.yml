@@ -15,5 +15,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
       - name: Validate fail-closed grounding contract
         run: node scripts/validate-grounding-answer-contract.mjs
+      - name: Behavioural retrieval and grounding regression tests
+        run: pnpm exec vitest run server/retrieval.acceptance.test.ts server/retrieval.unicode.test.ts server/chat.grounding.test.ts

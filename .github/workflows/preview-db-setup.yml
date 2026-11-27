@@ -1,30 +1,18 @@
 name: SakthiAI Preview DB Setup
 
-# RETIRED ON THE DEFAULT BRANCH — FAIL-CLOSED REFUSAL.
-#
-# The previous version of this file ran an unguarded `pnpm db:push` against the shared Aiven MySQL service using
-# repository-level secrets, with no protected environment, no recovery point and no privilege or journal checks.
-#
-# The guarded inspect/migrate workflow lives on the integration branch
-# `integration/pr7-pr25-runtime-qualification-20260925` (PR #29). It is dispatched explicitly with
-# `--ref integration/pr7-pr25-runtime-qualification-20260925`, uses only environment-scoped credentials
-# (`sakthiai-preview-db-inspect` / `sakthiai-preview-db-migrate`, branch-restricted, reviewer on migrate) and only
-# ever targets `sakthiai_preview` over verified TLS (CA supplied as the environment secret, consumed as
-# DATABASE_CA_CERT_B64).
-#
-# GitHub dispatches a workflow only if its file exists on the default branch, so this file keeps the same path, name
-# and inputs. It reads no secret, checks out nothing, uses no environment and always exits non-zero.
-# When PR #29 is merged, take the integration-branch version of this file in the merge.
-
 on:
   workflow_dispatch:
     inputs:
       recovery_point:
-        description: "Ignored here. Dispatch with --ref integration/pr7-pr25-runtime-qualification-20260925 to use the guarded workflow."
+        description: "Owner-attested Aiven backup time for hitech-preview-mysql taken/confirmed before this run, UTC with Z (e.g. 2026-10-05T01:10:00Z). Recorded as OWNER_ATTESTED, not provider-verified."
+        required: true
+        type: string
+      approved_commit:
+        description: "Full 40-character SHA named in the preview approval. Must equal the commit of the ref you dispatch from; checked before the database environment (and its reviewers/secrets) is entered."
         required: true
         type: string
       mode:
-        description: "Ignored here. This default-branch copy always refuses."
+        description: "inspect = read-only preflight (secrets present, target name, verified TLS, recovery point, journal/hash/snapshot); writes nothing. migrate = apply pending migrations and backfill."
         required: true
         type: choice
         options: [inspect, migrate]
@@ -33,19 +21,183 @@ on:
 permissions:
   contents: read
 
+# One writer at a time: a second dispatch waits instead of racing the first between its pre guard and db:push.
 concurrency:
   group: sakthiai-preview-db
   cancel-in-progress: false
 
 jobs:
-  refuse:
+  # Commit binding runs in its own job with NO environment and NO secrets: a mismatched approved_commit fails here, so the
+  # database environment is never entered, its reviewers are never asked, and no credential is ever bound to the run.
+  bind:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
+    env:
+      APPROVED_COMMIT: ${{ inputs.approved_commit }}
+      DISPATCHED_COMMIT: ${{ github.sha }}
     steps:
-      - name: Refuse database operations from this branch
+      - name: Require approved_commit to equal the dispatched commit
         shell: bash
         run: |
-          echo "::error::Preview database operations are retired on this branch. Nothing was read, migrated or written."
-          echo "Use the guarded workflow: gh workflow run preview-db-setup.yml --ref integration/pr7-pr25-runtime-qualification-20260925 -f mode=inspect -f recovery_point=<UTC>"
-          echo "It targets sakthiai_preview only, with protected-environment credentials and DATABASE_CA_CERT_B64 verified TLS."
-          exit 1
+          set -euo pipefail
+          if ! [[ "${APPROVED_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "approved_commit must be a full 40-character lowercase SHA."
+            exit 1
+          fi
+          if [ "${APPROVED_COMMIT}" != "${DISPATCHED_COMMIT:-}" ]; then
+            echo "approved_commit ${APPROVED_COMMIT} does not match the dispatched commit ${DISPATCHED_COMMIT:-<unset>}; refusing."
+            exit 1
+          fi
+          echo "Commit binding PASS (${DISPATCHED_COMMIT})"
+
+  migrate:
+    needs: bind
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Credentials live ONLY as environment secrets. inspect -> SELECT-only principal; migrate -> least-privilege
+    # migrator behind required reviewers. Both environments restrict deployment branches. No repository-level DB
+    # secret is read, so a workflow without this environment mapping (e.g. the legacy main copy) gets none.
+    environment: ${{ inputs.mode == 'migrate' && 'sakthiai-preview-db-migrate' || 'sakthiai-preview-db-inspect' }}
+    env:
+      DATABASE_URL: ${{ secrets.SAKTHIAI_PREVIEW_DB_URL }}
+      DATABASE_EXPECTED_NAME: sakthiai_preview
+      DATABASE_CA_CERT_B64: ${{ secrets.SAKTHIAI_PREVIEW_DB_CA_B64 }}
+      PREVIEW_DB_ROLE: ${{ inputs.mode }}
+      ENVIRONMENT_DB_ROLE: ${{ vars.SAKTHIAI_PREVIEW_DB_ROLE }}
+    steps:
+      - name: Checkout the dispatched commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Require environment-scoped preview database configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${PREVIEW_DB_ROLE:-}" in inspect|migrate) ;; *) echo "mode must be inspect or migrate."; exit 1 ;; esac
+          if [ "${ENVIRONMENT_DB_ROLE:-}" != "${PREVIEW_DB_ROLE}" ]; then
+            echo "Environment variable SAKTHIAI_PREVIEW_DB_ROLE ('${ENVIRONMENT_DB_ROLE:-<unset>}') does not match mode '${PREVIEW_DB_ROLE}'; refusing."
+            exit 1
+          fi
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "Environment secret SAKTHIAI_PREVIEW_DB_URL is not configured for the ${PREVIEW_DB_ROLE} environment."
+            exit 1
+          fi
+          if [ -z "${DATABASE_CA_CERT_B64:-}" ]; then
+            echo "Environment secret SAKTHIAI_PREVIEW_DB_CA_B64 is not configured for the ${PREVIEW_DB_ROLE} environment."
+            exit 1
+          fi
+
+      - name: Validate isolated Aiven MySQL target
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const url = new URL(process.env.DATABASE_URL);
+          if (url.protocol !== 'mysql:') throw new Error('SakthiAI preview DATABASE_URL must use mysql://.');
+          if (!url.hostname.endsWith('.aivencloud.com')) throw new Error('SakthiAI preview must target the approved Aiven MySQL host.');
+          const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
+          if (database !== process.env.DATABASE_EXPECTED_NAME) {
+            throw new Error(`SakthiAI preview must target ${process.env.DATABASE_EXPECTED_NAME}, received ${database || '<none>'}.`);
+          }
+          console.log('SakthiAI isolated Aiven MySQL target guard PASS');
+          NODE
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.4.1 --activate
+
+      - name: Install dependencies
+        env:
+          DATABASE_URL: ""
+          DATABASE_CA_CERT_B64: ""
+        run: pnpm install --frozen-lockfile
+
+      - name: Require a valid owner-attested pre-migration recovery point
+        env:
+          RECOVERY_POINT: ${{ inputs.recovery_point }}
+        run: node scripts/preview-migration-guard.mjs attest
+
+      - name: Database principal privileges match the mode (inspect = SELECT only; read-only, verified TLS)
+        run: node scripts/preview-migration-guard.mjs grants
+
+      - name: Typecheck
+        env:
+          DATABASE_URL: ""
+          DATABASE_CA_CERT_B64: ""
+        run: pnpm check
+
+      - name: Pre-migration journal, hash, recovery-point and snapshot guard (read-only, verified TLS)
+        env:
+          RECOVERY_POINT: ${{ inputs.recovery_point }}
+        run: node scripts/preview-migration-guard.mjs pre
+
+      - name: Apply preview schema
+        if: inputs.mode == 'migrate'
+        run: pnpm db:push
+
+      - name: Post-migration journal and data-preservation guard (read-only)
+        if: inputs.mode == 'migrate'
+        run: node scripts/preview-migration-guard.mjs post
+
+      - name: Migrator rerun is a no-op
+        if: inputs.mode == 'migrate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm db:push
+          node scripts/preview-migration-guard.mjs rerun
+
+      - name: Search-text backfill is complete and idempotent
+        if: inputs.mode == 'migrate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm db:backfill-search-text | tee /tmp/backfill-1.txt
+          pnpm db:backfill-search-text | tee /tmp/backfill-2.txt
+          grep -q 'BACKFILL_DONE updated=0' /tmp/backfill-2.txt
+
+      - name: Upload preview migration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-migration-evidence
+          path: reports/staging/preview-migration-*.json
+          if-no-files-found: warn
+
+      - name: Verify database connectivity over trusted TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import mysql from 'mysql2/promise';
+          const url = new URL(process.env.DATABASE_URL);
+          const connection = await mysql.createConnection({
+            host: url.hostname,
+            port: url.port ? Number(url.port) : 3306,
+            user: decodeURIComponent(url.username),
+            password: decodeURIComponent(url.password),
+            database: decodeURIComponent(url.pathname.replace(/^\//, '')),
+            ssl: {
+              ca: Buffer.from(process.env.DATABASE_CA_CERT_B64, 'base64').toString('utf8'),
+              rejectUnauthorized: true,
+              minVersion: 'TLSv1.2',
+            },
+          });
+          const [rows] = await connection.query('SELECT 1 AS ok');
+          await connection.end();
+          if (!Array.isArray(rows) || rows[0]?.ok !== 1) process.exit(1);
+          console.log('SakthiAI preview verified-TLS database connectivity PASS');
+          NODE
+
+      - name: Unit and regression tests
+        env:
+          DATABASE_URL: ""
+          DATABASE_CA_CERT_B64: ""
+        run: pnpm test

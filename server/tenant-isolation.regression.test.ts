@@ -5,10 +5,15 @@ const routers = readFileSync(new URL("./routers.ts", import.meta.url), "utf8");
 const db = readFileSync(new URL("./db.ts", import.meta.url), "utf8");
 
 describe("P0 tenant isolation regression guards", () => {
-  it("filters retrieval by workspace before scoring and fusion", () => {
-    expect(db).toContain("eq(documentChunks.workspaceId, workspaceId)");
-    expect(db).toContain("eq(documents.workspaceId, workspaceId)");
-    expect(db.indexOf("where(and(eq(documentChunks.workspaceId, workspaceId)")).toBeLessThan(db.indexOf("const scored = rows.map"));
+  it("filters retrieval by workspace in SQL before scoring and fusion (every candidate source, chunk AND document scoped)", () => {
+    const store = readFileSync(new URL("./retrievalStore.ts", import.meta.url), "utf8");
+    // three candidate queries (lexical, legacy, semantic), each spreading the two-sided workspace predicate
+    expect(store.split("...scopedTo(workspaceId)").length - 1).toBe(3);
+    expect(store).toContain("eq(documentChunks.workspaceId, workspaceId), eq(documents.workspaceId, workspaceId)");
+    expect(store.indexOf("fetchRetrievalCandidates(db, workspaceId, query")).toBeLessThan(store.indexOf("rankChunkCandidates(rows, query"));
+    // db.ts delegates with the caller's workspace id and never fetches a global candidate set
+    expect(db).toContain("searchWorkspaceChunks(db, workspaceId, query");
+    expect(db).not.toMatch(/from\(documentChunks\)[^;]*\.limit\(/);
   });
 
   it("requires uploaded project to belong to the selected workspace", () => {

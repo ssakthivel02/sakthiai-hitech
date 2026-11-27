@@ -7,19 +7,24 @@
     "provider": "render",
     "serviceName": "sakthiai-hitech-preview",
     "autoDeploy": false,
-    "healthPath": "/readyz",
+    "healthPath": "/healthz",
     "sourcePolicy": "exact-commit-only-after-green-gates"
   },
   "database": {
     "engine": "mysql",
     "provider": "aiven",
     "expectedDatabase": "sakthiai_preview",
-    "forbiddenDatabases": ["defaultdb", "ramaverse_preview", "kirthiverse_preview"],
+    "forbiddenDatabases": [
+      "defaultdb",
+      "ramaverse_preview",
+      "kirthiverse_preview"
+    ],
     "verifiedTlsRequired": true,
     "caEnvironmentVariable": "DATABASE_CA_CERT_B64"
   },
   "requiredPreviewGates": [
     "quality-gate",
+    "private-beta-posture",
     "preview-deployment-preflight",
     "preview-db-setup",
     "preview-http-smoke"
@@ -28,7 +33,9 @@
     "database": true,
     "auth": true,
     "llm": true,
-    "storage": true
+    "storage": "configured-or-not-required-when-uploads-off",
+    "rateLimit": "mysql-shared",
+    "artifact": "verified-exact-commit"
   },
   "production": {
     "approved": false,

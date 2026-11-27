@@ -1,22 +1,82 @@
 import { TRPCError } from "@trpc/server";
 import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
+import {
+  FileSafetyError,
+  requireCleanFile,
+  type MalwareScanner,
+} from "./security/malwareScanner";
 
-export type ExtractedSegment = { content: string; page?: number; section?: string; paragraph?: number; sourceStart: number; sourceEnd: number };
-export type ExtractedDocument = { text: string; segments: ExtractedSegment[]; pageCount: number };
+export type ExtractedSegment = {
+  content: string;
+  page?: number;
+  section?: string;
+  paragraph?: number;
+  sourceStart: number;
+  sourceEnd: number;
+};
 
-function segmentText(content: string, start: number, metadata: Omit<ExtractedSegment, "content" | "sourceStart" | "sourceEnd">): ExtractedSegment[] {
+export type ExtractedDocument = {
+  text: string;
+  segments: ExtractedSegment[];
+  pageCount: number;
+};
+
+export type ExtractDocumentOptions = {
+  filename?: string;
+  scanner?: MalwareScanner | null;
+};
+
+function segmentText(
+  content: string,
+  start: number,
+  metadata: Omit<ExtractedSegment, "content" | "sourceStart" | "sourceEnd">,
+): ExtractedSegment[] {
   const clean = content.trim();
   if (!clean) return [];
   const result: ExtractedSegment[] = [];
   for (let offset = 0; offset < clean.length; offset += 1200) {
     const chunk = clean.slice(offset, offset + 1200);
-    result.push({ content: chunk, sourceStart: start + offset, sourceEnd: start + offset + chunk.length, ...metadata });
+    result.push({
+      content: chunk,
+      sourceStart: start + offset,
+      sourceEnd: start + offset + chunk.length,
+      ...metadata,
+    });
   }
   return result;
 }
 
-export async function extractDocument(buffer: Buffer, mimeType: string): Promise<ExtractedDocument> {
+export async function extractDocument(
+  buffer: Buffer,
+  mimeType: string,
+  options: ExtractDocumentOptions = {},
+): Promise<ExtractedDocument> {
+  // Security invariant: no parser, extractor or downstream storage path receives
+  // file content until the scanner explicitly returns CLEAN. Missing/broken
+  // scanners fail closed and the raw buffer is not persisted by this layer.
+  try {
+    await requireCleanFile(
+      buffer,
+      { filename: options.filename, mimeType },
+      options.scanner,
+    );
+  } catch (error) {
+    if (error instanceof FileSafetyError) {
+      if (error.decision.scanner.status === "infected") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Upload quarantined by malware policy",
+        });
+      }
+      throw new TRPCError({
+        code: "SERVICE_UNAVAILABLE",
+        message: "Malware scanner unavailable; upload blocked",
+      });
+    }
+    throw error;
+  }
+
   if (mimeType === "application/pdf" || mimeType.endsWith("/pdf")) {
     const parser = new PDFParse({ data: buffer });
     try {
@@ -29,16 +89,33 @@ export async function extractDocument(buffer: Buffer, mimeType: string): Promise
         cursor = start >= 0 ? start + page.length : cursor;
         return segmentText(page, Math.max(0, start), { page: index + 1 });
       });
-      return { text: result.text.trim(), segments, pageCount: Math.max(1, pages.length) };
-    } finally { await parser.destroy(); }
+      return {
+        text: result.text.trim(),
+        segments,
+        pageCount: Math.max(1, pages.length),
+      };
+    } finally {
+      await parser.destroy();
+    }
   }
-  if (mimeType.includes("wordprocessingml") || mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+
+  if (
+    mimeType.includes("wordprocessingml") ||
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
     const html = (await mammoth.convertToHtml({ buffer })).value;
     const paragraphMatches: RegExpExecArray[] = [];
     const paragraphPattern = /<(h[1-6]|p)[^>]*>([\s\S]*?)<\/\1>/gi;
     let paragraphMatch: RegExpExecArray | null;
-    while ((paragraphMatch = paragraphPattern.exec(html)) !== null) paragraphMatches.push(paragraphMatch);
-    const strip = (value: string) => value.replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").trim();
+    while ((paragraphMatch = paragraphPattern.exec(html)) !== null) {
+      paragraphMatches.push(paragraphMatch);
+    }
+    const strip = (value: string) =>
+      value
+        .replace(/<[^>]+>/g, "")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .trim();
     let section: string | undefined;
     let cursor = 0;
     const segments: ExtractedSegment[] = [];
@@ -50,14 +127,24 @@ export async function extractDocument(buffer: Buffer, mimeType: string): Promise
       else paragraph += 1;
       const start = cursor;
       cursor += content.length + 1;
-      segments.push(...segmentText(content, start, { section, paragraph: match[1].toLowerCase() === "p" ? paragraph : undefined }));
+      segments.push(
+        ...segmentText(content, start, {
+          section,
+          paragraph: match[1].toLowerCase() === "p" ? paragraph : undefined,
+        }),
+      );
     }
     const text = segments.map(segment => segment.content).join("\n\n").trim();
     return { text, segments, pageCount: 1 };
   }
+
   if (mimeType.startsWith("text/")) {
     const text = buffer.toString("utf8").trim();
     return { text, segments: segmentText(text, 0, {}), pageCount: 1 };
   }
-  throw new TRPCError({ code: "BAD_REQUEST", message: "Supported formats: PDF, DOCX, or text files" });
+
+  throw new TRPCError({
+    code: "BAD_REQUEST",
+    message: "Supported formats: PDF, DOCX, or text files",
+  });
 }
