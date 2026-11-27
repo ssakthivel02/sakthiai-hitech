@@ -79,6 +79,32 @@ describe("SakthiAI preview MySQL contract", () => {
     ).ssl).toMatchObject({ rejectUnauthorized: true, minVersion: "TLSv1.2" });
   });
 
+  it("refuses production database connections when the deployment tier is missing or invalid", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    process.env[AIVEN_CA_ENV] = testCa;
+    for (const badTier of ["", "prod", "unrecognised"]) {
+      vi.stubEnv("SAKTHIAI_DEPLOY_ENV", badTier);
+      expect(() => getMysqlConnectionOptions(
+        "mysql://u:p@db.example.org/sakthiai_production", "sakthiai_production",
+      )).toThrow(/explicit SAKTHIAI_DEPLOY_ENV/);
+    }
+  });
+
+  it("refuses a remote database disguised as local in a production-built runtime", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SAKTHIAI_DEPLOY_ENV", "local");
+    delete process.env[AIVEN_CA_ENV];
+    expect(() => getMysqlConnectionOptions(
+      "mysql://u:p@remote.example.org/devdb", "devdb",
+    )).toThrow(/loopback host/);
+    expect(getMysqlConnectionOptions(
+      "mysql://u:p@127.0.0.1/devdb", "devdb",
+    ).ssl).toBeUndefined();
+    expect(getMysqlConnectionOptions(
+      "mysql://u:p@[::1]/devdb", "devdb",
+    ).host).toBe("[::1]");
+  });
+
   it("keeps local development MySQL usable without a deployed-tier CA", () => {
     vi.stubEnv("SAKTHIAI_DEPLOY_ENV", "local");
     delete process.env[AIVEN_CA_ENV];
