@@ -130,7 +130,11 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
   async function attemptOnce(call: AdapterCall, attemptTimeoutMs: number): Promise<Omit<AdapterSuccess, "attempts">> {
     if (call.responseFormat !== undefined && (call.responseFormat !== "json_object" || !options.jsonMode)) throw new ProviderCallError("bad_request");
     if (call.responseSchema !== undefined && (call.responseFormat !== "json_object" || !options.llamaJsonSchema || !isBoundedResponseSchema(call.responseSchema))) throw new ProviderCallError("bad_request");
+    if (call.signal?.aborted) throw new ProviderCallError("cancelled", undefined, 0);
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    call.signal?.addEventListener("abort", cancel, { once: true });
+    if (call.signal?.aborted) cancel();
     const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
     try {
       let response: Response;
@@ -142,6 +146,8 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
           ]);
           if (!allowed) throw new ProviderCallError("bad_request"); // policy refusal: terminal, no retry, no fallback masking it as an outage
         }
+        if (call.signal?.aborted) throw new ProviderCallError("cancelled");
+        if (controller.signal.aborted) throw new ProviderCallError("timeout");
         response = await doFetch(url, {
           method: "POST",
           headers: { "content-type": "application/json", ...(options.apiKey ? { authorization: `Bearer ${options.apiKey}` } : {}) },
@@ -157,11 +163,16 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
           redirect: "error",
         });
       } catch (error) {
+        if (call.signal?.aborted) throw new ProviderCallError("cancelled");
         if (error instanceof ProviderCallError) throw error;
         if (controller.signal.aborted || (error as { name?: string })?.name === "AbortError") throw new ProviderCallError("timeout");
         throw new ProviderCallError("network");
       }
 
+      if (call.signal?.aborted) {
+        try { await response.body?.cancel(); } catch { /* ignore */ }
+        throw new ProviderCallError("cancelled");
+      }
       if (!response.ok) {
         const status = response.status;
         const retryAfter = parseRetryAfterMs(response.headers.get("retry-after"), now());
@@ -175,12 +186,15 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
       try {
         payload = await response.json();
       } catch {
+        if (call.signal?.aborted) throw new ProviderCallError("cancelled");
         if (controller.signal.aborted) throw new ProviderCallError("timeout");
         throw new ProviderCallError("malformed_response");
       }
+      if (call.signal?.aborted) throw new ProviderCallError("cancelled");
       return normalizeCompletion(payload);
     } finally {
       clearTimeout(timer);
+      call.signal?.removeEventListener("abort", cancel);
     }
   }
 
@@ -190,6 +204,7 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
       const startedAt = now();
       let last: ProviderCallError | undefined;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        if (call.signal?.aborted) throw new ProviderCallError("cancelled", undefined, attempt - 1);
         const remaining = totalDeadlineMs - (now() - startedAt);
         if (remaining <= 0) break;
         try {
@@ -209,7 +224,19 @@ export function createOpenAiCompatibleAdapter(options: OpenAiCompatibleOptions):
           const delay = Math.max(jittered, retryAfter ?? 0);
           const left = totalDeadlineMs - (now() - startedAt);
           if (delay >= left) throw last; // would blow the deadline: give up now rather than sleep past it
-          await sleep(delay);
+          if (!call.signal) await sleep(delay);
+          else {
+            const signal = call.signal;
+            let cancel: () => void = () => {};
+            try {
+              await new Promise<void>((resolve, reject) => {
+                cancel = () => reject(new ProviderCallError("cancelled", undefined, attempt));
+                signal.addEventListener("abort", cancel, { once: true });
+                if (signal.aborted) { cancel(); return; }
+                Promise.resolve().then(() => sleep(delay)).then(resolve, reject);
+              });
+            } finally { signal.removeEventListener("abort", cancel); }
+          }
         }
       }
       throw last ?? new ProviderCallError("timeout", undefined, 1);

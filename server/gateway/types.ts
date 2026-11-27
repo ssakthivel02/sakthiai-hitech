@@ -18,6 +18,8 @@ export type GatewayRequest = {
   responseFormat?: "json_object";
   /** Optional bounded schema for an explicitly opted-in local llama-compatible endpoint; requires JSON-object mode. */
   responseSchema?: Record<string, unknown>;
+  /** Caller cancellation stays in-process and is never serialized to the provider. */
+  signal?: AbortSignal;
   intents?: readonly TaskIntent[];
   requiredCapabilities?: readonly ModelCapability[];
   optionalCapabilities?: readonly ModelCapability[];
@@ -25,6 +27,7 @@ export type GatewayRequest = {
 
 /** Why a provider call failed, in provider-neutral terms. */
 export type ProviderErrorClass =
+  | "cancelled"
   | "timeout"
   | "network"
   | "rate_limited"
@@ -50,6 +53,7 @@ export type ErrorTraits = {
  * are configuration/request faults that must surface, not be masked.
  */
 export const ERROR_TRAITS: Readonly<Record<ProviderErrorClass, ErrorTraits>> = {
+  cancelled: { retryable: false, breakerFailure: false, allowsFallback: false },
   timeout: { retryable: true, breakerFailure: true, allowsFallback: true },
   network: { retryable: true, breakerFailure: true, allowsFallback: true },
   rate_limited: { retryable: true, breakerFailure: true, allowsFallback: true },
@@ -91,6 +95,8 @@ export type AdapterCall = {
   responseFormat?: "json_object";
   /** Optional bounded schema for an explicitly opted-in local llama-compatible endpoint; requires JSON-object mode. */
   responseSchema?: Record<string, unknown>;
+  /** Caller cancellation stays in-process and is never serialized to the provider. */
+  signal?: AbortSignal;
   model: string;
 };
 

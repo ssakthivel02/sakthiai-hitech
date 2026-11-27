@@ -21,6 +21,7 @@ export class TaskModelTransport implements ModelTransport {
       const request = {
         // A logical call needs its own correlation ID, including after adapter recreation/resume.
         requestId: `sentinel-model:${randomUUID()}`,
+        ...(req.signal ? { signal: req.signal } : {}),
         ...(this.options.jsonMode ? { responseFormat: "json_object" as const } : {}),
         messages: [{ role: "system" as const, content: req.system }, { role: "user" as const, content: req.user }],
         intents: ["analysis" as const], requiredCapabilities: ["chat" as const, "reasoning" as const], optionalCapabilities: ["structured_output" as const],

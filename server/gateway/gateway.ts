@@ -283,6 +283,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     const failed = (reason: Extract<GatewayOutcome, { status: "failed" }>["reason"]): GatewayOutcome =>
       finish({ status: "failed", reason, attempts, latencyMs: now() - startedAt });
 
+    if (request.signal?.aborted) return failed("cancelled");
     if (request.responseFormat !== undefined && request.responseFormat !== "json_object") return failed("bad_request");
     if (request.responseSchema !== undefined && (request.responseFormat !== "json_object" || !isBoundedResponseSchema(request.responseSchema))) return failed("bad_request");
     const ordered = routedProfiles(request);
@@ -294,6 +295,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     const tried = new Set<string>();
 
     for (const profile of ordered.slice(0, config.maxCandidates)) {
+      if (request.signal?.aborted) return failed("cancelled");
       const binding = bindingByProfile.get(profile.id);
       if (!binding || tried.has(binding.providerId)) continue; // never revisit a provider: no fallback loops
       tried.add(binding.providerId);
@@ -312,6 +314,7 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
       // External/metered providers need an explicit per-workspace opt-in (resolved once per request).
       if (binding.kind === "external") {
         const verdict = await workspaceGate(binding, request);
+        if (request.signal?.aborted) return failed("cancelled");
         if (!verdict.ok) {
           attempts.push({ providerId: binding.providerId, outcome: `skipped:policy:${verdict.detail}` });
           lastFailure = binding.billingMode === "metered_api" ? "budget_denied" : "policy_denied";
@@ -321,12 +324,22 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
 
       // Fail closed if shared breaker state is unreadable, except for self-hosted providers (no spend, no data egress).
       const admission = await breaker.admit(binding.providerId, { failOpen: binding.kind === "self_hosted" });
+      if (request.signal?.aborted) {
+        if (admission.allowed) await breaker.recordNeutral(binding.providerId);
+        return failed("cancelled");
+      }
       if (!admission.allowed) {
         attempts.push({ providerId: binding.providerId, outcome: SKIP_CIRCUIT_OPEN });
         continue;
       }
 
       const gate = await budgetGate(binding, request, estimatedTokens);
+      if (request.signal?.aborted) {
+        // No adapter has been dispatched: release only this never-sent reservation.
+        if (gate.ok && gate.reservation && budgetStore) await budgetStore.release(gate.reservation).catch(() => undefined);
+        await breaker.recordNeutral(binding.providerId);
+        return failed("cancelled");
+      }
       if (!gate.ok) {
         await breaker.recordNeutral(binding.providerId); // releases a held half-open probe slot
         attempts.push({ providerId: binding.providerId, outcome: `skipped:budget:${gate.detail}` });
@@ -336,7 +349,8 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
 
       const callStarted = now();
       try {
-        const success = await adapterFor(binding).complete({ messages: request.messages, maxOutputTokens, model: binding.model, ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}), ...(request.responseSchema !== undefined ? { responseSchema: request.responseSchema } : {}) });
+        const success = await adapterFor(binding).complete({ messages: request.messages, maxOutputTokens, model: binding.model, ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}), ...(request.responseSchema !== undefined ? { responseSchema: request.responseSchema } : {}), ...(request.signal ? { signal: request.signal } : {}) });
+        if (request.signal?.aborted) throw new ProviderCallError("cancelled");
         await breaker.recordSuccess(binding.providerId);
         const usage = usageFrom(binding, success, estimatedTokens);
         if (gate.reservation && budgetStore) {
@@ -363,19 +377,22 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
           ...(binding.endpointProfile ? { endpointProfile: binding.endpointProfile } : {}),
         });
       } catch (error) {
-        const failure = error instanceof ProviderCallError ? error : new ProviderCallError("network");
+        const failure = request.signal?.aborted ? new ProviderCallError("cancelled", undefined, error instanceof ProviderCallError ? error.attempts : 1) : error instanceof ProviderCallError ? error : new ProviderCallError("network");
         const traits = ERROR_TRAITS[failure.errorClass];
         if (traits.breakerFailure) await breaker.recordFailure(binding.providerId);
         else await breaker.recordNeutral(binding.providerId);
 
         if (gate.reservation && budgetStore) {
           // The provider may have done (billable) work for these classes; otherwise hand the hold back.
-          const possiblyBilled = failure.errorClass === "timeout" || failure.errorClass === "malformed_response" || failure.errorClass === "empty_response";
+          const possiblyBilled = failure.errorClass === "cancelled" || failure.errorClass === "timeout" || failure.errorClass === "malformed_response" || failure.errorClass === "empty_response";
           if (possiblyBilled) await budgetStore.commit(gate.reservation, { tokens: estimatedTokens, source: "estimated" }).catch(() => undefined);
           else await budgetStore.release(gate.reservation).catch(() => undefined);
         }
-        const record = touchRuntime(binding.providerId);
-        Object.assign(record, { lastOk: false, lastFailureClass: failure.errorClass });
+        // Caller cancellation says nothing about provider health; preserve prior health.
+        if (failure.errorClass !== "cancelled") {
+          const record = touchRuntime(binding.providerId);
+          Object.assign(record, { lastOk: false, lastFailureClass: failure.errorClass });
+        }
         attempts.push({ providerId: binding.providerId, outcome: failure.errorClass, httpAttempts: failure.attempts, latencyMs: now() - callStarted });
         lastFailure = failure.errorClass;
         if (!traits.allowsFallback) return failed(failure.errorClass); // auth/caller errors are terminal, never masked by fallback

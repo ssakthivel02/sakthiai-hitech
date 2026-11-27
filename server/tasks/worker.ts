@@ -50,6 +50,7 @@ export function failureFromGateway(outcome: Extract<GatewayOutcome, { status: "f
   switch (outcome.reason) {
     case "budget_denied": return new TaskFatalError("provider budget denied", "BUDGET_DENIED");
     case "policy_denied": return new TaskFatalError("provider policy denied", "POLICY_DENIED");
+    case "cancelled": return new TaskFatalError("model request cancelled", "NON_RETRYABLE");
     case "auth_failed": case "bad_request": return new TaskFatalError(`provider rejected the request (${outcome.reason})`, "NON_RETRYABLE");
     default: return new TaskRetryableError(`model provider unavailable (${outcome.reason})`, "PROVIDER_UNAVAILABLE");
   }
