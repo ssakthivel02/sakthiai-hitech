@@ -1,4 +1,5 @@
 import mysql, { type Pool, type PoolOptions } from "mysql2";
+import { deploymentTier } from "./deploymentTier";
 
 export const AIVEN_CA_ENV = "DATABASE_CA_CERT_B64";
 
@@ -18,8 +19,19 @@ export function getMysqlConnectionOptions(connectionString: string, expectedData
 
   const caB64 = process.env[AIVEN_CA_ENV]?.trim();
   const isAiven = url.hostname.endsWith(".aivencloud.com");
-  if (isAiven && !caB64) {
-    throw new Error(`${AIVEN_CA_ENV} is required for verified TLS to Aiven MySQL`);
+  const tier = deploymentTier();
+  // Render's approved preview uses one Aiven database. Runtime must enforce the
+  // same trust boundary even if a deployment environment is misconfigured.
+  if (tier === "preview" && (!isAiven || expectedDatabase !== "sakthiai_preview")) {
+    throw new Error("Preview MySQL must use the approved Aiven host and sakthiai_preview target");
+  }
+  // Deployed staging/production may use a different MySQL provider, but never
+  // silently downgrade to an unverified plaintext connection or implicit schema.
+  if ((tier === "staging" || tier === "production") && !expectedDatabase) {
+    throw new Error("Deployed MySQL requires an explicit DATABASE_EXPECTED_NAME");
+  }
+  if ((isAiven || tier === "preview" || tier === "staging" || tier === "production") && !caB64) {
+    throw new Error(`${AIVEN_CA_ENV} is required for verified TLS to deployed MySQL`);
   }
 
   const ssl = caB64
