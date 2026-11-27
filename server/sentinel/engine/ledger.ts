@@ -13,7 +13,7 @@ export interface RevisionEvent {
   changes: LedgerChange[]; justified: boolean; warnings: string[];
 }
 /** Warnings that make a DIAGNOSIS untrustworthy when the ledger is run in strict mode. */
-export const BLOCKING_WARNINGS = ["INVALID_REF", "LEADER_CHANGE_WITHOUT_NEW_EVIDENCE", "REVIVAL_WITHOUT_NEW_EVIDENCE", "FINAL_LABEL_NOT_LEADER", "FINAL_LABEL_NEVER_HYPOTHESISED"];
+export const BLOCKING_WARNINGS = ["INVALID_REF", "LEADER_CHANGE_WITHOUT_NEW_EVIDENCE", "REVIVAL_WITHOUT_NEW_EVIDENCE", "FINAL_LABEL_NOT_LEADER", "FINAL_LABEL_NEVER_HYPOTHESISED", "FINAL_CITATIONS_DISJOINT_FROM_LEDGER"];
 export const isBlocking = (w: string): boolean => BLOCKING_WARNINGS.includes(w.split(":")[0]!);
 
 const cap = (s: string, n = 120): string => (s.length > n ? s.slice(0, n) : s);

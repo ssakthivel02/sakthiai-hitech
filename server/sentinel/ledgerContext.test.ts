@@ -63,3 +63,52 @@ describe("engine-owned hypothesis context", () => {
     const result = inv.finish(); expect(result.stop_reason).toBe("LEDGER_REJECTED"); expect(result.final.outcome).toBe("ABSTAIN");
   });
 });
+
+/** Four real broker records: the ledger supports the first record from each tool. */
+async function citationScenario(strictLedger = true) {
+  const c = caseFromRecord(newRow() as never);
+  const tools = new FakeTools((tool) => tool === "metrics.query"
+    ? ["WARN data volume usage 100 percent", "INFO CPU utilisation 10 percent"]
+    : ["ERROR no space left on device while writing", "INFO routine health probe received"]);
+  const inv = new Investigation(c, new Broker(c, tools), { ...meta, strictLedger }); inv.start();
+  const logs = await read(inv, "logs.search", hyp("LEADING"));
+  const metrics = await read(inv, "metrics.query", hyp("LEADING", [logs.records[0]!.rid]));
+  return { inv, support: [logs.records[0]!.rid, metrics.records[0]!.rid], other: [logs.records[1]!.rid, metrics.records[1]!.rid] };
+}
+function conclude(inv: Investigation, supporting: string[], cited: string[]) {
+  view(inv);
+  inv.applyDecision({ type: "FINAL", hypotheses: hyp("SUPPORTED", supporting), final: {
+    outcome: "DIAGNOSIS", label: "DISK_FULL", summary: "Disk pressure is suggested by collected telemetry.", cited,
+    contradictions: [], confidence: 0.8, remediation: { text: "Review storage capacity under change control", executed: false, requires_approval: true }, next_safe_steps: [],
+  } });
+  return inv.finish();
+}
+
+describe("final citations remain connected to the reported leading hypothesis", () => {
+  it("strict mode abstains when all final citations differ from the leader's support", async () => {
+    const { inv, support, other } = await citationScenario();
+    const r = conclude(inv, support, other);
+    expect(r.ledger_warnings).toContain("FINAL_CITATIONS_DISJOINT_FROM_LEDGER:DISK_FULL");
+    expect(r.stop_reason).toBe("LEDGER_REJECTED"); expect(r.final.outcome).toBe("ABSTAIN"); expect(r.trace_ok).toBe(true);
+    expect(r.final.remediation).toMatchObject({ executed: false, requires_approval: true });
+  });
+  it("retains that restriction across a durable investigation checkpoint", async () => {
+    const { inv, support, other } = await citationScenario(); const cp = inv.snapshot();
+    const resumed = Investigation.resume(inv.c, new Broker(inv.c, new FakeTools()), cp, meta);
+    const r = conclude(resumed, support, other);
+    expect(r.stop_reason).toBe("LEDGER_REJECTED"); expect(r.final.outcome).toBe("ABSTAIN"); expect(r.trace_ok).toBe(true);
+  });
+  it("accepts structurally valid citations that include the leader's supporting records", async () => {
+    const { inv, support } = await citationScenario(); const r = conclude(inv, support, support);
+    expect(r.stop_reason).toBe("POLICY_FINAL"); expect(r.final.outcome).toBe("DIAGNOSIS"); expect(r.verified).toBe(true); expect(r.trace_ok).toBe(true);
+  });
+  it("permits additional citations when at least one leader-support record is retained", async () => {
+    const { inv, support, other } = await citationScenario(); const r = conclude(inv, support, [support[0]!, other[1]!]);
+    expect(r.final.outcome).toBe("DIAGNOSIS"); expect(r.verified).toBe(true); expect(r.trace_ok).toBe(true);
+  });
+  it("preserves warning-only behaviour when strict ledger enforcement is explicitly off", async () => {
+    const { inv, support, other } = await citationScenario(false); const r = conclude(inv, support, other);
+    expect(r.ledger_warnings).toContain("FINAL_CITATIONS_DISJOINT_FROM_LEDGER:DISK_FULL");
+    expect(r.stop_reason).toBe("POLICY_FINAL"); expect(r.final.outcome).toBe("DIAGNOSIS"); expect(r.verified).toBe(true);
+  });
+});

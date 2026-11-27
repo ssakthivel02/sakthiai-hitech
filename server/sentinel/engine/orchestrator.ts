@@ -29,10 +29,12 @@ function guarded<T>(p: T | Promise<T>, signal: AbortSignal, timeoutMs?: number):
     let settled = false, timer: ReturnType<typeof setTimeout> | undefined;
     const end = (fn: () => void) => { if (settled) return; settled = true; if (timer) clearTimeout(timer); signal.removeEventListener("abort", onAbort); fn(); };
     const onAbort = () => end(() => reject(new Interrupted("ABORT")));
-    if (signal.aborted) return reject(new Interrupted("ABORT"));
+    // The policy may abort synchronously before guarded() receives its promise.
+    // Always observe that promise, including on the already-aborted path.
+    Promise.resolve(p).then((v) => end(() => resolve(v)), (e) => end(() => reject(e)));
+    if (signal.aborted) { onAbort(); return; }
     signal.addEventListener("abort", onAbort, { once: true });
     if (timeoutMs && timeoutMs > 0) timer = setTimeout(() => end(() => reject(new Interrupted("TIMEOUT"))), timeoutMs);
-    Promise.resolve(p).then((v) => end(() => resolve(v)), (e) => end(() => reject(e)));
   });
 }
 
