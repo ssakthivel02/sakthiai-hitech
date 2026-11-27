@@ -71,12 +71,15 @@ export function parseDecision(raw: string, view: PolicyView): Decision {
   if (!o || typeof o !== "object" || Array.isArray(o)) throw new ContractError("not an object");
   const d = o as Record<string, unknown>;
   const hyps: Hypothesis[] = [];
+  const hypothesisLabels = new Set<string>();
   if (d["hypotheses"] !== undefined) {
     if (!Array.isArray(d["hypotheses"]) || d["hypotheses"].length > 8) throw new ContractError("hypotheses");
     for (const rawHypothesis of d["hypotheses"] as unknown[]) {
       if (!rawHypothesis || typeof rawHypothesis !== "object" || Array.isArray(rawHypothesis)) throw new ContractError("hypothesis must be an object");
       const h = rawHypothesis as Record<string, unknown>;
       if (!isStr(h["label"], 60) || !Object.prototype.hasOwnProperty.call(view.taxonomy, h["label"])) throw new ContractError("hypothesis label outside taxonomy");
+      if (hypothesisLabels.has(h["label"])) throw new ContractError("duplicate hypothesis label");
+      hypothesisLabels.add(h["label"]);
       if (typeof h["score"] !== "number" || !Number.isFinite(h["score"]) || h["score"] < 0 || h["score"] > 1) throw new ContractError("hypothesis score");
       if (typeof h["status"] !== "string" || !["ACTIVE", "LEADING", "REJECTED", "SUPPORTED"].includes(h["status"])) throw new ContractError("hypothesis status");
       const strs = (x: unknown): string[] => {

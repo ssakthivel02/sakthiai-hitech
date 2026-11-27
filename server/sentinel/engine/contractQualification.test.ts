@@ -26,3 +26,30 @@ describe('Sentinel contract qualification',()=>{
  it('accepts legitimate structurally backed diagnosis without claiming semantic correctness',()=>expect(verify(final).ok).toBe(true));
  it('consumes format retries within a fixed logical call budget',async()=>{let calls=0;const p=new GatewayPolicy({id:'scripted-test',kind:'mock',complete:async()=>{calls++;return{text:JSON.stringify({...call,hypotheses:[null]})}}},{maxModelCalls:2,formatRetries:3});await expect(p.next(view)).rejects.toThrow('MODEL_CALL_BUDGET_EXHAUSTED');expect(calls).toBe(2);});
 });
+
+describe('one hypothesis entry per taxonomy label',()=>{
+ it.each(['CALL','FINAL'] as const)('rejects conflicting duplicate labels in %s decisions',type=>{
+  const envelope=type==='CALL'?call:{type:'FINAL',outcome:'ABSTAIN',label:'INCONCLUSIVE',summary:'Evidence is insufficient',cited:[],confidence:0,remediation_proposal:'No change proposed',next_safe_steps:[]};
+  for(const statuses of [['SUPPORTED','REJECTED'],['REJECTED','SUPPORTED']]){
+   const hypotheses=statuses.map(status=>({...hyp,status}));
+   expect(()=>parseDecision(JSON.stringify({...envelope,hypotheses}),view)).toThrow(ContractError);
+  }
+ });
+ it('rejects repeated identical entries instead of silently merging them',()=>{
+  expect(()=>parseDecision(JSON.stringify({...call,hypotheses:[hyp,{...hyp}]}),view)).toThrow(ContractError);
+ });
+ it('preserves distinct labels and an empty ledger',()=>{
+  const expanded={...view,taxonomy:{...view.taxonomy,OTHER:'Another hypothesis'}};
+  const parsed=parseDecision(JSON.stringify({...call,hypotheses:[hyp,{...hyp,label:'OTHER'}]}),expanded);
+  expect(parsed.hypotheses.map(h=>h.label)).toEqual(['TEST','OTHER']);
+  expect(parseDecision(JSON.stringify({...call,hypotheses:[]}),view).hypotheses).toEqual([]);
+ });
+ it('allows bounded contract correction without increasing the model-call budget',async()=>{
+  const users:string[]=[];const policy=new GatewayPolicy({id:'duplicate-label-test',kind:'mock',complete:async req=>{users.push(req.user);return{text:JSON.stringify(users.length===1?{...call,hypotheses:[hyp,{...hyp,status:'REJECTED'}]}:call)}}},{maxModelCalls:2,formatRetries:1});
+  const result=await policy.next(view);expect(result.hypotheses).toHaveLength(1);expect(policy.modelCalls).toBe(2);expect(users).toHaveLength(2);expect(users[1]).toContain('duplicate hypothesis label');
+ });
+ it('does not refund a malformed duplicate-label response when only one call is allowed',async()=>{
+  let calls=0;const policy=new GatewayPolicy({id:'duplicate-budget-test',kind:'mock',complete:async()=>{calls++;return{text:JSON.stringify({...call,hypotheses:[hyp,hyp]})}}},{maxModelCalls:1,formatRetries:3});
+  await expect(policy.next(view)).rejects.toThrow('MODEL_CALL_BUDGET_EXHAUSTED');expect(calls).toBe(1);expect(policy.modelCalls).toBe(1);
+ });
+});

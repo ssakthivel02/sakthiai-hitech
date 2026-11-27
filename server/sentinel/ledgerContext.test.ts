@@ -112,3 +112,24 @@ describe("final citations remain connected to the reported leading hypothesis", 
     expect(r.stop_reason).toBe("POLICY_FINAL"); expect(r.final.outcome).toBe("DIAGNOSIS"); expect(r.verified).toBe(true);
   });
 });
+
+describe("contradictory duplicate hypotheses cannot enter the investigation ledger", () => {
+  it("fails closed at the contract boundary before storing a supported/rejected duplicate label", async () => {
+    const { GatewayPolicy } = await import("./engine/gateway_policy");
+    const { MockModelTransport } = await import("./engine/model_transport");
+    const { investigateAsync } = await import("./engine/orchestrator");
+    const tools = new FakeTools();
+    const model = new MockModelTransport(req => {
+      const history = JSON.parse(req.user).history as Array<{ records: Array<{ rid: string }> }>;
+      const ids = history.flatMap(h => h.records.map(r => r.rid));
+      if (!ids.length) return JSON.stringify({ type: "CALL", tool: "logs.search", target: "orders-db", rationale: "Read errors", hypotheses: hyp("LEADING") });
+      if (ids.length === 1) return JSON.stringify({ type: "CALL", tool: "metrics.query", target: "db-1", rationale: "Read capacity", hypotheses: hyp("LEADING", ids) });
+      return JSON.stringify({ type: "FINAL", outcome: "DIAGNOSIS", label: "DISK_FULL", summary: "Disk capacity signals are present", cited: ids, confidence: 0.8, remediation_proposal: "Review capacity under change control", hypotheses: [...hyp("SUPPORTED", ids), ...hyp("REJECTED")] });
+    });
+    const policy = new GatewayPolicy(model, { maxModelCalls: 3, formatRetries: 0 });
+    const r = await investigateAsync(caseFromRecord(newRow() as never), { policy, transport: tools, taxonomy: { ...DEFAULT_TAXONOMY }, strictLedger: true, verify: { requireSignatureSupport: false, signatureKb: "off" } });
+    expect(r.stop_reason).toBe("POLICY_ERROR"); expect(r.final.outcome).toBe("ABSTAIN"); expect(r.trace_ok).toBe(true);
+    expect(model.calls).toHaveLength(3); expect(tools.calls).toHaveLength(2);
+    expect(r.hypothesis_history.every(h => new Set(h.hypotheses.map(x => x.label)).size === h.hypotheses.length)).toBe(true);
+  });
+});
