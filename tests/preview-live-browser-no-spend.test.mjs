@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { isLowInformationQuery } from '../server/retrieval';
+import { assertApprovedPreviewReleaseIdentity } from '../scripts/verify-preview-live-release.mjs';
+
 
 const spec = readFileSync(new URL('../e2e/live-preview/auth-isolation-artifacts.spec.ts', import.meta.url), 'utf8');
 const env = readFileSync(new URL('../e2e/live-preview/support/env.ts', import.meta.url), 'utf8');
@@ -45,5 +47,54 @@ describe('real live-browser smoke is provider-free and does not fabricate ground
     expect(workflow).toContain('default: false');
     expect(workflow).toContain('PREVIEW_TEST_ACCOUNT_A_PASSWORD:');
     expect(workflow).toContain('Current smoke creates no chat data');
+  });
+});
+
+describe('live-browser credentials require exact source and artifact proof', () => {
+  const sha = 'a'.repeat(40);
+  const valid = () => ({
+    service: 'sakthiai',
+    repository: 'ssakthivel02/sakthiai-hitech',
+    exactCommitKnown: true,
+    commit: sha,
+    artifact: { state: 'verified', manifestCommit: sha, digest: 'b'.repeat(64) },
+  });
+
+  it('accepts only an intact artifact bound to the exact approved source', () => {
+    expect(assertApprovedPreviewReleaseIdentity(valid(), sha)).toBe(sha);
+  });
+
+  it('refuses wrong service/repository, unknown commit and mismatched source', () => {
+    for (const change of [
+      { service: 'other' }, { repository: 'other/repository' },
+      { exactCommitKnown: false }, { commit: 'c'.repeat(40) }, { commit: undefined },
+    ]) expect(() => assertApprovedPreviewReleaseIdentity({ ...valid(), ...change }, sha)).toThrow();
+  });
+
+  it('refuses absent, corrupted, unbound and non-digest build artifacts', () => {
+    for (const artifact of [
+      undefined, { state: 'mismatch', manifestCommit: sha, digest: 'b'.repeat(64) },
+      { state: 'absent', manifestCommit: sha, digest: 'b'.repeat(64) },
+      { state: 'verified', manifestCommit: 'c'.repeat(40), digest: 'b'.repeat(64) },
+      { state: 'verified', manifestCommit: sha, digest: '' },
+      { state: 'verified', manifestCommit: sha, digest: 'z'.repeat(64) },
+    ]) expect(() => assertApprovedPreviewReleaseIdentity({ ...valid(), artifact }, sha)).toThrow();
+  });
+
+  it('refuses malformed release reports and non-exact operator approvals', () => {
+    for (const invalid of [null, undefined, '', [], 42]) {
+      expect(() => assertApprovedPreviewReleaseIdentity(invalid, sha)).toThrow();
+    }
+    for (const invalid of [sha.slice(0, 7), sha.toUpperCase(), '', 'main']) {
+      expect(() => assertApprovedPreviewReleaseIdentity(valid(), invalid)).toThrow();
+    }
+  });
+
+  it('requires artifact validation before the only credential-bearing browser step', () => {
+    const gate = workflow.indexOf('node scripts/verify-preview-live-release.mjs /tmp/release.json');
+    const credentialStep = workflow.indexOf('      - name: Real-authentication live-preview browser check');
+    expect(gate).toBeGreaterThan(0);
+    expect(credentialStep).toBeGreaterThan(gate);
+    expect(workflow.slice(gate, credentialStep)).not.toContain('secrets.PREVIEW_TEST_ACCOUNT');
   });
 });
