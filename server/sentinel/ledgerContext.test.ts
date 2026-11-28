@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Broker } from "./engine/broker";
 import { Investigation } from "./engine/investigation";
-import { buildPrompt } from "./engine/llm_contract";
+import { buildPrompt, parseDecision } from "./engine/llm_contract";
 import { caseFromRecord } from "./caseDoc";
 import { FakeTools, newRow } from "./testkit";
 import { DEFAULT_TAXONOMY } from "./taxonomy";
@@ -131,5 +131,19 @@ describe("contradictory duplicate hypotheses cannot enter the investigation ledg
     expect(r.stop_reason).toBe("POLICY_ERROR"); expect(r.final.outcome).toBe("ABSTAIN"); expect(r.trace_ok).toBe(true);
     expect(model.calls).toHaveLength(3); expect(tools.calls).toHaveLength(2);
     expect(r.hypothesis_history.every(h => new Set(h.hypotheses.map(x => x.label)).size === h.hypotheses.length)).toBe(true);
+  });
+});
+
+
+describe("compact FINAL preserves existing ledger requirements", () => {
+  it.each(["matching", "no-leader", "different-label"] as const)("handles omitted hypotheses with a %s prior", async mode => {
+    const inv = fresh(); const status = mode === "no-leader" ? "ACTIVE" : "LEADING";
+    const a = await read(inv, "logs.search", hyp(status));
+    const b = await read(inv, "metrics.query", hyp(status, [a.records[0]!.rid]));
+    const d = parseDecision(JSON.stringify({ type: "FINAL", outcome: "DIAGNOSIS", label: mode === "different-label" ? "DNS_MISCONFIG" : "DISK_FULL", summary: "Collected signals suggest disk pressure.", cited: [a.records[0]!.rid, b.records[0]!.rid], confidence: 0.8, remediation_proposal: "Review capacity under human change approval" }), view(inv));
+    expect(d.hypotheses).toEqual([]); inv.applyDecision(d); const r = inv.finish();
+    expect(r.trace_ok).toBe(true); expect(r.final.remediation).toMatchObject({ executed: false, requires_approval: true });
+    if (mode === "matching") { expect(r.final.outcome).toBe("DIAGNOSIS"); expect(r.verified).toBe(true); }
+    else { expect(r.stop_reason).toBe("LEDGER_REJECTED"); expect(r.final.outcome).toBe("ABSTAIN"); }
   });
 });
