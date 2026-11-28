@@ -2,6 +2,8 @@ import type { AsyncPolicy, Decision, PolicyView } from "./types";
 import type { ModelTransport } from "./model_transport";
 import { ContractError, buildPrompt, parseDecision, stripReasoning } from "./llm_contract";
 import { hashOf, sha256 } from "./canon";
+import { falseActionClaimLocations } from "./verifier";
+import type { ModelMeta } from "./types";
 
 export interface GatewayOptions {
   /** hard cap on model calls for one investigation (including format retries) */ maxModelCalls?: number;
@@ -28,7 +30,8 @@ export class GatewayPolicy implements AsyncPolicy {
   async next(view: PolicyView, signal?: AbortSignal): Promise<Decision> {
     const base = buildPrompt(view);
     if (base.system.length + base.user.length > this.o.maxPromptChars) throw new Error("PROMPT_TOO_LARGE");
-    let user = base.user, lastReason = "";
+    let user = base.user, lastReason = "", finalOnly = false;
+    const rejections: NonNullable<ModelMeta["contract_rejections"]> = [];
     for (let attempt = 0; attempt <= this.o.formatRetries; attempt++) {
       if (signal?.aborted) throw signal.reason ?? new Error("MODEL_CALL_ABORTED");
       // Retry feedback also consumes prompt space. Reject before reserving another model call.
@@ -43,6 +46,11 @@ export class GatewayPolicy implements AsyncPolicy {
         if (typeof res.text !== "string") throw new ContractError("reply is not text");
         if (res.text.length > this.o.maxResponseChars) throw new ContractError("reply too long");
         const d = parseDecision(res.text, view);
+        if (finalOnly && d.type !== "FINAL") throw new ContractError("FINAL required after action claim rejection");
+        if (d.type === "FINAL" && falseActionClaimLocations(d.final).length) {
+          finalOnly = true;
+          throw new ContractError("FINAL action claim: report observed states and proposals only");
+        }
         if (d.type === "CALL") {
           // Match the broker's exact cache identity, including absent vs explicit empty args.
           // Denials are not cached; completed errors/timeouts/no-data results are.
@@ -51,10 +59,11 @@ export class GatewayPolicy implements AsyncPolicy {
             throw new ContractError("request already cached: choose a different authorized read or FINAL");
           }
         }
-        return { ...d, model_meta: { reasoning_chars: stripReasoning(res.text).reasoning_chars, prompt_sha256: sha256(base.system + "\n" + user), response_sha256: sha256(res.text), attempt, model_calls: this.modelCalls, ...(res.tokens_in !== undefined ? { tokens_in: res.tokens_in } : {}), ...(res.tokens_out !== undefined ? { tokens_out: res.tokens_out } : {}), transport: this.t.kind, ...(res.provenance ? { provenance: res.provenance } : {}) } };
+        return { ...d, model_meta: { reasoning_chars: stripReasoning(res.text).reasoning_chars, prompt_sha256: sha256(base.system + "\n" + user), response_sha256: sha256(res.text), attempt, model_calls: this.modelCalls, ...(rejections.length ? { contract_rejections: rejections.slice() } : {}), ...(res.tokens_in !== undefined ? { tokens_in: res.tokens_in } : {}), ...(res.tokens_out !== undefined ? { tokens_out: res.tokens_out } : {}), transport: this.t.kind, ...(res.provenance ? { provenance: res.provenance } : {}) } };
       } catch (e) {
         if (!(e instanceof ContractError)) throw e;
         lastReason = e.message.replace(/[^\w :.\-]/g, "?").slice(0, 80);       // reason text is ours, never the model's reply
+        if (typeof res.text === "string") rejections.push({ attempt, reason: lastReason, prompt_sha256: sha256(base.system + "\n" + user), response_sha256: sha256(res.text) });
         user = base.user + `\n\nYour previous reply was rejected by the decision validator (${lastReason}). Reply with exactly one valid JSON object and nothing else.`;
       }
     }

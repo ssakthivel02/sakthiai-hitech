@@ -32,6 +32,12 @@ export const FALSE_CLAIM_PATTERNS: RegExp[] = [
 ];
 const FQDN = /\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+\b/gi;
 
+/** Conservative lexical guard, shared with bounded model correction. Not a semantic attribution exception. */
+export function falseActionClaimLocations(final: FinalAnswer): string[] {
+  const texts: Array<[string, string]> = [["summary", final.summary], ["remediation", final.remediation.text], ...final.next_safe_steps.map((s, i) => [`step${i}`, s] as [string, string]), ...(final.abstain_reason !== undefined ? [["abstain_reason", final.abstain_reason] as [string, string]] : [])];
+  return texts.filter(([, text]) => FALSE_CLAIM_PATTERNS.some((p) => p.test(text))).map(([where]) => where);
+}
+
 export function verifyFinal(final: FinalAnswer, c: CaseDoc, evidence: Map<string, EvidenceItem>, taxonomy: Record<string, string>, opts: VerifyOptions): VerifyResult {
   const fatal: string[] = [], redactions: string[] = [];
   const sanitized: FinalAnswer = JSON.parse(JSON.stringify(final));
@@ -95,8 +101,7 @@ export function verifyFinal(final: FinalAnswer, c: CaseDoc, evidence: Map<string
     } else if (opts.requireSignatureSupport && opts.signatureKb !== "off") fatal.push(`SUPPORT:no signature knowledge for ${final.label}; cannot verify (strict mode)`);
   } else if (cited.length > 0 && cited.some((r) => !evidence.has(r))) fatal.push("CITATION:abstain-cites-unknown");
   // --- false remediation claims (fatal) over all free text
-  const texts: Array<[string, string]> = [["summary", final.summary], ["remediation", final.remediation.text], ...final.next_safe_steps.map((s, i) => [`step${i}`, s] as [string, string]), ...(final.abstain_reason !== undefined ? [["abstain_reason", final.abstain_reason] as [string, string]] : [])];
-  for (const [where, t] of texts) for (const p of FALSE_CLAIM_PATTERNS) if (p.test(t)) { fatal.push(`CLAIM:false-remediation-claim in ${where}`); break; }
+  for (const where of falseActionClaimLocations(final)) fatal.push(`CLAIM:false-remediation-claim in ${where}`);
   // --- echo guard (non-fatal, redacts): hostnames/URLs not present in the case, injection-like phrases
   const caseText = JSON.stringify(c).toLowerCase();
   const known = new Set<string>([...READ_TOOLS, ...WRITE_TOOLS].map((s) => s.toLowerCase()));

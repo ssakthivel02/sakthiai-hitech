@@ -31,7 +31,10 @@ export interface ModelProvenance {
   runtime_class?: string; endpoint_profile?: string; invoked_at?: string; correlation_id?: string; verification?: string; fallback_occurred?: boolean; cost?: { amount: number; unit: string; estimated: boolean };
   gateway_attempts: Array<{ provider_id: string; outcome: string; http_attempts?: number; latency_ms?: number }>;
 }
-export interface ModelMeta { reasoning_chars?: number; prompt_sha256: string; response_sha256: string; attempt: number; model_calls: number; tokens_in?: number; tokens_out?: number; transport: string; provenance?: ModelProvenance }
+export interface ModelMeta { reasoning_chars?: number; prompt_sha256: string; response_sha256: string; attempt: number; model_calls: number; tokens_in?: number; tokens_out?: number; transport: string; provenance?: ModelProvenance;
+  /** Prior rejected replies within this accepted decision; hashes/static reasons only, never raw text. */
+  contract_rejections?: Array<{ attempt: number; reason: string; prompt_sha256: string; response_sha256: string }>;
+}
 export type Decision =
   | { type: "CALL"; request: ToolRequest; rationale: string; hypotheses: Hypothesis[]; model_meta?: ModelMeta }
   | { type: "FINAL"; final: FinalAnswer; hypotheses: Hypothesis[]; model_meta?: ModelMeta };
