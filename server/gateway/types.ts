@@ -14,6 +14,12 @@ export type GatewayRequest = {
   workspaceId: number;
   messages: GatewayMessage[];
   maxOutputTokens?: number;
+  /** Explicit JSON-object mode; requires a catalog capability and an opted-in endpoint. */
+  responseFormat?: "json_object";
+  /** Optional bounded schema for an explicitly opted-in local llama-compatible endpoint; requires JSON-object mode. */
+  responseSchema?: Record<string, unknown>;
+  /** Caller cancellation stays in-process and is never serialized to the provider. */
+  signal?: AbortSignal;
   intents?: readonly TaskIntent[];
   requiredCapabilities?: readonly ModelCapability[];
   optionalCapabilities?: readonly ModelCapability[];
@@ -21,6 +27,7 @@ export type GatewayRequest = {
 
 /** Why a provider call failed, in provider-neutral terms. */
 export type ProviderErrorClass =
+  | "cancelled"
   | "timeout"
   | "network"
   | "rate_limited"
@@ -46,6 +53,7 @@ export type ErrorTraits = {
  * are configuration/request faults that must surface, not be masked.
  */
 export const ERROR_TRAITS: Readonly<Record<ProviderErrorClass, ErrorTraits>> = {
+  cancelled: { retryable: false, breakerFailure: false, allowsFallback: false },
   timeout: { retryable: true, breakerFailure: true, allowsFallback: true },
   network: { retryable: true, breakerFailure: true, allowsFallback: true },
   rate_limited: { retryable: true, breakerFailure: true, allowsFallback: true },
@@ -83,6 +91,12 @@ export type GatewayUsage = {
 export type AdapterCall = {
   messages: GatewayMessage[];
   maxOutputTokens?: number;
+  /** Explicit JSON-object mode; requires a catalog capability and an opted-in endpoint. */
+  responseFormat?: "json_object";
+  /** Optional bounded schema for an explicitly opted-in local llama-compatible endpoint; requires JSON-object mode. */
+  responseSchema?: Record<string, unknown>;
+  /** Caller cancellation stays in-process and is never serialized to the provider. */
+  signal?: AbortSignal;
   model: string;
 };
 
@@ -113,6 +127,10 @@ export type ProviderBinding = {
   endpointProfile?: EndpointProfileId;
   /** Local binding only. The configured host is a name: every address it resolves to must be loopback/private at request time (fail closed). */
   resolveGuard?: boolean;
+  /** Operator-confirmed support for the OpenAI-compatible JSON-object request field. Default off. */
+  jsonMode?: boolean;
+  /** Local llama-compatible schema extension. Default off; operator must independently verify endpoint support. */
+  llamaJsonSchema?: boolean;
 };
 
 export type RuntimeState =

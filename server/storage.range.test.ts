@@ -51,7 +51,8 @@ function s3Response(options: {
 }
 
 describe("Creator S3 exact-range adapter: command and HTTP response contract", () => {
-  beforeEach(() => sendMock.mockReset());
+  // Return void: a returned mock function would be invoked as Vitest teardown.
+  beforeEach(() => { sendMock.mockReset(); });
 
   it("issues an exact S3 Range request and accepts a genuine 206 partial response", async () => {
     sendMock.mockResolvedValue(s3Response({

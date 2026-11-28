@@ -6,7 +6,7 @@ const failed = (reason: string) => failureFromGateway({ status: "failed", reason
 
 describe("task retry classification", () => {
   it("budget and policy refusals and caller faults are fatal (a retry could never succeed and must not hammer the gateway)", () => {
-    for (const [reason, cls] of [["budget_denied", "BUDGET_DENIED"], ["policy_denied", "POLICY_DENIED"], ["auth_failed", "NON_RETRYABLE"], ["bad_request", "NON_RETRYABLE"]] as const) {
+    for (const [reason, cls] of [["budget_denied", "BUDGET_DENIED"], ["policy_denied", "POLICY_DENIED"], ["auth_failed", "NON_RETRYABLE"], ["bad_request", "NON_RETRYABLE"], ["cancelled", "NON_RETRYABLE"]] as const) {
       const error = failed(reason);
       expect(error).toBeInstanceOf(TaskFatalError);
       expect((error as TaskFatalError).failureClass).toBe(cls);

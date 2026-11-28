@@ -1,3 +1,4 @@
+import { isBoundedResponseSchema } from "./responseSchema";
 import { MODEL_CATALOG } from "../model-fabric/catalog";
 import { routeModel } from "../model-fabric/router";
 import type { ModelProfile, RoutingRequest } from "../model-fabric/types";
@@ -21,6 +22,25 @@ import {
   type ProviderRuntimeStatus,
   type RuntimeState,
 } from "./types";
+
+type RecentCall = {
+  at: string; workspaceId: number; status: "returned" | "failed"; reason?: string; providerId?: string; modelId?: string; endpointProfile?: string;
+  tokens?: number; cost?: { amount: number; unit: string }; fellBack: boolean; sequence: string[]; latencyMs: number;
+};
+export type RuntimeSnapshot = {
+  generatedAt: string; processStartedAt: string;
+  policyCeiling: { allowExternal: boolean; allowMetered: boolean };
+  budgetStore: "none" | "memory" | "mysql";
+  providers: Array<ProviderRuntimeStatus & { runtimeClass: "local" | "hosted"; modelId?: string; invalidReason?: string; eligibleForWorkspace: boolean }>;
+  workspace: {
+    policy: { externalEnabled: boolean; meteredEnabled: boolean | null; maxRequests: number | null; maxTokens: number | null; maxCost: number | null } | null; policyError: boolean;
+    usageToday: { requests: number; tokens: number; cost: number; estimatedCommits: number } | null; usageError: boolean;
+    remaining: { requests: number | null; tokens: number | null; cost: number | null } | null;
+    costUnit: string | null; costBasis: string;
+  };
+  counters: { budget_denied: number; policy_denied: number; other_failed: number; returned: number; fellBack: number; scope: string };
+  recent: Array<Omit<RecentCall, "workspaceId">>;
+};
 
 export type GatewayReadiness = {
   state: "eligible" | "no_provider_configured" | "not_permitted_by_policy" | "default_budget_denies_metered";
@@ -80,6 +100,8 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
             baseUrl: binding.baseUrl,
             endpointProfile: binding.endpointProfile,
             apiKey: binding.apiKey,
+            jsonMode: binding.jsonMode,
+            llamaJsonSchema: binding.kind === "self_hosted" && binding.llamaJsonSchema === true,
             timeoutMs: binding.timeoutMs,
             // The local slot dials only through the pinned fetch: the address policy runs inside the socket's own lookup, so a name cannot pass a check and then
             // connect somewhere else (DNS rebinding), and link-local / cloud-metadata addresses are refused as a terminal bad_request. The early guard stays as a cheap pre-check.
@@ -192,10 +214,10 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
   }
 
   /** The policy-permitted candidates for a request, in routing order. Shared by invoke() and readiness(). */
-  function routedProfiles(request: Pick<GatewayRequest, "intents" | "requiredCapabilities" | "optionalCapabilities">): ModelProfile[] {
+  function routedProfiles(request: Pick<GatewayRequest, "intents" | "requiredCapabilities" | "optionalCapabilities" | "responseFormat">): ModelProfile[] {
     const routing: RoutingRequest = {
       intents: request.intents ?? ["conversation"],
-      requiredCapabilities: request.requiredCapabilities ?? ["chat"],
+      requiredCapabilities: request.responseFormat ? [...new Set([...(request.requiredCapabilities ?? ["chat" as const]), "structured_output" as const])] : request.requiredCapabilities ?? ["chat"],
       optionalCapabilities: request.optionalCapabilities ?? ["multilingual"],
       allowExternalProviders: config.policy.allowExternal,
       allowMeteredBilling: config.policy.allowMetered,
@@ -223,10 +245,29 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     return { state, configuredProviders: configured, eligibleProviders: usable.length, operational: verified ? "verified" : "unverified" };
   }
 
+  /** Per-process, prompt-free and secret-free memory of recent outcomes for the runtime view. Not durable; resets on restart. */
+  const recentCalls: RecentCall[] = [];
+  const deniedCounts = { budget_denied: 0, policy_denied: 0, other_failed: 0, returned: 0, fellBack: 0 };
+  const startedProcessAt = now();
+  function remember(request: GatewayRequest, outcome: GatewayOutcome, attempts: AttemptRecord[]) {
+    const fellBack = outcome.status === "returned" && attempts.some(a => a.outcome !== "ok");
+    if (outcome.status === "returned") { deniedCounts.returned += 1; if (fellBack) deniedCounts.fellBack += 1; }
+    else if (outcome.reason === "budget_denied") deniedCounts.budget_denied += 1;
+    else if (outcome.reason === "policy_denied") deniedCounts.policy_denied += 1;
+    else deniedCounts.other_failed += 1;
+    recentCalls.push({
+      at: new Date(now()).toISOString(), workspaceId: request.workspaceId, status: outcome.status,
+      ...(outcome.status === "failed" ? { reason: outcome.reason } : { providerId: outcome.providerId, modelId: outcome.modelId, ...(outcome.endpointProfile ? { endpointProfile: outcome.endpointProfile } : {}), tokens: outcome.usage?.totalTokens, cost: outcome.usage?.cost ? { amount: outcome.usage.cost.amount, unit: outcome.usage.cost.unit } : undefined }),
+      fellBack, sequence: attempts.slice(0, 6).map(a => `${a.providerId}:${String(a.outcome).slice(0, 60)}`), latencyMs: outcome.latencyMs,
+    });
+    if (recentCalls.length > 100) recentCalls.splice(0, recentCalls.length - 100);
+  }
+
   async function invokeInner(request: GatewayRequest): Promise<GatewayOutcome> {
     const startedAt = now();
     const attempts: AttemptRecord[] = [];
     const finish = (outcome: GatewayOutcome): GatewayOutcome => {
+      try { remember(request, outcome, attempts); } catch { /* telemetry must never affect a governed call */ }
       log({
         event: "gateway.invoke",
         requestId: request.requestId,
@@ -242,6 +283,9 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     const failed = (reason: Extract<GatewayOutcome, { status: "failed" }>["reason"]): GatewayOutcome =>
       finish({ status: "failed", reason, attempts, latencyMs: now() - startedAt });
 
+    if (request.signal?.aborted) return failed("cancelled");
+    if (request.responseFormat !== undefined && request.responseFormat !== "json_object") return failed("bad_request");
+    if (request.responseSchema !== undefined && (request.responseFormat !== "json_object" || !isBoundedResponseSchema(request.responseSchema))) return failed("bad_request");
     const ordered = routedProfiles(request);
     if (!ordered.length) return failed("no_eligible_provider");
 
@@ -251,13 +295,26 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     const tried = new Set<string>();
 
     for (const profile of ordered.slice(0, config.maxCandidates)) {
+      if (request.signal?.aborted) return failed("cancelled");
       const binding = bindingByProfile.get(profile.id);
       if (!binding || tried.has(binding.providerId)) continue; // never revisit a provider: no fallback loops
       tried.add(binding.providerId);
+      if (request.responseFormat && !binding.jsonMode) {
+        attempts.push({ providerId: binding.providerId, outcome: "skipped:policy:json_mode_not_enabled" });
+        lastFailure = "policy_denied";
+        continue;
+      }
+
+      if (request.responseSchema !== undefined && (binding.kind !== "self_hosted" || !binding.llamaJsonSchema)) {
+        attempts.push({ providerId: binding.providerId, outcome: "skipped:policy:local_schema_not_enabled" });
+        lastFailure = "policy_denied";
+        continue;
+      }
 
       // External/metered providers need an explicit per-workspace opt-in (resolved once per request).
       if (binding.kind === "external") {
         const verdict = await workspaceGate(binding, request);
+        if (request.signal?.aborted) return failed("cancelled");
         if (!verdict.ok) {
           attempts.push({ providerId: binding.providerId, outcome: `skipped:policy:${verdict.detail}` });
           lastFailure = binding.billingMode === "metered_api" ? "budget_denied" : "policy_denied";
@@ -267,12 +324,22 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
 
       // Fail closed if shared breaker state is unreadable, except for self-hosted providers (no spend, no data egress).
       const admission = await breaker.admit(binding.providerId, { failOpen: binding.kind === "self_hosted" });
+      if (request.signal?.aborted) {
+        if (admission.allowed) await breaker.recordNeutral(binding.providerId);
+        return failed("cancelled");
+      }
       if (!admission.allowed) {
         attempts.push({ providerId: binding.providerId, outcome: SKIP_CIRCUIT_OPEN });
         continue;
       }
 
       const gate = await budgetGate(binding, request, estimatedTokens);
+      if (request.signal?.aborted) {
+        // No adapter has been dispatched: release only this never-sent reservation.
+        if (gate.ok && gate.reservation && budgetStore) await budgetStore.release(gate.reservation).catch(() => undefined);
+        await breaker.recordNeutral(binding.providerId);
+        return failed("cancelled");
+      }
       if (!gate.ok) {
         await breaker.recordNeutral(binding.providerId); // releases a held half-open probe slot
         attempts.push({ providerId: binding.providerId, outcome: `skipped:budget:${gate.detail}` });
@@ -282,7 +349,8 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
 
       const callStarted = now();
       try {
-        const success = await adapterFor(binding).complete({ messages: request.messages, maxOutputTokens, model: binding.model });
+        const success = await adapterFor(binding).complete({ messages: request.messages, maxOutputTokens, model: binding.model, ...(request.responseFormat ? { responseFormat: request.responseFormat } : {}), ...(request.responseSchema !== undefined ? { responseSchema: request.responseSchema } : {}), ...(request.signal ? { signal: request.signal } : {}) });
+        if (request.signal?.aborted) throw new ProviderCallError("cancelled");
         await breaker.recordSuccess(binding.providerId);
         const usage = usageFrom(binding, success, estimatedTokens);
         if (gate.reservation && budgetStore) {
@@ -309,19 +377,22 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
           ...(binding.endpointProfile ? { endpointProfile: binding.endpointProfile } : {}),
         });
       } catch (error) {
-        const failure = error instanceof ProviderCallError ? error : new ProviderCallError("network");
+        const failure = request.signal?.aborted ? new ProviderCallError("cancelled", undefined, error instanceof ProviderCallError ? error.attempts : 1) : error instanceof ProviderCallError ? error : new ProviderCallError("network");
         const traits = ERROR_TRAITS[failure.errorClass];
         if (traits.breakerFailure) await breaker.recordFailure(binding.providerId);
         else await breaker.recordNeutral(binding.providerId);
 
         if (gate.reservation && budgetStore) {
           // The provider may have done (billable) work for these classes; otherwise hand the hold back.
-          const possiblyBilled = failure.errorClass === "timeout" || failure.errorClass === "malformed_response" || failure.errorClass === "empty_response";
+          const possiblyBilled = failure.errorClass === "cancelled" || failure.errorClass === "timeout" || failure.errorClass === "malformed_response" || failure.errorClass === "empty_response";
           if (possiblyBilled) await budgetStore.commit(gate.reservation, { tokens: estimatedTokens, source: "estimated" }).catch(() => undefined);
           else await budgetStore.release(gate.reservation).catch(() => undefined);
         }
-        const record = touchRuntime(binding.providerId);
-        Object.assign(record, { lastOk: false, lastFailureClass: failure.errorClass });
+        // Caller cancellation says nothing about provider health; preserve prior health.
+        if (failure.errorClass !== "cancelled") {
+          const record = touchRuntime(binding.providerId);
+          Object.assign(record, { lastOk: false, lastFailureClass: failure.errorClass });
+        }
         attempts.push({ providerId: binding.providerId, outcome: failure.errorClass, httpAttempts: failure.attempts, latencyMs: now() - callStarted });
         lastFailure = failure.errorClass;
         if (!traits.allowsFallback) return failed(failure.errorClass); // auth/caller errors are terminal, never masked by fallback
@@ -399,7 +470,44 @@ export function createProviderGateway(config: GatewayConfig, deps: GatewayDepend
     return Promise.all([...ids].map(statusOf));
   }
 
-  return { invoke, probe, status, readiness, breaker, budgetStore };
+  /**
+   * Read-only snapshot for the runtime/budget view of ONE workspace. No provider call, no reservation, no spend.
+   * Contains no URL, key, prompt or reply. Cost is configured-rate x reported tokens (an estimate, never an invoice).
+   * Recent outcomes and counters are per-process since start; budget usage is as durable as the configured budget store.
+   */
+  async function runtimeSnapshot(workspaceId: number): Promise<RuntimeSnapshot> {
+    const providers = await status();
+    let policy: WorkspaceBudgetPolicy | null = null; let policyError = false;
+    try { policy = await policyResolver.resolve(workspaceId); } catch { policyError = true; }
+    let usage: Awaited<ReturnType<BudgetStore["usage"]>> | null = null; let usageError = false;
+    if (budgetStore) { try { usage = await budgetStore.usage(workspaceId); } catch { usageError = true; } }
+    const left = (limit: number | undefined, used: number | undefined) => (limit === undefined || used === undefined ? null : Math.max(0, limit - used));
+    const unit = config.budget.rates?.unit ?? null;
+    return {
+      generatedAt: new Date(now()).toISOString(),
+      processStartedAt: new Date(startedProcessAt).toISOString(),
+      policyCeiling: { allowExternal: config.policy.allowExternal, allowMetered: config.policy.allowMetered },
+      budgetStore: config.budget.store,
+      providers: providers.map(p => {
+        const binding = config.bindings.find(b => b.providerId === p.providerId);
+        const invalid = config.invalid.find(i => i.providerId === p.providerId);
+        return { ...p, runtimeClass: p.kind === "self_hosted" ? "local" as const : "hosted" as const, ...(binding ? { modelId: binding.model } : {}), ...(invalid ? { invalidReason: invalid.reason } : {}), eligibleForWorkspace: !!binding && (p.kind === "self_hosted" || (config.policy.allowExternal && !!policy?.externalEnabled && (p.billingMode !== "metered_api" || (config.policy.allowMetered && policy.meteredEnabled !== false)))) };
+      }),
+      workspace: {
+        policy: policy ? { externalEnabled: policy.externalEnabled, meteredEnabled: policy.meteredEnabled ?? null, maxRequests: policy.maxRequests ?? null, maxTokens: policy.maxTokens ?? null, maxCost: policy.maxCost ?? null } : null,
+        policyError,
+        usageToday: usage ? { requests: usage.requests, tokens: usage.tokens, cost: usage.cost, estimatedCommits: usage.estimatedCommits } : null,
+        usageError,
+        remaining: policy && usage ? { requests: left(policy.maxRequests, usage.requests), tokens: left(policy.maxTokens, usage.tokens), cost: left(policy.maxCost, usage.cost) } : null,
+        costUnit: unit,
+        costBasis: "estimate: configured rate x provider-reported tokens; not an invoice",
+      },
+      counters: { ...deniedCounts, scope: "all workspaces, this process since start" },
+      recent: recentCalls.filter(c => c.workspaceId === workspaceId).slice(-25).reverse().map(({ workspaceId: _w, ...rest }) => rest),
+    };
+  }
+
+  return { invoke, probe, status, readiness, runtimeSnapshot, breaker, budgetStore };
 }
 
 export type ProviderGateway = ReturnType<typeof createProviderGateway>;

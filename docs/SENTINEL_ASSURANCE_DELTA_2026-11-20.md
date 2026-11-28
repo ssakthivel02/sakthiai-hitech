@@ -1,0 +1,133 @@
+# Sentinel assurance delta — 20 November 2026
+
+Production HOLD. This is implementation qualification, not independent semantic certification or competition approval. Existing PR #34 only; Creator#58/integration#63 and all SQL migrations are unchanged.
+
+## Independent evidence recovered
+
+The supplied private Drive assurance ZIP SHA256 is `1bdb7ad109dd93e67dff2184a23f79884b07797a63605c89bd2303df851ea117`. All four internal manifest checksums passed. Its verifier source matches blob `49369998ff6249802ee7eebbfc028ad20cb5259c` at head050058c. The original isolated12-observation probe was rerun with only the local TypeScript installation path adapted, preserving the original artifact. Those12 observations include7 adverse acceptances and are not12 security passes.
+
+Full-path regression uses the actual production handler, GatewayPolicy/parser, broker, strict ledger, verifier, event store and final-event path with scripted diagnostic/model transports. It is not genuine-model or live-MCP acceptance. The initial run reproduced the adverse behaviors; six desired-control tests failed before fixes. The semantic-mismatch case intentionally records a remaining limitation. A separate self-consistent checkpoint reuse regression failed before restore hardening.
+
+## Finding disposition
+
+| ID | Full-path observation and change | Remaining boundary |
+| --- | --- | --- |
+| A01 old evidence | Year-old cited data reached a verified diagnosis. Cited/contradiction records now require valid event timestamps inside the configured incident window. | Historical analysis is valid when aligned with the incident; timestamps are not attested. This is not a universal wall-clock age guarantee. |
+| A02 future evidence | Future-dated records reached verification. New checks reject records beyond the incident lookahead or verification clock plus allowed skew; ambiguous/impossible timestamps fail closed. | Trusted server clock/policy required; bounded skew is deliberate. No proof that a source's timestamp is truthful. |
+| A03 unrelated semantic label | DNS_MISCONFIG with disk-full facts still passes structural checks with signatureKb=off. **OPEN P0.** | Do not re-enable synthetic signature rules as a universal production judge, train on holdout answers, or call structural success causal proof. Domain/topology-aware evaluation and independent scoring are required. |
+| A04 shared observation | Unequal record counts let repeated observation IDs overwrite part of earlier evidence and still satisfy two-tool counting. Broker now rejects reused observation IDs, verifier requires distinct observations, restore rejects duplicate IDs/RIDs in non-replayed results. Exact-request replay remains permitted. | **PARTIAL:** distinct IDs/tool labels do not prove independent underlying sources. The MCP adapter's generated IDs include tool/request context; two bindings may still wrap one backend snapshot under different IDs. Source identity/provenance attestation remains OPEN. |
+| A05 quarantined contradiction | Broker quarantined the malicious record but verifier accepted its contradiction reference. Now rejected like quarantined direct citations. | Detection patterns are incomplete; all tool text remains untrusted. |
+| A06 false claim in abstention reason | Claim reached persisted final event. Same bounded schema/false-execution checks now cover abstain_reason. | Existing phrase detectors are not exhaustive semantic claim detection. |
+| A07 URL in abstention reason | URL reached persisted final event. Same echo/URL redaction now covers abstain_reason. | Redaction is defense in depth, not universal secrets/DLP certification. |
+
+## Temporal policy and compatibility
+
+New verification policy marker: `sentinel-evidence-2`. Default incident-relative lookback24h and lookahead24h, plus an absolute verification-clock future allowance5min. ISO-like event timestamps must have an explicit timezone and valid calendar/time values. Unknown/invalid/out-of-window cited or contradiction evidence causes rejection, not silent replacement with retrieval time.
+
+An internal trusted `VerifyOptions.evidenceWindow` may specify lookbackMs, lookaheadMs, clockSkewMs and asOfMs for a documented historical/event-time assessment. These are never model-selected fields. The effective policy/time and alert anchor are recorded as a `verification_context` trace event. The resulting timestamp check uses that exact captured context. It does not make inferred retrieval timestamps equivalent to known event timestamps; `recordsFromText` can still use retrieval time when the source has no event time, which remains an assurance limitation.
+
+Previously stored terminal traces retain their recorded outcome and are not retroactively reclassified. New active/replayed investigations are subject to the current checks; stale or colliding legacy evidence may now cause rejection or require a fresh investigation. No old evidence was deleted or counters lowered. Existing atomic restore behavior is retained: malformed results do not partially commit restored state.
+
+## Honest output
+
+Report JSON now says semanticValidation=NOT_PERFORMED and sourceAuthenticity=NOT_ATTESTED, even if structural checks pass. Markdown/HTML already distinguish structural verification from root-cause proof; disclosures now avoid implying all injections are detected. Two tool names or observation IDs must not be presented as independently authenticated sources.
+
+The previous161.623s model development diagnosis and172.680s abstention remain historical evidence at their recorded source versions. This change does not retrospectively claim those runs were assessed with the new policy, and their original21-event traces are preserved. New traces include verification context, so their event count differs.
+
+## Test scope
+
+The router fixtures previously used the current alert time with fixed1Oct telemetry. They now explicitly use1Oct alert time for their historical valid-data tests; assertions and security controls are unchanged. The new old/future timestamp tests cover the rejected mismatch rather than weakening the window. No sealed benchmark was opened or regenerated.
+
+Further qualification must cover genuine-model fresh/insufficient/stale incidents, real connector provenance, timestamp-source uncertainty, independent semantic correctness and canonical integration migrations. The independent reviewer retains the holdout and business/presentation workstream. No user should infer zero underlying risk from these regressions.
+
+
+## Connector event-time follow-up
+
+The MCP adapter previously substituted retrieval time for missing record timestamps. Retrieval proves when output was fetched, not when an event occurred; old undated text could therefore pass incident-relative freshness checks. Missing JSON timestamps, string-array items, plain lines and adapter-generated truncation notes now carry an unknown event timestamp (empty string). The existing final verifier rejects any cited or contradiction reference with that timestamp. Actual supplied timestamps remain unchanged and subject to existing temporal validation; no source attestation is implied. Unknown-time records remain visible for investigation, but cannot establish a verified diagnosis. Connectors must provide valid event timestamps for qualifying citations. This deliberately reduces acceptance of undated diagnostics rather than fabricating freshness. Historical stored traces are unchanged.
+
+Regression evidence includes a failing pre-fix missing-time test and adapter→broker→verifier tests contrasting identical undated and timestamped disk evidence. These are deterministic control tests, not live connector or model acceptance. Source-supplied timestamp authenticity, semantic diagnosis correctness and underlying source independence remain open.
+
+
+### Governed connector / local SQL qualification
+
+The missing-event-time regression is also exercised through the production Sentinel handler, MCP adapter and connector service, HTTP JSON-RPC to the existing synthetic loopback MCP server, and actual disposable MySQL8.0.46 stores. Three cases cover plain text, JSON objects and string arrays. Each uses a current incident so retrieval time is inside its evidence window. All three fail against the pre-fix adapter (it incorrectly verifies the diagnosis), and pass against the fixed adapter with persisted abstention, invalid-timestamp rejection, intact trace chain, exactly two authorized diagnostic calls and no secret in the exported report. The existing timestamped positive case remains accepted.
+
+Combined connector and Sentinel SQL store suites:23/23 passed, no skips. This includes disabled/foreign connector and denied mutation controls, unavailable and hung connector behavior, auditing, secret redaction and store isolation. The model remains scripted and task context is fake; this is local connector/store qualification, not genuine-model autonomy, TaskWorker integration, external monitoring or hosted OIDC/UI acceptance. Migration application covers only this branch's journal on disposable MySQL8.0; combined integration authority and MySQL8.4 are not newly qualified here. Prior exact-head1850e0e CI was rechecked7/7 green before this test-only follow-up; a later commit must obtain its own CI results.
+
+
+### Adapter accounting follow-up
+
+The broker now validates nonnegative finite time accounting for every adapter outcome before retry/settlement, including errors and timeouts. Previously only successful observations were checked, so malformed error/timeout values could increase remaining time or introduce NaN/Infinity into durable accounting. Durations above Number.MAX_SAFE_INTEGER are also refused; a contract violation gets the existing bounded error charge and is not retried. Sync and async execution share the check. Valid zero-duration outputs remain supported.
+
+Checkpoint restore rejects non-finite durations and overflowing aggregate time before committing restored state. This is protection against malformed adapters/checkpoints, not a claim that the model can directly choose trusted adapter accounting or that tool-count/tenant restrictions were bypassed. Tool allowlists, maximum calls, cancellation semantics and remediation approval are unchanged. Regression tests exercise each outcome kind through sync/async execution and restore. The pre-fix run records14 failing controls among22 tests; subsequent added overflow-range cases are separately verified in the final suite. Semantic verification, source attestation, migration authority and independent benchmark remain open.
+
+
+### Durable SQL retry acknowledgement qualification
+
+Four new tests exercise actual MysqlSentinelStore, MysqlTaskStore and TaskWorker retry/reclaim boundaries with scripted model decisions and synthetic diagnostics: lost acknowledgement after tool-result persistence; lost acknowledgement after model-call reservation persistence; the same reserved-call loss with a tighter remaining budget; and lost acknowledgement after investigation finalization. Each fault occurs after the actual SQL write. A second worker resumes with the next task attempt. Completed reads are not repeated, the trace has one final event and an intact chain, and ambiguous reservations consume a budget unit. Insufficient remaining model budget produces abstention rather than a verified diagnosis. Terminal finalization recovery performs no additional diagnostics or model calls.
+
+This injects exceptions at persisted-write acknowledgement boundaries. It does not kill an OS process, interrupt a MySQL transaction, invoke a real model, prove live connector idempotency or remove the documented at-least-once read window. Existing in-memory crash sweep is retained; these are additional SQL/worker boundary controls, not a replacement dataset. Local MySQL8.0 qualification and exact-head CI must be reported separately; no managed/production database is touched.
+
+
+### Model-call correlation identity
+
+Real-model recovery evidence exposed task-attempt correlation IDs reused across multiple model calls. Sentinel's TaskModelTransport now supplies a fresh UUID-based requestId on every complete invocation, in both legacy and detailed contexts and across adapter recreation. Core task-worker behavior is unchanged. These IDs correlate calls and persisted provenance; they are not idempotency keys or proof of exactly-once provider execution, and durable model-call reservations remain the budget authority. Tests cover uniqueness across recreated adapters and the actual SQL TaskWorker→model adapter→scripted gateway→persisted trace path. Prior genuine trials retain their original source heads and repeated IDs; no historical evidence is rewritten.
+
+
+### Read-only hypothesis context and cached-read visibility
+
+The model now receives an engine-derived snapshot of prior reported hypotheses, the reported leader, newly returned non-quarantined evidence IDs and actively blocking ledger warnings. These are previous unverified claims and consistency metadata, not verified diagnostic truth or source attestation. Snapshots are deep copied and reconstructed from existing checkpoint history; no migration is required. The prompt also exposes replay flags and explains that an identical request returns cached data rather than new evidence. Active blocking-warning instructions apply only when strict enforcement is enabled. No ledger/verifier/broker/tenant/budget rule is relaxed.
+
+The change follows a retained genuine-model resolver trial that proposed the expected label but was rejected after promoting a leader following a cached repeat. Seven new controls cover initial state, actual prior/new/replayed context, mutation isolation, resume equivalence, warning visibility, non-strict compatibility and unchanged rejection. The two-hour endurance at4780d2f predates this change and must not be relabeled as qualification of the later head. Genuine-model behavior after the context change requires its own recorded development trial; no independent accuracy or repeatability claim follows from unit tests.
+
+### 22 November: model-visible corroboration inventory
+
+The retained 109625b certificate development trial proposed a diagnosis after one log record and was correctly rejected by the existing final verifier. The model had already received the textual two-tool rule. The prompt now also includes an explicit inventory of unique non-quarantined record IDs, distinct observation IDs and tools with successful records, together with the existing two-record/two-observation/two-tool minimum. Cached reads cannot inflate these counts. Failed, denied and empty results cannot supply corroboration. A missing minimum instructs another useful authorized diagnostic request within the existing budget, or abstention; force-final still requires FINAL.
+
+This inventory is explanatory, not a new permission or semantic/freshness validator. Even when its structural minimum is met, the final verifier remains authoritative, and different tools do not establish independent underlying sources. No final-answer retry, additional call budget, verifier relaxation or forced scripted diagnostic sequence was added. Seven regression controls reproduce the absent guidance before the change and cover single-tool evidence, multiple lines from one observation, replays, quarantine/failed results, shared observations, nonmutation and force-final compatibility. Genuine-model qualification must retain failures and all first-run outputs; model adherence is not established by prompt tests.
+
+### 22 November follow-up: trusted field-specific CALL retry feedback
+
+The ce14be7 PUBLIC Dev2 baseline is frozen and backed up before this follow-up:18first trials,8diagnosis outputs/10abstentions,semantic correctness unscored. Offline parser replay of79retained incident replies reproduced7overlong-rationale rejections; two investigations ended in policy-error abstention after the bounded format retry also failed. Existing generic `CALL fields` feedback did not tell the model which constraint to repair.
+
+The system prompt now states the existing300-character rationale limit and60/120tool/target length limits. CALL validation still rejects exactly the same malformed/oversized values; only its trusted error constants now identify the field and limit. Rejected model text is never echoed, silently truncated or coerced. The existing format-retry/logical-call budget, broker allowlist/scope and final verifier/ledger remain authoritative. Tests retain exact boundaries and demonstrate that retry feedback contains the trusted constraint without rejected text, and cannot exceed the existing model-call ceiling. Versioned checks on the two affected PUBLIC development cases must retain the earlier first-run failures; they are targeted development comparisons, not a new blind benchmark or a general reliability claim.
+
+### 22 November: cached model-decision feedback
+
+The a4ccc8f targeted PUBLIC cases001/007 generated valid CALL fields but each used12logical model calls and abstained at the ceiling; broker caching suppressed9/8duplicate reads. The model-policy adapter now rejects an exact previously cached diagnostic request before returning that decision to the engine, with trusted feedback to choose a different authorized read or FINAL. This consumes the existing format/decision retry and logical-call budgets; it neither selects the next diagnostic nor adds a retry. Repeating again may therefore stop earlier in abstention. This is progress-contract validation, not model reasoning, a semantic judge or guaranteed diagnosis.
+
+Cache identity exactly mirrors the existing broker (tool,target,canonical args; absent args and explicit empty args remain distinct). Denials are not treated as cached; completed success,no-data,error and timeout outcomes are. Changed target or arguments are not broadly prohibited. Broker replay/allowlists/tenant rules,engine checkpoints/recovery,ledger and final verifier are unchanged. Raw rejected replies remain in development harness evidence; accepted decisions retain their actual logical-call index. Feedback contains no rejected rationale text. Unit controls include reordered arguments,distinct requests,denials,all cached statuses,budget/privacy and a real-engine scripted flow. This does not establish model adherence or fix every nonprogress loop; first versioned real-model outcomes must be retained without a chosen-success retry.
+
+The first full regression run exposed a timeout-audit test-isolation defect: its20ms timestamp filter could include an unrelated prior ERROR audit after the now-faster cached-error termination. Adding an explicit prior ERROR row reproduced the old assertion failure on real SQL. The test now scopes by captured monotonic audit ID, retains/asserts the historical ERROR row, and still requires every new call audit to be caller-aborted TIMEOUT under the unchanged7s bound. No production connector timeout/audit implementation was altered. The failing run and deterministic before-control are retained.
+
+A related late-reply control also reproduced retry continuation after cancellation/policy timeout with an uncooperative model transport. GatewayPolicy now checks the abort signal before issuing any call and after accounting for a returned call; the async driver aborts that signal on a policy deadline while preserving POLICY_TIMEOUT classification. A late invalid reply therefore cannot start another format/progress retry. Four controlled-Promise tests cover already-aborted input,in-flight cancellation,driver timeout/external cancellation,and retained spent-call token accounting. This prevents follow-on calls; it does not attest cancellation of an already-issued external provider request. The in-flight test explicitly waits for transport entry, and production timeout limits are unchanged.
+
+### 23 November: prompt cap also covers retry feedback
+
+An isolated boundary control reproduced a retry exceeding `maxPromptChars`: the initial prompt fit exactly, but trusted validator feedback enlarged the second request without another size check. GatewayPolicy now checks the complete system/user character count before each attempt and before spending another logical model call. It retains the original evidence and fails closed with `PROMPT_TOO_LARGE`; no truncation or larger budget is introduced. Tokens and calls already spent remain accounted for.
+
+Four controls cover oversized initial prompts, the exact initial boundary, feedback overflow with retained spent-token accounting, and the exact retry boundary without truncation. Before the fix: one failed and three passed. After the fix: all four passed, with 31 focused prompt/CALL/cache/cancellation controls passing together. This is a configurable character-limit correction, not a measured token-cost limit, a model-reliability fix or an accuracy claim.
+
+The working-tree regression suite passed 1955/1955 tests with zero skips across 191 files on disposable MySQL8.0.46. TypeScript, build, source/distribution neutrality and default-off smoke passed. Two additional standalone process probes killed an actual separate worker process with SIGKILL after its first model-call reservation was durable. A replacement worker reclaimed the expired lease at attempt2: a one-call ceiling permitted zero additional model starts; a two-call ceiling permitted one, retaining both spent reservations. Both ended in abstention with valid trace chains and dropped their disposable databases. These process probes used a scripted/hung model seam, not a genuine provider or proof of provider cancellation/exactly-once execution. They are separate from the regression test count.
+
+### 23 November: bounded uncached-default request guidance
+
+Before this prompt change, source ada2c60 was frozen and backed up with two distinct results: Phi-4-mini produced no diagnosis outputs across 18 PUBLIC development cases, while Qwen completed one actual controlled loopback TLS investigation in 84.218 seconds using three model calls and two read-only MCP diagnostics. The latter read a real client-verification failure and installed X509 metadata, revised its reported hypothesis and proposed CERT_EXPIRED without executing remediation. Public-certificate and raw prompt/reply/correlation checks passed. This is a scoped lab milestone, not independent benchmark accuracy, external hosted acceptance or source-independence attestation. The failed Phi results remain part of the evidence.
+
+The prompt now exposes at most 64 in-scope default requests not already cached, together with the number of additional eligible defaults omitted. It derives these descriptions only from the existing case allowlist/inventory, completed request identities and remaining engine budgets. It excludes known write names and invalid target formats, deduplicates scope, and preserves the broker's distinction between absent arguments, explicit empty arguments and argument-specific requests. Denials remain in the existing separate feedback and are not misclassified as cached results. Forced-final or exhausted engine budgets expose no default requests.
+
+This convenience list does not execute or select a tool, supply evidence or labels, establish backend availability, authorize additional requests or restrict different valid arguments. The model still chooses its next request or FINAL; parser, broker, tenant restrictions, retry/model/tool budgets, ledger and final verifier are unchanged. An empty or incomplete list is not evidence sufficiency. No database/checkpoint migration or gateway-provider change is needed.
+
+Eleven controls cover helper scope/cache/budget/bounds/nonmutation, actual async broker admission and visibility in the model prompt. Before prompt integration, ten helper controls passed and the model-view integration control failed. The first full run then passed 1965 tests and failed one existing strict target-feedback object expectation because it did not yet include the added fields. Its expectation now includes all six exact default options while retaining the existing target, denial and tenant assertions; it was not replaced with a partial-object check. All 79 focused controls pass. Actual model adherence and utility at the new prompt require their own retained first-attempt qualification; neither the earlier lab success nor helper tests establish them.
+
+After that test-fixture update, the full disposable-MySQL8.0.46 suite passed 1966/1966 tests with zero skips across 192 files in 207.63 seconds. TypeScript, build, source/distribution neutrality and default-off smoke passed. These are working-tree qualification results; exact-head CI and genuine-model outcomes are separate evidence.
+
+### 23 November: prompt cost and reusable evidence prefixes
+
+Source9f8ec46 passed all seven CI checks but failed its first empty-prompt-cache readiness prime at the unchanged 60-second deadline. Native prefill reported 1929 tokens in 63.168 seconds; the recorded Ada baseline reported 1829 tokens in 55.000 seconds. Both token count and observed throughput differ, so the full latency difference cannot be attributed to added wording alone. The failure is preserved; no qualify call or any of the 22 planned incident trials ran, and no warmed retry or deadline increase was used.
+
+Repeated instructions are now compacted while retaining the same output examples, taxonomy descriptions, numerical field limits, evidence/contradiction checks, untrusted-data rules, ledger guidance, scope and approval restrictions. On the same saved neutral view, system text decreases from 7638 to 6632 characters and parsed user data remains identical. Parser/strip-reasoning bytes and seven hard-control files are unchanged. These are source/rendering checks, not proof that the revised runtime gate will pass.
+
+Changing tool guidance now follows history and budgets in the serialized user view. An additional regression control reproduced how earlier guidance changes invalidated the prefix before already-rendered evidence; it now requires that the earlier record remain within the common prefix as history grows and requests/budgets change. All 94 focused controls pass. This improves the opportunity for native prefix reuse without dropping, summarizing or truncating evidence. Model behavior still requires one fresh gate and retained first outcomes at the new source under the same limits.
+
+The revised working tree passed 1967/1967 tests with zero skips across 192 files on disposable MySQL8.0.46 in 226.84 seconds. TypeScript, build, source/distribution neutrality and default-off smoke passed. No runtime-gate or model-utility success is inferred from those checks.
