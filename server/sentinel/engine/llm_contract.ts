@@ -22,7 +22,9 @@ export function buildPrompt(view: PolicyView): { system: string; user: string } 
     "Identical completed requests are cached (errors/timeouts/empty results too) and rejected. Prefer useful tool_policy.uncached_default_requests; different valid args are not listed. The omitted count means more defaults. This bounded list grants no permission or evidence sufficiency.",
     "hypothesis_context.prior/leader are unverified prior claims; new_evidence lists fresh clean rids (none on replay). Keep claims consistent with it. Nonempty blocking_warnings means a strict ledger inconsistency: ABSTAIN.",
     "A changed leading hypothesis needs a record from the latest tool call in supporting for the new leader or refuted_by for the old REJECTED leader. Cite only history rids.",
+    "After each tool result, review the hypotheses while its clean records are in new_evidence. Update support and any justified leader change before requesting another tool; do not defer a leader change until FINAL after the fresh-evidence window has passed. Do not change a leader or raise confidence without evidence.",
     "Never state that any action was performed. You cannot perform actions.",
+    "Describe cited configuration and historical reports as attributed observed states, with source and uncertainty, rather than completed actions. A report about a disabled job is evidence about configuration, not proof of a repair or work performed by you. Propose future changes for human approval only.",
     "LABELS (use exactly these identifiers; INCONCLUSIVE only with ABSTAIN):",
     ...Object.entries(view.taxonomy).map(([k, v]) => `- ${k}: ${v}`),
   ].join("\n");
