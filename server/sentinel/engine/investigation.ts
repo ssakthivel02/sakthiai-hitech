@@ -207,16 +207,41 @@ export class Investigation {
     const last = ev[ev.length - 1]!;
     if (cp.phase === "AWAIT_TOOL") {
       if (!cp.pending || cp.pending.step !== cp.step) throw bad("PENDING");
-      if (rq.length !== tr.length + 1 || last.type !== "tool_request" || hashOf((last.payload as { request: unknown }).request) !== hashOf(cp.pending.request)) throw bad("PENDING_MISMATCH");
+      const pendingTrace = last.payload as { step?: unknown; request?: unknown } | null;
+      if (rq.length !== tr.length + 1 || last.type !== "tool_request" || !pendingTrace || pendingTrace.step !== cp.pending.step || hashOf(pendingTrace.request) !== hashOf(cp.pending.request)) throw bad("PENDING_MISMATCH");
     } else if (cp.phase === "AWAIT_DECISION") {
       if (cp.pending) throw bad("PENDING");
       if (rq.length !== tr.length) throw bad("DANGLING_REQUEST");
       if (cp.results.length === 0 ? false : last.type !== "tool_result" && last.type !== "resumed") throw bad("PHASE_MISMATCH");
     } else throw bad("PHASE");
+    // The ledger is derived from the verified decision events, never an independent
+    // authority supplied by a checkpoint side copy. Check before changing broker state.
+    let history: Array<{ step: number; hypotheses: Hypothesis[] }> = [];
+    try {
+      history = ev.filter((e) => e.type === "decision").map((e) => {
+        const p = e.payload as { step: number; hypotheses: Hypothesis[] };
+        if (!p || typeof p !== "object" || Array.isArray(p) || !Number.isSafeInteger(p.step) || p.step < 1) throw bad("HYPOTHESIS_HISTORY");
+        return { step: p.step, hypotheses: p.hypotheses };
+      });
+      if (hashOf(history) !== hashOf(cp.hypothesis_history)) throw bad("HYPOTHESIS_HISTORY_MISMATCH");
+      for (const entry of history) {
+        if (!Array.isArray(entry.hypotheses)) throw bad("HYPOTHESIS_HISTORY");
+        const labels = new Set<string>();
+        for (const h of entry.hypotheses) {
+          if (!h || typeof h !== "object" || Array.isArray(h) || !Object.prototype.hasOwnProperty.call(h, "label") || typeof h.label !== "string") throw bad("HYPOTHESIS_HISTORY");
+          if (labels.has(h.label)) throw bad("DUPLICATE_HYPOTHESIS_LABEL");
+          labels.add(h.label);
+        }
+      }
+    } catch (e) { if (e instanceof CheckpointError) throw e; throw bad("HYPOTHESIS_HISTORY"); }
+    // An in-flight policy may conservatively advance the cursor without a decision
+    // event, but recorded steps can never be refunded by an edited checkpoint.
+    if (history.some((entry) => entry.step > cp.step)) throw bad("STEP_BEHIND_TRACE");
+    if (!Number.isSafeInteger(cp.resumes) || cp.resumes !== ev.filter((e) => e.type === "resumed").length) throw bad("RESUME_COUNT");
     try { broker.restore(cp.results); } catch (e) { throw bad("RESTORE", (e as Error).message); }
     const inv = new Investigation(c, broker, meta, trace);
     inv.step = cp.step; inv.phase = cp.phase; inv.pending = cp.pending ? structuredClone(cp.pending) : null;
-    inv.hist = structuredClone(cp.results); inv.hh = structuredClone(cp.hypothesis_history); inv.resumes = cp.resumes + 1;
+    inv.hist = structuredClone(cp.results); inv.hh = structuredClone(history); inv.resumes = cp.resumes + 1;
     for (const r of cp.results) inv.noteRids(r);   // rebuilds the seen-evidence set and the "new since last decision" window exactly as the live run had it
     for (const e of cp.trace) if (e.type === "hypothesis_revision") { const rv = e.payload as RevisionEvent; inv.revisions.push(rv); inv.ledgerWarnings.push(...rv.warnings); }
     trace.add("resumed", broker.stats.virtual_ms, { from_step: cp.step, phase: cp.phase, restored_results: cp.results.length, prior_head: cp.trace_head, resumes: inv.resumes });

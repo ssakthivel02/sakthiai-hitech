@@ -6,7 +6,7 @@ import { clampLimits, sentinelEnabled, sentinelRuntimeConfig } from "./config";
 import type { SentinelRuntimeConfig } from "./config";
 import { McpDiagnosticTransport } from "./adapters/mcpDiagnosticTransport";
 import type { McpDiagnosticOptions } from "./adapters/mcpDiagnosticTransport";
-import type { Checkpoint } from "./engine/checkpoint";
+import { CheckpointError, type Checkpoint } from "./engine/checkpoint";
 import { GatewayPolicy } from "./engine/gateway_policy";
 import type { ModelTransport } from "./engine/model_transport";
 import { investigateAsync } from "./engine/orchestrator";
@@ -165,6 +165,9 @@ export function createSentinelInvestigateHandler(deps: SentinelHandlerDeps): Tas
         policyTimeoutMs: cfg.policyTimeoutMs, toolAttemptTimeoutMs: cfg.toolAttemptTimeoutMs, cancelPollMs: Math.min(cfg.cancelPollMs, 250),
         onCheckpoint: flush, ...(resumeFrom ? { resumeFrom } : {}),
       });
+    } catch (e) {
+      if (resumeFrom && e instanceof CheckpointError) throw new TaskFatalError(`stored investigation checkpoint rejected (${e.code}); start a new investigation`, "NON_RETRYABLE");
+      throw e;
     } finally { clearInterval(poll); }
     if (leaseLost) throw new TaskLeaseLostError();
     if (reservationFailed) throw reservationError;
