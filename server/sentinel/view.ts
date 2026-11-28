@@ -139,7 +139,7 @@ export function buildView(row: InvestigationRecord, events: StoredEvent[]): Inve
           detail: `${arr(p.records).length} record(s)${q ? `, ${q} quarantined` : ""}${p.replayed ? ", replayed from earlier result" : ""}` });
         break;
       }
-      case "hypothesis_revision": { const r = p as unknown as RevisionEvent; revisions.push(r);
+      case "hypothesis_revision": { const r = p as unknown as RevisionEvent; revisions.push(r); ledgerWarnings.push(...arr<string>(r.warnings));
         timeline.push({ seq: e.seq, kind: e.type, tone: r.warnings?.length ? "warn" : "info", step: r.step ?? null,
           label: r.leader_changed ? `Leading hypothesis changed: ${r.leader_before ?? "none"} → ${r.leader_after ?? "none"}` : "Hypotheses revised", detail: r.warnings?.length ? `Ledger warning: ${r.warnings.join("; ")}` : r.justified ? "Justified by new evidence" : null }); break; }
       case "resumed": resumes = Math.max(resumes, Number(p.resumes) || resumes + 1); timeline.push({ seq: e.seq, kind: e.type, tone: "warn", step: Number(p.from_step) || null, label: "Resumed after an interruption", detail: `Restored ${p.restored_results ?? 0} earlier tool result(s); no completed call was repeated` }); break;
@@ -147,7 +147,7 @@ export function buildView(row: InvestigationRecord, events: StoredEvent[]): Inve
       case "policy_error": timeline.push({ seq: e.seq, kind: e.type, tone: "bad", step: Number(p.step) || null, label: "Model decision failed", detail: typeof p.message === "string" ? trunc(p.message, 200) : null }); break;
       case "call_after_limit_ignored": timeline.push({ seq: e.seq, kind: e.type, tone: "warn", step: Number(p.step) || null, label: "Budget reached; further tool request ignored", detail: null }); break;
       case "ledger_check": ledgerWarnings.push(...arr<string>(p.warnings)); timeline.push({ seq: e.seq, kind: e.type, tone: "warn", step: null, label: "Final answer checked against hypothesis ledger", detail: arr<string>(p.warnings).join("; ") || null }); break;
-      case "ledger_reject": ledgerRejected = true; timeline.push({ seq: e.seq, kind: e.type, tone: "bad", step: null, label: "Conclusion rejected: inconsistent with hypothesis ledger", detail: arr<string>(p.blocking).join("; ") || null }); break;
+      case "ledger_reject": ledgerRejected = true; ledgerWarnings.push(...arr<string>(p.blocking)); timeline.push({ seq: e.seq, kind: e.type, tone: "bad", step: null, label: "Conclusion rejected: inconsistent with hypothesis ledger", detail: arr<string>(p.blocking).join("; ") || null }); break;
       case "verifier_reject": verifierRejected = true; verifierFatal = arr<string>(p.fatal); timeline.push({ seq: e.seq, kind: e.type, tone: "bad", step: null, label: "Conclusion rejected by independent verification", detail: verifierFatal.slice(0, 4).map((f) => f.split(":").slice(0, 2).join(":")).join("; ") || null }); break;
       case "output_redacted": redactions = arr<string>(p.redactions); timeline.push({ seq: e.seq, kind: e.type, tone: "warn", step: null, label: "Unverifiable entities or instruction-like text redacted from the answer", detail: `${redactions.length} redaction(s)` }); break;
       case "final": finalPayload = p as unknown as FinalAnswer; timeline.push({ seq: e.seq, kind: e.type, tone: p.outcome === "DIAGNOSIS" ? "ok" : "warn", step: null, label: p.outcome === "DIAGNOSIS" ? `Diagnosis: ${p.label}` : "Abstained (no conclusion drawn)", detail: p.abstain_reason ? String(p.abstain_reason) : null }); break;
